@@ -53,8 +53,8 @@ export function lookupOptions(db: Database.Database, registerKey: string, includ
   return rows.map((r) => ({ id: r.id, label: String(r.label ?? "") }));
 }
 
-/** The `programme_id` / `asset_id` value new rows get, based on the top-bar selection. */
-export function scopeDefaults(def: RegisterDef): Record<string, number> {
+/** The filter applied to a scoped register: rows of the Programme / Asset selected in the top bar. */
+export function scopeFilter(def: RegisterDef): Record<string, number> {
   if (!def.scope) return {};
   const db = getDb();
   const key = def.scope === "programme" ? "programme_id" : "asset_id";
@@ -62,11 +62,21 @@ export function scopeDefaults(def: RegisterDef): Record<string, number> {
   return value ? { [key]: Number(value) } : {};
 }
 
+/** Values new rows get by default (the scope filter, plus the current asset when the register has an asset field). */
+export function scopeDefaults(def: RegisterDef): Record<string, number> {
+  const out = scopeFilter(def);
+  if (def.scope === "programme" && def.fields.some((f) => f.key === "asset_id")) {
+    const asset = getSetting(getDb(), "current_asset_id");
+    if (asset) out.asset_id = Number(asset);
+  }
+  return out;
+}
+
 /** All rows of a register with lookup labels attached as `<field>__label`. */
 export function listRecords(def: RegisterDef, options: { allScopes?: boolean } = {}): RecordRow[] {
   const db = getDb();
   const sort = def.defaultSort ?? { field: "id", dir: "asc" };
-  const scope = options.allScopes ? {} : scopeDefaults(def);
+  const scope = options.allScopes ? {} : scopeFilter(def);
   const [scopeKey, scopeValue] = Object.entries(scope)[0] ?? [];
   const where = scopeKey ? `WHERE "${scopeKey}" = ?` : "";
   const rows = db

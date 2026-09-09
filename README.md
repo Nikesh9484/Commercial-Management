@@ -127,7 +127,7 @@ Every register has **Export** (all rows, formatted) and **Import**:
 | # | Module | Status |
 | --- | --- | --- |
 | 1 | Project Setup & Report Control | **built** – project particulars, report control & sign-off, report checklist, distribution list |
-| 2 | Cost Report Level 1 & 2 | placeholder |
+| 2 | Cost Report Level 1 & 2 | **built** – Level 2 by package/contractor, Level 1 by asset, formulas, check line, chart, Excel export |
 | 3 | Change Management Tracker | placeholder |
 | 4 | Claims & Disputes | placeholder |
 | 5 | Early Warnings & Risks / Opportunities | placeholder |
