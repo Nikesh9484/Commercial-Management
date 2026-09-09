@@ -63,6 +63,7 @@ export function ensureRegisterTable(db: Database.Database, def: RegisterDef) {
     (db.prepare(`PRAGMA table_info("${def.table}")`).all() as { name: string }[]).map((c) => c.name),
   );
   for (const f of def.fields) {
+    if (f.virtual) continue;
     const col = columnFor(f);
     if (!existing.has(col)) {
       db.exec(`ALTER TABLE "${def.table}" ADD COLUMN "${col}" ${sqlTypeFor(f)}`);

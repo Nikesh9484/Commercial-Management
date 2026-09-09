@@ -6,6 +6,7 @@ import { canEditRegister, canViewRegister } from "./types";
 import { logAudit } from "../audit";
 import { hashPassword, AuthError } from "../auth";
 import { nowIso, parseDateInput, formatMonthYear } from "../format";
+import { enrichRows } from "./enrich";
 
 export class ValidationError extends Error {
   status = 400;
@@ -37,7 +38,7 @@ export function assertCanEdit(def: RegisterDef, user: UserInfo) {
 function selectColumns(def: RegisterDef): string {
   const cols = ["id", "created_at", "created_by", "updated_at", "updated_by"];
   for (const f of def.fields) {
-    if (f.type === "password") continue; // never returned
+    if (f.type === "password" || f.virtual) continue; // never returned / not stored
     cols.push(`"${f.key}"`);
   }
   return cols.join(", ");
@@ -49,8 +50,11 @@ export function lookupOptions(db: Database.Database, registerKey: string, includ
   const hasOrder = def.fields.some((f) => f.key === "sort_order");
   const where = hasActive && !includeInactive ? "WHERE active = 1 OR active IS NULL" : "";
   const order = hasOrder ? `ORDER BY sort_order ASC, "${def.displayField}" COLLATE NOCASE ASC` : `ORDER BY "${def.displayField}" COLLATE NOCASE ASC`;
-  const rows = db.prepare(`SELECT id, "${def.displayField}" AS label FROM "${def.table}" ${where} ${order}`).all() as LookupOption[];
-  return rows.map((r) => ({ id: r.id, label: String(r.label ?? "") }));
+  const labelSql = def.displayFields?.length
+    ? def.displayFields.map((f) => `COALESCE("${f}", '')`).join(" || ' · ' || ")
+    : `"${def.displayField}"`;
+  const rows = db.prepare(`SELECT id, ${labelSql} AS label FROM "${def.table}" ${where} ${order}`).all() as LookupOption[];
+  return rows.map((r) => ({ id: r.id, label: String(r.label ?? "").replace(/( · )+$/, "") }));
 }
 
 /** The filter applied to a scoped register: rows of the Programme / Asset selected in the top bar. */
@@ -83,7 +87,9 @@ export function listRecords(def: RegisterDef, options: { allScopes?: boolean } =
     .prepare(`SELECT ${selectColumns(def)} FROM "${def.table}" ${where} ORDER BY "${sort.field}" ${sort.dir === "desc" ? "DESC" : "ASC"}, id ASC`)
     .all(...(scopeKey ? [scopeValue] : [])) as RecordRow[];
   attachLabels(db, def, rows);
-  return rows.map(normaliseRow(def));
+  const out = rows.map(normaliseRow(def));
+  enrichRows(def, out);
+  return out;
 }
 
 export function getRecord(def: RegisterDef, id: number): RecordRow | null {
@@ -91,7 +97,9 @@ export function getRecord(def: RegisterDef, id: number): RecordRow | null {
   const row = db.prepare(`SELECT ${selectColumns(def)} FROM "${def.table}" WHERE id = ?`).get(id) as RecordRow | undefined;
   if (!row) return null;
   attachLabels(db, def, [row]);
-  return normaliseRow(def)(row);
+  const out = normaliseRow(def)(row);
+  enrichRows(def, [out]);
+  return out;
 }
 
 function attachLabels(db: Database.Database, def: RegisterDef, rows: RecordRow[]) {
@@ -201,6 +209,7 @@ function prepareInput(def: RegisterDef, input: Record<string, unknown>, mode: "c
   const display: Record<string, unknown> = {};
 
   for (const f of def.fields) {
+    if (f.virtual) continue; // calculated, never stored
     const provided = Object.prototype.hasOwnProperty.call(input, f.key);
     if (f.readonly && mode === "update") continue; // system-managed
     if (f.readonly && mode === "create" && !provided) {
@@ -333,6 +342,7 @@ export function updateRecord(
   const changes: Record<string, { from: unknown; to: unknown }> = {};
   for (const [key, v] of Object.entries(prepared.display)) {
     const field = def.fields.find((f) => f.key === key)!;
+    if (field.virtual) continue;
     if (field.type === "password") {
       changes[key] = { from: "••••", to: "(changed)" };
       continue;
@@ -395,7 +405,7 @@ export function deleteRecord(def: RegisterDef, id: number, user: UserInfo): void
     user,
     summary: `Deleted ${def.singular} "${describe(def, existing)}"`,
     changes: Object.fromEntries(
-      def.fields.filter((f) => f.type !== "password" && existing[f.key] !== null && existing[f.key] !== undefined).map((f) => [f.key, { from: labelFor(f, existing[f.key], existing), to: null }]),
+      def.fields.filter((f) => f.type !== "password" && !f.virtual && existing[f.key] !== null && existing[f.key] !== undefined).map((f) => [f.key, { from: labelFor(f, existing[f.key], existing), to: null }]),
     ),
   });
 }

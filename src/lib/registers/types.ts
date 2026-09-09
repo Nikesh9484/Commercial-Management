@@ -46,6 +46,16 @@ export interface FieldDef {
   chip?: boolean;
   /** Column width hint, e.g. "12rem". */
   width?: string;
+  /** Group heading in the add / edit form. Fields without a section go under the first heading. */
+  section?: string;
+  /**
+   * Calculated on the server for display (e.g. "Days open"). Not stored, not editable, not importable.
+   * Set by src/lib/registers/enrich.ts. Implies readonly + hidden in the form.
+   */
+  virtual?: boolean;
+  /** When any field in a register sets this, only those fields get filter dropdowns. */
+  filter?: boolean;
+  /** For lookups: `<key>__label` is filled; for chips on lookups set `chip`. */
 }
 
 export interface RegisterDef {
@@ -59,6 +69,8 @@ export interface RegisterDef {
   fields: FieldDef[];
   /** Which field is shown when another register looks this one up. */
   displayField: string;
+  /** Optional: several fields joined with " · " for lookup labels (e.g. code + name). */
+  displayFields?: string[];
   defaultSort?: { field: string; dir: "asc" | "desc" };
   /** Roles allowed to add/edit/delete/import. Everyone with access can view + export. Default: admin + editor. */
   editRoles?: Role[];

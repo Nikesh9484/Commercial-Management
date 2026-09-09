@@ -37,7 +37,7 @@ export async function exportRegister(def: RegisterDef): Promise<Buffer> {
 export async function exportTemplate(def: RegisterDef): Promise<Buffer> {
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet(def.title.slice(0, 31));
-  const fields = exportFields(def).filter((f) => !f.readonly || f.type === "select");
+  const fields = exportFields(def).filter((f) => !f.virtual && (!f.readonly || f.type === "select"));
   ws.columns = [{ header: "ID", key: "id", width: 8 }, ...fields.map((f) => ({ header: f.label, key: f.key, width: Math.max(14, f.label.length + 4) }))];
   styleSheet(ws, fields);
   ws.addRow({});
@@ -155,7 +155,7 @@ export async function importRegister(def: RegisterDef, file: ArrayBuffer, user: 
           if (raw !== "" && raw !== null) id = Number(raw);
           continue;
         }
-        if (target.readonly) continue;
+        if (target.readonly || target.virtual) continue;
         if (raw !== "" && raw !== null && raw !== undefined) any = true;
         input[target.key] = raw;
       }

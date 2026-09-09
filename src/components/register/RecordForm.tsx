@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { FieldWrap } from "@/components/ui/Field";
 import type { FieldDef, LookupOption, RegisterDef } from "@/lib/registers/types";
 
@@ -20,17 +22,51 @@ export function RecordForm({
   onChange: (key: string, value: string | number | boolean | null) => void;
   isNew: boolean;
 }) {
-  const fields = def.fields.filter((f) => !f.hideInForm);
+  const fields = def.fields.filter((f) => !f.hideInForm && !f.virtual);
+  const sections: { name: string | null; fields: FieldDef[] }[] = [];
+  for (const f of fields) {
+    const name = f.section ?? null;
+    const last = sections[sections.length - 1];
+    if (last && last.name === name) last.fields.push(f);
+    else sections.push({ name, fields: [f] });
+  }
+  const grouped = sections.length > 1;
   return (
-    <div className="grid gap-4 sm:grid-cols-2">
-      {fields.map((f) => (
-        <div key={f.key} className={f.type === "textarea" ? "sm:col-span-2" : ""}>
-          <FieldWrap label={f.label} required={f.required && f.type !== "password"} help={helpFor(f, isNew)} error={errors[f.key]} htmlFor={`f_${f.key}`}>
-            <Input field={f} value={values[f.key]} options={lookups[f.key]} onChange={(v) => onChange(f.key, v)} />
-          </FieldWrap>
-        </div>
+    <div className="space-y-5">
+      {sections.map((sec, i) => (
+        <FormSection key={sec.name ?? i} name={grouped ? sec.name : null} defaultOpen={i === 0 || sec.fields.some((f) => filled(values[f.key]))} errorCount={sec.fields.filter((f) => errors[f.key]).length}>
+          <div className="grid gap-4 sm:grid-cols-2">
+            {sec.fields.map((f) => (
+              <div key={f.key} className={f.type === "textarea" ? "sm:col-span-2" : ""}>
+                <FieldWrap label={f.label} required={f.required && f.type !== "password"} help={helpFor(f, isNew)} error={errors[f.key]} htmlFor={`f_${f.key}`}>
+                  <Input field={f} value={values[f.key]} options={lookups[f.key]} onChange={(v) => onChange(f.key, v)} />
+                </FieldWrap>
+              </div>
+            ))}
+          </div>
+        </FormSection>
       ))}
     </div>
+  );
+}
+
+function filled(v: unknown) {
+  return v !== null && v !== undefined && v !== "" && v !== false;
+}
+
+function FormSection({ name, defaultOpen, errorCount, children }: { name: string | null; defaultOpen: boolean; errorCount: number; children: React.ReactNode }) {
+  const [open, setOpen] = useState(defaultOpen);
+  if (!name) return <>{children}</>;
+  const show = open || errorCount > 0;
+  return (
+    <section className="rounded-lg border border-line">
+      <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-semibold text-navy hover:bg-page" onClick={() => setOpen((o) => !o)}>
+        {show ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+        {name}
+        {errorCount > 0 && <span className="ml-auto rounded-full bg-red-50 px-2 text-xs text-red-700">{errorCount} to fix</span>}
+      </button>
+      {show && <div className="border-t border-line p-3">{children}</div>}
+    </section>
   );
 }
 

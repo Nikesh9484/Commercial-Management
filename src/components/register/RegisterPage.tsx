@@ -67,7 +67,12 @@ export function RegisterPage({ registerKey, isAdmin = false }: { registerKey: st
 
   const def = data?.def;
   const tableFields = useMemo(() => def?.fields.filter((f) => !f.hideInTable && f.type !== "password") ?? [], [def]);
-  const filterFields = useMemo(() => def?.fields.filter((f) => f.type === "select" || f.type === "lookup" || f.type === "boolean") ?? [], [def]);
+  const filterFields = useMemo(() => {
+    if (!def) return [];
+    const explicit = def.fields.filter((f) => f.filter);
+    if (explicit.length) return explicit.filter((f) => f.type === "select" || f.type === "lookup" || f.type === "boolean");
+    return def.fields.filter((f) => f.type === "select" || f.type === "lookup" || f.type === "boolean");
+  }, [def]);
   const effectiveSort = sort ?? def?.defaultSort ?? null;
 
   const visible = useMemo(() => {
@@ -440,23 +445,35 @@ function sortValue(f: FieldDef, r: RecordRow): unknown {
   return r[f.key];
 }
 
+const TONE_CLASS: Record<string, string> = {
+  red: "rounded bg-red-50 px-1.5 py-0.5 font-semibold text-red-700",
+  amber: "rounded bg-amber-50 px-1.5 py-0.5 font-semibold text-amber-700",
+  green: "rounded bg-emerald-50 px-1.5 py-0.5 font-semibold text-emerald-700",
+};
+
 function Cell({ field: f, row: r }: { field: FieldDef; row: RecordRow }) {
   const v = r[f.key];
   if (v === null || v === undefined || v === "") return <span className="text-muted/60">—</span>;
+  const tone = r[`${f.key}__tone`] as string | null | undefined;
+  const wrap = (node: React.ReactNode) => (tone && TONE_CLASS[tone] ? <span className={TONE_CLASS[tone]}>{node}</span> : <>{node}</>);
   switch (f.type) {
     case "money":
-      return <>{formatMoney(v as number)}</>;
+      return wrap(formatMoney(v as number));
     case "number":
-      return <>{formatNumber(v as number, Number.isInteger(v) ? 0 : 2)}</>;
+      return wrap(formatNumber(v as number, Number.isInteger(v) ? 0 : 2));
     case "percent":
       return <>{formatPercent(v as number)}</>;
     case "date":
       return <>{formatDate(v as string)}</>;
     case "boolean":
       return <Chip tone={v ? "green" : "grey"}>{v ? "Yes" : "No"}</Chip>;
-    case "lookup":
-      return <>{String(r[`${f.key}__label`] ?? "")}</>;
+    case "lookup": {
+      const label = String(r[`${f.key}__label`] ?? "");
+      return f.chip && label ? <Chip>{label}</Chip> : <>{label}</>;
+    }
     case "select":
+      return f.chip ? <Chip>{String(v)}</Chip> : <>{String(v)}</>;
+    case "text":
       return f.chip ? <Chip>{String(v)}</Chip> : <>{String(v)}</>;
     case "textarea":
       return <span className="block max-w-xs truncate">{String(v)}</span>;
