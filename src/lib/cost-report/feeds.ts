@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import { CHANGE_STAGES, DEAD_STATUSES } from "../registers/defs/changes";
+import { claimCostReportAmount } from "../registers/defs/claims";
 
 /**
  * "Feeds" are the columns of the cost report that come from other modules.
@@ -81,6 +82,20 @@ export function changeFeeds(db: Database.Database, programmeId: number): { dvo: 
   return { dvo, pvo, rfc };
 }
 
+/** Claims -> cost report column M (see claimCostReportAmount for the value carried per claim). */
+export function claimFeeds(db: Database.Database, programmeId: number): Map<number, number> {
+  const out = new Map<number, number>();
+  if (!tableExists(db, "claims")) return out;
+  const rows = db
+    .prepare("SELECT cost_line_id, status, determination_cost, employer_cost, engineer_cost, contractor_cost FROM claims WHERE programme_id = ? AND cost_line_id IS NOT NULL")
+    .all(programmeId) as Record<string, unknown>[];
+  for (const r of rows) {
+    const id = Number(r.cost_line_id);
+    out.set(id, (out.get(id) ?? 0) + claimCostReportAmount(r));
+  }
+  return out;
+}
+
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 export function getCostFeeds(db: Database.Database, programmeId: number, periodId: number): { feeds: CostFeeds; status: FeedStatus[] } {
   // Each entry is filled in when the source module is built.
@@ -91,7 +106,7 @@ export function getCostFeeds(db: Database.Database, programmeId: number, periodI
     pvo: changes.pvo,
     rfc: changes.rfc,
     earlyWarnings: new Map(),
-    claims: new Map(),
+    claims: claimFeeds(db, programmeId),
     certified: new Map(),
   };
   const status: FeedStatus[] = [
@@ -100,7 +115,7 @@ export function getCostFeeds(db: Database.Database, programmeId: number, periodI
     { column: "J", label: "Potential Variation Orders", module: "Module 3 – Change Management", available: true },
     { column: "K", label: "Requests for Change", module: "Module 3 – Change Management", available: true },
     { column: "L", label: "Early Warnings", module: "Module 5 – Early Warnings", available: false },
-    { column: "M", label: "Claims", module: "Module 4 – Claims & Disputes", available: false },
+    { column: "M", label: "Claims", module: "Module 4 – Claims & Disputes", available: true },
     { column: "P", label: "Certified to Date", module: "Module 8 – Invoice & Payment Tracking", available: false },
   ];
   return { feeds, status };

@@ -242,7 +242,7 @@ function prepareInput(def: RegisterDef, input: Record<string, unknown>, mode: "c
       display[f.key] = "(changed)";
       continue;
     }
-    if (f.required && (v === null || v === undefined)) errors[f.key] = `${f.label} is required.`;
+    if (f.required && (v === null || v === undefined) && !errors[f.key]) errors[f.key] = `${f.label} is required.`;
     if (f.type === "text" && f.key === "email" && v) v = String(v).toLowerCase();
     values[columnFor(f)] = v;
     display[f.key] = v;

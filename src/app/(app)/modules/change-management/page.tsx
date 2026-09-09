@@ -118,7 +118,7 @@ export default async function ChangeManagementPage() {
 function Stat({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: "red" | "amber" | "green" }) {
   const cls = tone === "red" ? "text-red-700" : tone === "amber" ? "text-amber-700" : tone === "green" ? "text-emerald-700" : "text-ink";
   return (
-    <div className="card p-4">
+    <div className="card min-w-0 p-4">
       <div className="text-xs font-medium uppercase tracking-wide text-muted">{label}</div>
       <div className={`mt-1 truncate text-lg font-semibold tnum ${cls}`} title={value}>
         {value}

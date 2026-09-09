@@ -1,6 +1,8 @@
 import type { RecordRow, RegisterDef } from "./types";
 import { todayIso, toDate } from "../format";
 import { CHANGE_STAGES, CLOSED_STATUSES } from "./defs/changes";
+import { CLAIM_TYPES, NOTICE_LIMIT_DAYS, DETAIL_LIMIT_DAYS, claimCostReportAmount } from "./defs/claims";
+import { businessDaysBetween } from "../workdays";
 
 /**
  * Fills in the calculated ("virtual") columns of a register after its rows are read.
@@ -8,6 +10,7 @@ import { CHANGE_STAGES, CLOSED_STATUSES } from "./defs/changes";
  */
 export function enrichRows(def: RegisterDef, rows: RecordRow[]) {
   if (def.key === "changes") rows.forEach(enrichChange);
+  if (def.key === "claims") rows.forEach(enrichClaim);
 }
 
 export function daysBetween(fromIso: string, toIso: string): number {
@@ -58,4 +61,35 @@ function enrichChange(row: RecordRow) {
     row.dvo_remaining_days = null;
     row.dvo_remaining_days__tone = null;
   }
+}
+
+function complies(days: number | null, limit: number): { value: string | null; tone: string | null } {
+  if (days === null) return { value: null, tone: null };
+  return days <= limit ? { value: "Yes", tone: "green" } : { value: "No", tone: "red" };
+}
+
+function enrichClaim(row: RecordRow) {
+  row.claim_types = CLAIM_TYPES.filter((t) => row[t.key] === true)
+    .map((t) => (t.key === "type_other" && row.type_other_text ? `Other: ${row.type_other_text}` : t.label))
+    .join(", ") || null;
+
+  const a = row.notice_aware_date as string | null;
+  const b = row.notice_received_date as string | null;
+  const c = row.detail_received_date as string | null;
+  const ab = a && b ? businessDaysBetween(a, b) : null;
+  const ac = a && c ? businessDaysBetween(a, c) : null;
+  row.notice_business_days = ab;
+  const n = complies(ab, NOTICE_LIMIT_DAYS);
+  row.notice_complies = n.value;
+  row.notice_complies__tone = n.tone;
+  row.detail_business_days = ac;
+  const d = complies(ac, DETAIL_LIMIT_DAYS);
+  row.detail_complies = d.value;
+  row.detail_complies__tone = d.tone;
+
+  row.contractor_eot_days_view = row.contractor_eot_days ?? null;
+  row.determination_eot_days_view = row.determination_eot_days ?? null;
+  row.contractor_cost_view = row.contractor_cost ?? null;
+  row.determination_cost_view = row.determination_cost ?? null;
+  row.cost_report_amount = claimCostReportAmount(row);
 }

@@ -3,9 +3,10 @@ import { settingsRegisters } from "./defs/settings";
 import { projectSetupRegisters } from "./defs/project-setup";
 import { costReportRegisters } from "./defs/cost-report";
 import { changeRegisters } from "./defs/changes";
+import { claimRegisters } from "./defs/claims";
 
 /** Every register in the app, by key. Module registers get added here as modules are built. */
-export const allRegisters: RegisterDef[] = [...settingsRegisters, ...projectSetupRegisters, ...costReportRegisters, ...changeRegisters];
+export const allRegisters: RegisterDef[] = [...settingsRegisters, ...projectSetupRegisters, ...costReportRegisters, ...changeRegisters, ...claimRegisters];
 
 const byKey = new Map(allRegisters.map((d) => [d.key, d]));
 
