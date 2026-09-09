@@ -7,16 +7,15 @@ import { formatDate } from "@/lib/format";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Chip } from "@/components/ui/Chip";
 import { getDb } from "@/lib/db";
+import { getChecklist } from "@/lib/checklist";
 
 export default async function HomePage() {
   const user = (await getCurrentUser())!;
   const ctx = getAppContext();
   const db = getDb();
-  const counts = {
-    packages: (db.prepare("SELECT COUNT(*) AS n FROM packages WHERE active = 1").get() as { n: number }).n,
-    contractors: (db.prepare("SELECT COUNT(*) AS n FROM contractors WHERE active = 1").get() as { n: number }).n,
-    users: (db.prepare("SELECT COUNT(*) AS n FROM users WHERE active = 1").get() as { n: number }).n,
-  };
+  const checklist = ctx.period ? getChecklist(ctx.period.id) : [];
+  const done = checklist.filter((c) => c.done).length;
+  const users = (db.prepare("SELECT COUNT(*) AS n FROM users WHERE active = 1").get() as { n: number }).n;
 
   return (
     <div>
@@ -42,7 +41,12 @@ export default async function HomePage() {
             ) : undefined
           }
         />
-        <Stat label="Reference data" value={`${counts.packages} packages · ${counts.contractors} contractors`} sub={`${counts.users} active user(s)`} />
+        <Stat
+          label="Report checklist"
+          value={checklist.length ? `${done} of ${checklist.length} modules done` : "No period yet"}
+          sub={`${users} active user(s)`}
+          chip={checklist.length ? <Chip tone={done === checklist.length ? "green" : done > 0 ? "amber" : "red"}>{Math.round((done / checklist.length) * 100)}%</Chip> : undefined}
+        />
       </div>
 
       <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Modules</h2>

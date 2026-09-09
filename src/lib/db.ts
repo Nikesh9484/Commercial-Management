@@ -100,6 +100,17 @@ function initSchema(db: Database.Database) {
       key TEXT PRIMARY KEY,
       value TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS report_checklist (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      period_id INTEGER NOT NULL,
+      module_no INTEGER NOT NULL,
+      done INTEGER NOT NULL DEFAULT 0,
+      done_by TEXT,
+      done_at TEXT,
+      comment TEXT,
+      UNIQUE(period_id, module_no)
+    );
   `);
   for (const def of allRegisters) ensureRegisterTable(db, def);
 }

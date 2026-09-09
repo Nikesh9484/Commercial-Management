@@ -26,6 +26,7 @@ interface Loaded {
   rows: RecordRow[];
   lookups: Record<string, LookupOption[]>;
   canEdit: boolean;
+  scopeDefaults?: Record<string, number>;
 }
 
 export function RegisterPage({ registerKey, isAdmin = false }: { registerKey: string; isAdmin?: boolean }) {
@@ -121,6 +122,7 @@ export function RegisterPage({ registerKey, isAdmin = false }: { registerKey: st
     if (!def) return;
     const values: FormValues = {};
     for (const f of def.fields) if (f.defaultValue !== undefined) values[f.key] = f.defaultValue as FormValues[string];
+    for (const [k, v] of Object.entries(data?.scopeDefaults ?? {})) values[k] = v;
     setFormErrors({});
     setFormError(null);
     setEditing({ row: null, values });

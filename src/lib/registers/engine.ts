@@ -1,5 +1,5 @@
 import type Database from "better-sqlite3";
-import { getDb, columnFor } from "../db";
+import { getDb, columnFor, getSetting } from "../db";
 import { getRegisterDef, allRegisters } from "./index";
 import type { FieldDef, LookupOption, RecordRow, RegisterDef, UserInfo } from "./types";
 import { canEditRegister, canViewRegister } from "./types";
@@ -53,13 +53,25 @@ export function lookupOptions(db: Database.Database, registerKey: string, includ
   return rows.map((r) => ({ id: r.id, label: String(r.label ?? "") }));
 }
 
+/** The `programme_id` / `asset_id` value new rows get, based on the top-bar selection. */
+export function scopeDefaults(def: RegisterDef): Record<string, number> {
+  if (!def.scope) return {};
+  const db = getDb();
+  const key = def.scope === "programme" ? "programme_id" : "asset_id";
+  const value = getSetting(db, `current_${key}`);
+  return value ? { [key]: Number(value) } : {};
+}
+
 /** All rows of a register with lookup labels attached as `<field>__label`. */
-export function listRecords(def: RegisterDef): RecordRow[] {
+export function listRecords(def: RegisterDef, options: { allScopes?: boolean } = {}): RecordRow[] {
   const db = getDb();
   const sort = def.defaultSort ?? { field: "id", dir: "asc" };
+  const scope = options.allScopes ? {} : scopeDefaults(def);
+  const [scopeKey, scopeValue] = Object.entries(scope)[0] ?? [];
+  const where = scopeKey ? `WHERE "${scopeKey}" = ?` : "";
   const rows = db
-    .prepare(`SELECT ${selectColumns(def)} FROM "${def.table}" ORDER BY "${sort.field}" ${sort.dir === "desc" ? "DESC" : "ASC"}, id ASC`)
-    .all() as RecordRow[];
+    .prepare(`SELECT ${selectColumns(def)} FROM "${def.table}" ${where} ORDER BY "${sort.field}" ${sort.dir === "desc" ? "DESC" : "ASC"}, id ASC`)
+    .all(...(scopeKey ? [scopeValue] : [])) as RecordRow[];
   attachLabels(db, def, rows);
   return rows.map(normaliseRow(def));
 }
@@ -245,8 +257,10 @@ function applyRules(def: RegisterDef, prepared: Prepared, mode: "create" | "upda
       prepared.display.label = prepared.values.label;
     }
     if (existing && existing.status === "Locked" && mode === "update") {
-      const changedKeys = Object.keys(prepared.values).filter((k) => k !== "notes" && k !== "label");
-      if (changedKeys.length) throw new ValidationError("This period is locked. Unlock it first to change dates or number.");
+      const structural = ["report_no", "period_start", "period_end"];
+      if (Object.keys(prepared.values).some((k) => structural.includes(k))) {
+        throw new ValidationError("This period is locked. Unlock it first to change its number or dates.");
+      }
     }
   }
   if (def.key === "users" && mode === "update" && existing) {
@@ -266,7 +280,9 @@ function applyRules(def: RegisterDef, prepared: Prepared, mode: "create" | "upda
 export function createRecord(def: RegisterDef, input: Record<string, unknown>, user: UserInfo, source: "form" | "import" = "form"): RecordRow {
   assertCanEdit(def, user);
   const db = getDb();
-  const prepared = prepareInput(def, input, "create");
+  const withScope = { ...scopeDefaults(def), ...input };
+  for (const [k, v] of Object.entries(scopeDefaults(def))) if (withScope[k] === null || withScope[k] === undefined || withScope[k] === "") withScope[k] = v;
+  const prepared = prepareInput(def, withScope, "create");
   applyRules(def, prepared, "create", undefined, user);
   const stamp = nowIso();
   const cols = [...Object.keys(prepared.values), "created_at", "created_by", "updated_at", "updated_by"];
@@ -288,8 +304,15 @@ export function createRecord(def: RegisterDef, input: Record<string, unknown>, u
   return getRecord(def, id)!;
 }
 
-export function updateRecord(def: RegisterDef, id: number, input: Record<string, unknown>, user: UserInfo, source: "form" | "import" = "form"): RecordRow {
-  assertCanEdit(def, user);
+export function updateRecord(
+  def: RegisterDef,
+  id: number,
+  input: Record<string, unknown>,
+  user: UserInfo,
+  source: "form" | "import" = "form",
+  options: { bypassRoles?: boolean } = {},
+): RecordRow {
+  if (!options.bypassRoles) assertCanEdit(def, user);
   const db = getDb();
   const existing = getRecord(def, id);
   if (!existing) throw new ValidationError(`${def.singular} #${id} was not found (it may have been deleted).`);

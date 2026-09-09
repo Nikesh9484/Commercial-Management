@@ -68,6 +68,12 @@ export interface RegisterDef {
   snapshot?: boolean;
   /** Group shown in the Settings page. */
   group?: string;
+  /**
+   * Rows belong to the Programme / Asset currently selected in the top bar.
+   * The register must have a `programme_id` / `asset_id` lookup field; the engine filters by it
+   * and fills it in for new records.
+   */
+  scope?: "programme" | "asset";
 }
 
 export interface UserInfo {

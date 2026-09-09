@@ -114,6 +114,13 @@ export const reportingPeriods: RegisterDef = {
     { key: "status", label: "Status", type: "select", options: ["Open", "Locked"], readonly: true, chip: true, defaultValue: "Open" },
     { key: "locked_at", label: "Locked at", type: "date", readonly: true, hideInForm: true },
     { key: "locked_by", label: "Locked by", type: "text", readonly: true, hideInForm: true },
+    { key: "aconex_ref", label: "Aconex ref", type: "text", help: "Aconex document / transmittal reference for this report." },
+    { key: "prepared_by", label: "Prepared by", type: "text", hideInTable: true },
+    { key: "prepared_date", label: "Prepared date", type: "date", hideInTable: true },
+    { key: "reviewed_by", label: "Reviewed by", type: "text", hideInTable: true },
+    { key: "reviewed_date", label: "Reviewed date", type: "date", hideInTable: true },
+    { key: "approved_by", label: "Approved by", type: "text", hideInTable: true },
+    { key: "approved_date", label: "Approved date", type: "date", hideInTable: true },
     { key: "notes", label: "Notes", type: "textarea", hideInTable: true },
   ],
 };

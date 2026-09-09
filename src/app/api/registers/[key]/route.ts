@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { withUser, readJson } from "@/lib/api";
-import { requireDef, assertCanView, listRecords, lookupsFor, createRecord } from "@/lib/registers/engine";
+import { requireDef, assertCanView, listRecords, lookupsFor, createRecord, scopeDefaults } from "@/lib/registers/engine";
 import { canEditRegister } from "@/lib/registers/types";
 
 type Ctx = { params: Promise<{ key: string }> };
@@ -10,7 +10,7 @@ export const GET = withUser<Ctx>(async (user, { params }) => {
   const { key } = await params;
   const def = requireDef(key);
   assertCanView(def, user);
-  return NextResponse.json({ def, rows: listRecords(def), lookups: lookupsFor(def), canEdit: canEditRegister(def, user.role) });
+  return NextResponse.json({ def, rows: listRecords(def), lookups: lookupsFor(def), canEdit: canEditRegister(def, user.role), scopeDefaults: scopeDefaults(def) });
 });
 
 /** POST /api/registers/:key -> create a record. */
