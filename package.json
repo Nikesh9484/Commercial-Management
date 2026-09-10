@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "NODE_OPTIONS=--max-old-space-size=384 next start",
     "lint": "eslint"
   },
   "dependencies": {

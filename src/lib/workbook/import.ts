@@ -1,4 +1,3 @@
-import ExcelJS from "exceljs";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -9,7 +8,8 @@ import type { UserInfo, RecordRow } from "../registers/types";
 import { lockPeriod, getPeriod } from "../snapshots";
 import { logAudit } from "../audit";
 import { formatMonthYear, parseDateInput } from "../format";
-import { cellText, importKeyFields, norm } from "./analyze";
+import { importKeyFields, norm } from "./analyze";
+import { cellText, getSheet, readWorkbookValues } from "./read";
 
 /* ------------------------------------------------------------------ */
 /* Temporary storage of the uploaded workbook (30 minutes)             */
@@ -47,11 +47,11 @@ export function finishUploadParts(id: string): Buffer {
   return buf;
 }
 
-export function readUpload(id: string): Buffer {
+export function uploadPath(id: string): string {
   if (!/^[a-z0-9]+$/.test(id)) throw new ValidationError("Bad upload id.");
   const p = path.join(TMP, `${id}.xlsx`);
   if (!fs.existsSync(p)) throw new ValidationError("The uploaded file has expired. Please upload it again.");
-  return fs.readFileSync(p);
+  return p;
 }
 
 /* ------------------------------------------------------------------ */
@@ -120,9 +120,7 @@ function resolveOption(value: string, options: string[]): string | null {
 export async function importWorkbook(req: ImportRequest, user: UserInfo): Promise<ImportResult> {
   if (user.role === "viewer") throw new ValidationError("Viewers cannot import.");
   const db = getDb();
-  const buffer = readUpload(req.fileId);
-  const wb = new ExcelJS.Workbook();
-  await wb.xlsx.load(buffer as unknown as ArrayBuffer, { ignoreNodes: ["sheetPr", "sheetViews", "sheetFormatPr", "autoFilter", "rowBreaks", "hyperlinks", "pageMargins", "dataValidations", "pageSetup", "headerFooter", "printOptions", "picture", "drawing", "sheetProtection", "tableParts", "conditionalFormatting", "extLst"] });
+  const worksheets = await readWorkbookValues(uploadPath(req.fileId));
 
   // Reporting period
   let periodId = req.period.id ?? null;
@@ -148,7 +146,7 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo): Promis
   for (const m of req.sheets) {
     if (!m.register) continue;
     const def = getRegisterDef(m.register);
-    const ws = wb.getWorksheet(m.sheet);
+    const ws = getSheet(worksheets, m.sheet);
     if (!def || !ws) continue;
     const result: SheetResult = { sheet: m.sheet, register: m.register, created: 0, updated: 0, unchanged: 0, skipped: 0, errors: [] };
     const colMap = Object.entries(m.columns).filter(([, f]) => f).map(([i, f]) => ({ index: Number(i), field: def.fields.find((x) => x.key === f)! })).filter((c) => c.field);
@@ -158,14 +156,13 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo): Promis
     }
     // remember the mapping for next month
     const headers: Record<string, string> = {};
-    ws.getRow(m.headerRow).eachCell({ includeEmpty: false }, (c, col) => {
-      const f = m.columns[String(col)];
-      if (f) headers[norm(cellText(c.value))] = f;
-    });
     const sig: string[] = [];
-    ws.getRow(m.headerRow).eachCell({ includeEmpty: false }, (c) => {
-      const t = cellText(c.value).trim();
-      if (t) sig.push(norm(t));
+    (ws.rows.get(m.headerRow) ?? []).forEach((v, col) => {
+      const t = cellText(v).trim();
+      if (col === 0 || !t) return;
+      sig.push(norm(t));
+      const f = m.columns[String(col)];
+      if (f) headers[norm(t)] = f;
     });
     setSetting(db, `workbook_map:${def.key}`, JSON.stringify({ ...headers, __signature: sig.join("|") }));
 
@@ -177,14 +174,14 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo): Promis
 
     const tx = db.transaction(() => {
       for (let r = m.headerRow + 1; r <= ws.rowCount; r++) {
-        const row = ws.getRow(r);
-        if (!row.hasValues) continue;
+        const row = ws.rows.get(r);
+        if (!row) continue;
         const input: Record<string, unknown> = {};
         let any = false;
         for (const c of colMap) {
-          const raw = row.getCell(c.index).value;
+          const raw = row[c.index];
           let v: unknown = raw instanceof Date ? raw : cellText(raw).trim();
-          if (typeof raw === "object" && raw !== null && !(raw instanceof Date) && "result" in raw) v = raw.result ?? "";
+          if (typeof raw === "object" && raw !== null && !(raw instanceof Date) && "result" in raw) v = (raw as { result?: unknown }).result ?? "";
           if (typeof raw === "number") v = raw;
           if (v !== "" && v !== null && v !== undefined) any = true;
           input[c.field.key] = v;

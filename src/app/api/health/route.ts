@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 /** GET /api/health – plain status page for troubleshooting (no secrets, no login needed). */
 export async function GET() {
-  const out: Record<string, unknown> = { ok: true, time: new Date().toISOString(), node: process.version, cwd: process.cwd() };
+  const out: Record<string, unknown> = { ok: true, time: new Date().toISOString(), node: process.version, memory_mb: Math.round(process.memoryUsage().rss / 1048576), cwd: process.cwd() };
   try {
     const { getDb } = await import("@/lib/db");
     const db = getDb();

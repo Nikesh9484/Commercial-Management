@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { withUser } from "@/lib/api";
 import { AuthError } from "@/lib/auth";
 import { analyzeWorkbook } from "@/lib/workbook/analyze";
-import { storeUpload, appendUploadPart, finishUploadParts } from "@/lib/workbook/import";
+import { storeUpload, uploadPath, appendUploadPart, finishUploadParts } from "@/lib/workbook/import";
+import { readWorkbookValues } from "@/lib/workbook/read";
 
 export async function POST(req: Request, ctx: unknown) {
   return withUser(async (user) => {
@@ -49,7 +50,9 @@ export async function POST(req: Request, ctx: unknown) {
     // .xlsx files are zip archives and start with "PK"
     if (bytes[0] !== 0x50 || bytes[1] !== 0x4b) return NextResponse.json({ error: "This does not look like an .xlsx workbook. In Excel use Save As → Excel Workbook (.xlsx)." }, { status: 400 });
     const fileId = storeUpload(bytes);
-    const analysis = await analyzeWorkbook(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer, name || "workbook.xlsx", fileId);
+    bytes = Buffer.alloc(0); // let the copy go before parsing
+    const worksheets = await readWorkbookValues(uploadPath(fileId));
+    const analysis = analyzeWorkbook(worksheets, name || "workbook.xlsx", fileId);
     return NextResponse.json(analysis);
   })(req, ctx);
 }

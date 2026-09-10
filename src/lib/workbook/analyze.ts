@@ -1,4 +1,4 @@
-import ExcelJS from "exceljs";
+import { cellText, type SheetValues } from "./read";
 import { allRegisters } from "../registers";
 import type { FieldDef, RegisterDef } from "../registers/types";
 import { getDb, getSetting } from "../db";
@@ -245,33 +245,22 @@ export interface WorkbookAnalysis {
   sheets: SheetAnalysis[];
 }
 
-function cellText(v: ExcelJS.CellValue): string {
-  if (v === null || v === undefined) return "";
-  if (v instanceof Date) return v.toISOString().slice(0, 10);
-  if (typeof v === "object") {
-    if ("richText" in v) return v.richText.map((t) => t.text).join("");
-    if ("result" in v) return v.result === undefined || v.result === null ? "" : String(v.result);
-    if ("text" in v) return String(v.text);
-    return "";
-  }
-  return String(v);
-}
-
 /** Finds the row that looks most like a header: many short text cells, few numbers. */
-function findHeaderRow(ws: ExcelJS.Worksheet): number {
+function findHeaderRow(ws: SheetValues): number {
   let best = 1;
   let bestScore = -1;
   const limit = Math.min(ws.rowCount, 30);
   for (let r = 1; r <= limit; r++) {
-    const row = ws.getRow(r);
+    const values = ws.rows.get(r);
+    if (!values) continue;
     let text = 0;
     let numbers = 0;
-    row.eachCell((c) => {
-      const t = cellText(c.value).trim();
-      if (!t) return;
+    for (const v of values) {
+      const t = cellText(v).trim();
+      if (!t) continue;
       if (/^-?[\d,.]+$/.test(t)) numbers++;
       else if (t.length <= 60) text++;
-    });
+    }
     const score = text - numbers * 2;
     if (text >= 3 && score > bestScore) {
       bestScore = score;
@@ -356,18 +345,16 @@ function mapColumns(headers: { index: number; header: string }[], def: RegisterD
   return { columns, score };
 }
 
-export async function analyzeWorkbook(buffer: ArrayBuffer, fileName: string, fileId: string): Promise<WorkbookAnalysis> {
-  const wb = new ExcelJS.Workbook();
-  await wb.xlsx.load(buffer, { ignoreNodes: ["sheetPr", "sheetViews", "sheetFormatPr", "autoFilter", "rowBreaks", "hyperlinks", "pageMargins", "dataValidations", "pageSetup", "headerFooter", "printOptions", "picture", "drawing", "sheetProtection", "tableParts", "conditionalFormatting", "extLst"] });
+export function analyzeWorkbook(worksheets: SheetValues[], fileName: string, fileId: string): WorkbookAnalysis {
   const db = getDb();
   const sheets: SheetAnalysis[] = [];
-  for (const ws of wb.worksheets) {
+  for (const ws of worksheets) {
     if (ws.rowCount < 2) continue;
     const headerRow = findHeaderRow(ws);
     const headers: { index: number; header: string }[] = [];
-    ws.getRow(headerRow).eachCell({ includeEmpty: false }, (c, col) => {
-      const t = cellText(c.value).trim();
-      if (t) headers.push({ index: col, header: t });
+    (ws.rows.get(headerRow) ?? []).forEach((v, col) => {
+      const t = cellText(v).trim();
+      if (col > 0 && t) headers.push({ index: col, header: t });
     });
     if (headers.length < 2) continue;
     let best: { register: RegisterDef; columns: ColumnGuess[]; score: number } | null = null;
@@ -387,7 +374,8 @@ export async function analyzeWorkbook(buffer: ArrayBuffer, fileName: string, fil
     const useRegister = best && mapped >= 3;
     const sample: string[][] = [];
     for (let r = headerRow + 1; r <= Math.min(ws.rowCount, headerRow + 3); r++) {
-      sample.push(headers.map((h) => cellText(ws.getRow(r).getCell(h.index).value).slice(0, 40)));
+      const values = ws.rows.get(r);
+      if (values) sample.push(headers.map((h) => cellText(values[h.index]).slice(0, 40)));
     }
     sheets.push({
       name: ws.name,
