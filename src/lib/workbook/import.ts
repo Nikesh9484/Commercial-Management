@@ -28,6 +28,25 @@ export function storeUpload(buffer: Buffer): string {
   return id;
 }
 
+/** Chunked upload: append one piece; returns the upload id. */
+export function appendUploadPart(id: string | null, part: Buffer): string {
+  fs.mkdirSync(TMP, { recursive: true });
+  if (id && !/^[a-z0-9]+$/.test(id)) throw new ValidationError("Bad upload id.");
+  const useId = id || `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  fs.appendFileSync(path.join(TMP, `${useId}.part`), part);
+  return useId;
+}
+
+/** Chunked upload: read all the pieces back and remove the part file. */
+export function finishUploadParts(id: string): Buffer {
+  if (!/^[a-z0-9]+$/.test(id)) throw new ValidationError("Bad upload id.");
+  const p = path.join(TMP, `${id}.part`);
+  if (!fs.existsSync(p)) throw new ValidationError("The upload was interrupted. Please try again.");
+  const buf = fs.readFileSync(p);
+  fs.rmSync(p, { force: true });
+  return buf;
+}
+
 export function readUpload(id: string): Buffer {
   if (!/^[a-z0-9]+$/.test(id)) throw new ValidationError("Bad upload id.");
   const p = path.join(TMP, `${id}.xlsx`);

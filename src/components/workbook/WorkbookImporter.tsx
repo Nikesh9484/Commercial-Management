@@ -34,32 +34,52 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo 
   const [createLookups, setCreateLookups] = useState(true);
   const [result, setResult] = useState<ImportResult | null>(null);
 
+  const [progress, setProgress] = useState("");
+
   async function analyze() {
     if (!file) return;
     setBusy(true);
-    // Raw bytes rather than a multipart form: some browsers / proxies produce forms the server cannot parse.
-    let res: Response;
-    try {
-      res = await fetch("/api/workbook/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/octet-stream", "X-File-Name": encodeURIComponent(file.name) },
-        body: await file.arrayBuffer(),
-      });
-    } catch (e) {
-      setBusy(false);
-      return toast(`Upload failed: ${e instanceof Error ? e.message : String(e)}`, "error");
-    }
-    const text = await res.text();
-    let j: { error?: string } = {};
-    try {
-      j = JSON.parse(text);
-    } catch {
-      setBusy(false);
-      return toast(`The server replied with an unexpected answer (${res.status}). ${text.slice(0, 120)}`, "error");
+    // The file goes up in small text pieces (base64 JSON). Big binary uploads get cut short by some
+    // company web filters; small text requests pass, and the server checks the total size at the end.
+    const CHUNK = 256 * 1024;
+    const count = Math.max(1, Math.ceil(file.size / CHUNK));
+    let uploadId = "";
+    let j: { error?: string; uploadId?: string } = {};
+    for (let i = 0; i < count; i++) {
+      setProgress(count > 1 ? `Uploading part ${i + 1} of ${count}…` : "Uploading…");
+      const piece = file.slice(i * CHUNK, (i + 1) * CHUNK);
+      const data = await toBase64(piece);
+      let res: Response;
+      let text = "";
+      try {
+        res = await fetch("/api/workbook/analyze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ uploadId, name: file.name, size: file.size, index: i, count, data }),
+        });
+        text = await res.text();
+      } catch (e) {
+        setBusy(false);
+        setProgress("");
+        return toast(`Upload failed on part ${i + 1} of ${count}: ${e instanceof Error ? e.message : String(e)}`, "error");
+      }
+      try {
+        j = JSON.parse(text);
+      } catch {
+        setBusy(false);
+        setProgress("");
+        return toast(`The server replied with an unexpected answer (${res.status}). ${text.slice(0, 120)}`, "error");
+      }
+      if (!res.ok) {
+        setBusy(false);
+        setProgress("");
+        return toast(j.error ?? "Could not read the file.", "error");
+      }
+      uploadId = j.uploadId ?? uploadId;
     }
     setBusy(false);
-    if (!res.ok) return toast(j.error ?? "Could not read the file.", "error");
-    const a = j as WorkbookAnalysis;
+    setProgress("");
+    const a = j as unknown as WorkbookAnalysis;
     setAnalysis(a);
     const m: typeof mapping = {};
     for (const s of a.sheets) m[s.name] = { register: s.register, columns: Object.fromEntries(s.columns.map((c) => [String(c.index), c.field])) };
@@ -133,7 +153,7 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo 
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <button className="btn btn-primary" onClick={analyze} disabled={!file || busy}>
-            <FileSpreadsheet size={16} /> {busy && !analysis ? "Reading…" : "Read the workbook"}
+            <FileSpreadsheet size={16} /> {busy && !analysis ? progress || "Reading…" : "Read the workbook"}
           </button>
           <span className="text-xs text-muted">Nothing is saved at this step; you review the app&apos;s reading first.</span>
         </div>
@@ -311,4 +331,13 @@ function SheetMapper({ sheet, registers, value, onChange }: { sheet: SheetAnalys
       )}
     </div>
   );
+}
+
+function toBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(",")[1] ?? "");
+    r.onerror = () => reject(r.error ?? new Error("Could not read the file."));
+    r.readAsDataURL(blob);
+  });
 }

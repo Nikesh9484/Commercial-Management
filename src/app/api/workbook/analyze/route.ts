@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { withUser } from "@/lib/api";
 import { AuthError } from "@/lib/auth";
 import { analyzeWorkbook } from "@/lib/workbook/analyze";
-import { storeUpload } from "@/lib/workbook/import";
+import { storeUpload, appendUploadPart, finishUploadParts } from "@/lib/workbook/import";
 
 export async function POST(req: Request, ctx: unknown) {
   return withUser(async (user) => {
@@ -10,7 +10,21 @@ export async function POST(req: Request, ctx: unknown) {
     let name = "";
     let bytes: Buffer;
     const type = req.headers.get("content-type") ?? "";
-    if (type.startsWith("multipart/form-data")) {
+    if (type.includes("application/json")) {
+      // the app sends the file in base64 pieces so company web filters do not cut it short
+      const body = (await req.json()) as { uploadId?: string; name?: string; size?: number; index?: number; count?: number; data?: string };
+      const part = Buffer.from(body.data ?? "", "base64");
+      const id = appendUploadPart(body.uploadId || null, part);
+      if ((body.index ?? 0) < (body.count ?? 1) - 1) return NextResponse.json({ uploadId: id });
+      name = body.name ?? "";
+      bytes = finishUploadParts(id);
+      if (typeof body.size === "number" && bytes.length !== body.size) {
+        return NextResponse.json(
+          { error: `The upload arrived incomplete: the server received ${bytes.length.toLocaleString()} of ${body.size.toLocaleString()} bytes. Your network is cutting the upload short; please try again, or use your phone or another network.` },
+          { status: 400 },
+        );
+      }
+    } else if (type.startsWith("multipart/form-data")) {
       // older clients / curl: a normal form upload
       let file: FormDataEntryValue | null = null;
       try {
