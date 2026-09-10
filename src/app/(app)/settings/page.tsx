@@ -8,6 +8,7 @@ import { Chip } from "@/components/ui/Chip";
 import { getDb } from "@/lib/db";
 import { backupStatus } from "@/lib/cloud-backup";
 import { BackupCard } from "@/components/settings/BackupCard";
+import { StartOverCard } from "@/components/settings/StartOverCard";
 
 export const metadata = { title: "Settings" };
 
@@ -55,6 +56,7 @@ export default async function SettingsPage() {
             </div>
           </section>
         ))}
+        {user.role === "admin" && <StartOverCard />}
       </div>
     </div>
   );
