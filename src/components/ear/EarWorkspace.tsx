@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { FolderUp, FileUp, Trash2, Download, Sparkles, Loader2, AlertTriangle, CheckCircle2, FileText, Save, KeyRound } from "lucide-react";
+import { FolderUp, FileUp, Trash2, Download, Sparkles, Loader2, AlertTriangle, CheckCircle2, FileText, Save, KeyRound, Eraser } from "lucide-react";
 import { Chip } from "@/components/ui/Chip";
 import { useToast } from "@/components/ui/Toast";
 import type { ChipTone } from "@/lib/registers/types";
@@ -122,6 +122,16 @@ export function EarWorkspace({ initial, files: initialFiles, engine, canEdit }: 
     router.refresh();
   }
 
+  async function removeAll(bucket: Bucket, title: string, count: number) {
+    if (!confirm(`Remove all ${count} document${count === 1 ? "" : "s"} from "${title}"? They are deleted from the server; you can upload the folder again afterwards.`)) return;
+    const r = await fetch(`/api/ear/${c.id}/files?bucket=${bucket}`, { method: "DELETE" });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) return toast(j.error ?? "Could not remove the documents.", "error");
+    setFiles((cur) => cur.filter((x) => x.bucket !== bucket));
+    toast(`${j.removed} document${j.removed === 1 ? "" : "s"} removed.`);
+    router.refresh();
+  }
+
   async function remove(f: FileInfo) {
     if (!confirm(`Remove ${f.rel_path} from the case?`)) return;
     const r = await fetch(`/api/ear/${c.id}/files/${f.id}`, { method: "DELETE" });
@@ -232,6 +242,11 @@ export function EarWorkspace({ initial, files: initialFiles, engine, canEdit }: 
                     <button className="btn btn-secondary btn-sm" onClick={() => inputs.current[`${b.key}-files`]?.click()} disabled={!!progress}>
                       <FileUp size={14} /> {b.single ? "Choose file" : "Add files"}
                     </button>
+                    {list.length > 0 && (
+                      <button className="btn btn-ghost btn-sm text-red-600" onClick={() => removeAll(b.key, b.title, list.length)} disabled={!!progress} title={`Remove all ${list.length} documents in this group`}>
+                        <Eraser size={14} /> Remove all
+                      </button>
+                    )}
                     <input
                       ref={(el) => {
                         inputs.current[`${b.key}-dir`] = el;

@@ -263,6 +263,22 @@ export function removeFile(caseId: number, fileId: number, user: UserInfo, quiet
   if (!quiet) db().prepare("UPDATE ear_cases SET updated_at = ?, updated_by = ? WHERE id = ?").run(nowIso(), user.name, caseId);
 }
 
+/** Empties one document group of a case (or every group when `bucket` is null). Returns how many files were removed. */
+export function removeBucket(caseId: number, bucket: string | null, user: UserInfo): number {
+  assertUser(user);
+  const c = getCase(caseId);
+  if (!c) throw new ValidationError("Case not found.");
+  if (bucket !== null && !(EAR_BUCKETS as readonly string[]).includes(bucket)) throw new ValidationError("Unknown document group.");
+  const d = db();
+  const files = (bucket === null ? d.prepare(`SELECT ${FILE_COLS} FROM ear_files WHERE case_id = ?`).all(caseId) : d.prepare(`SELECT ${FILE_COLS} FROM ear_files WHERE case_id = ? AND bucket = ?`).all(caseId, bucket)) as EarFile[];
+  for (const f of files) fs.rmSync(path.join(earDataDir(), String(caseId), f.name), { force: true });
+  if (bucket === null) d.prepare("DELETE FROM ear_files WHERE case_id = ?").run(caseId);
+  else d.prepare("DELETE FROM ear_files WHERE case_id = ? AND bucket = ?").run(caseId, bucket);
+  d.prepare("UPDATE ear_cases SET updated_at = ?, updated_by = ? WHERE id = ?").run(nowIso(), user.name, caseId);
+  logAudit(getDb(), { registerKey: "ear_cases", recordId: caseId, action: "delete", user, summary: `Removed ${files.length} document${files.length === 1 ? "" : "s"} from ${bucket ? BUCKET_INFO[bucket as EarBucket].title : "all groups"} of case: ${c.title}` });
+  return files.length;
+}
+
 export function filePath(caseId: number, f: EarFile): string {
   return path.join(earDataDir(), String(caseId), f.name);
 }

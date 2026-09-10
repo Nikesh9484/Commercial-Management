@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { withUser } from "@/lib/api";
 import { AuthError } from "@/lib/auth";
 import { appendUploadPart, finishUploadParts } from "@/lib/workbook/import";
-import { addFile, getCase, canUseEar, EAR_MAX_FILE_BYTES } from "@/lib/ear/store";
+import { addFile, getCase, canUseEar, removeBucket, EAR_MAX_FILE_BYTES } from "@/lib/ear/store";
 import { extractText } from "@/lib/ear/extract";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -31,5 +31,15 @@ export async function POST(req: Request, ctx: Ctx) {
     const extracted = await extractText(name, bytes, String(body.mime ?? ""));
     const file = addFile(c.id, String(body.bucket ?? ""), { name, relPath: body.relPath, bytes, mime: String(body.mime ?? "") }, extracted, user);
     return NextResponse.json({ file }, { status: 201 });
+  })(req, ctx);
+}
+
+/** DELETE ?bucket=submission|template|contract|prev_ear|prev_submission – empties that group; without ?bucket, every group. */
+export async function DELETE(req: Request, ctx: Ctx) {
+  return withUser<Ctx>(async (user, { params }) => {
+    const { id } = await params;
+    const bucket = new URL(req.url).searchParams.get("bucket");
+    const removed = removeBucket(Number(id), bucket || null, user);
+    return NextResponse.json({ ok: true, removed });
   })(req, ctx);
 }
