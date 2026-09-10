@@ -4,7 +4,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { getAppContext } from "@/lib/context";
 import { getModule } from "@/lib/modules";
 import { getRegisterDef } from "@/lib/registers";
-import { listRecords } from "@/lib/registers/engine";
+import { recordsForView } from "@/lib/view-mode";
 import { getClaimsSummary } from "@/lib/claims/summary";
 import { formatMoney, formatNumber } from "@/lib/format";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -20,7 +20,7 @@ export default async function ClaimsPage() {
   const user = (await getCurrentUser())!;
   const mod = getModule("claims-disputes")!;
   const ctx = getAppContext();
-  const summary = ctx.programme ? getClaimsSummary(ctx.programme.id, listRecords(getRegisterDef("claims")!)) : null;
+  const summary = ctx.programme ? getClaimsSummary(ctx.programme.id, recordsForView(getRegisterDef("claims")!)) : null;
 
   return (
     <div className="space-y-5">

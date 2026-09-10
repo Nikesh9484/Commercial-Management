@@ -3,6 +3,8 @@ import { computeCostReport, type CostReport } from "../cost-report/compute";
 import { paymentTimeline } from "../payments/compute";
 import { getRegisterDef } from "../registers";
 import { listRecords } from "../registers/engine";
+import { recordsForView, paymentSourceForView } from "../view-mode";
+import type { ContractRow, ApplicationRow } from "../payments/compute";
 import { getBondsSummary, type BondsSummary } from "../bonds/summary";
 import { getChecklist } from "../checklist";
 import { CHANGE_STAGES } from "../registers/defs/changes";
@@ -28,17 +30,18 @@ const OPEN_STAGE_STATUSES = ["Pending", "Revised & Re-submit"];
 
 export function getDashboard(db: Database.Database, programmeId: number, periodId: number | null): DashboardData {
   const report = computeCostReport(programmeId, periodId);
-  const payments = paymentTimeline(db, programmeId);
+  // every figure follows the top-bar period: the stored copy of an earlier / locked report, else live
+  const payments = paymentTimeline(db, programmeId, undefined, paymentSourceForView<ContractRow, ApplicationRow>(db, programmeId));
 
-  const changes = listRecords(getRegisterDef("changes")!);
+  const changes = recordsForView(getRegisterDef("changes")!);
   const openStages = CHANGE_STAGES.filter((s) => ["rfc", "pvo", "vo", "dvo"].includes(s.prefix)).map((s) => ({
     stage: s.short,
     open: changes.filter((c) => OPEN_STAGE_STATUSES.includes(String(c[`${s.prefix}_status_id__label`] ?? ""))).length,
   }));
-  const claims = listRecords(getRegisterDef("claims")!);
-  const ews = listRecords(getRegisterDef("early_warnings")!);
-  const risks = listRecords(getRegisterDef("risks")!);
-  const bonds = getBondsSummary(listRecords(getRegisterDef("bonds")!));
+  const claims = recordsForView(getRegisterDef("claims")!);
+  const ews = recordsForView(getRegisterDef("early_warnings")!);
+  const risks = recordsForView(getRegisterDef("risks")!);
+  const bonds = getBondsSummary(recordsForView(getRegisterDef("bonds")!));
   const actions = listRecords(getRegisterDef("actions")!)
     .filter((a) => a.status !== "Closed")
     .sort((a, b) => String(a.due_date ?? "9999").localeCompare(String(b.due_date ?? "9999")));

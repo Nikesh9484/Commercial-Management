@@ -1,7 +1,8 @@
 import { APP_NAME } from "./brand";
 import ExcelJS from "exceljs";
 import type { FieldDef, RegisterDef, RecordRow, UserInfo } from "./registers/types";
-import { listRecords, lookupOptions, createRecord, updateRecord, getRecord, ValidationError } from "./registers/engine";
+import { lookupOptions, createRecord, updateRecord, getRecord, ValidationError } from "./registers/engine";
+import { recordsForView } from "./view-mode";
 import { getDb } from "./db";
 import { formatDate, toDate, todayIso } from "./format";
 import { XL, titleBlock, headerRow, totalRow, sumFormula, finishWorkbook, setWorkbookLink, applyColumnFormat, solid } from "./xlsx-style";
@@ -22,7 +23,7 @@ export async function exportRegister(def: RegisterDef, link?: { url: string; lab
   setWorkbookLink(wb, link);
   const ws = wb.addWorksheet(def.title.slice(0, 31).replace(/[\\/?*[\]:]/g, " "));
   const fields = exportFields(def);
-  const rows = listRecords(def);
+  const rows = recordsForView(def);
   const cols = [{ header: "ID", key: "id", width: 8, type: "number" }, ...fields.map((f) => ({ header: f.label, key: f.key, width: f.type === "textarea" ? 40 : Math.max(14, Math.min(34, f.label.length + 4)), type: f.type })), { header: "Last updated", key: "updated_at", width: 14, type: "date" }, { header: "Updated by", key: "updated_by", width: 18, type: "text" }];
   titleBlock(ws, def.title, `${rows.length} row(s) · exported ${formatDate(todayIso())} · ${APP_NAME}`, Math.min(cols.length, 10));
   headerRow(ws.addRow(cols.map((c) => c.header)));

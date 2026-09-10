@@ -3,7 +3,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { getAppContext } from "@/lib/context";
 import { getModule } from "@/lib/modules";
 import { getRegisterDef } from "@/lib/registers";
-import { listRecords } from "@/lib/registers/engine";
+import { recordsForView } from "@/lib/view-mode";
 import { getBondsSummary } from "@/lib/bonds/summary";
 import { formatMoney } from "@/lib/format";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -17,7 +17,7 @@ export default async function BondsPage() {
   const user = (await getCurrentUser())!;
   const mod = getModule("bonds-insurance")!;
   const ctx = getAppContext();
-  const summary = ctx.programme ? getBondsSummary(listRecords(getRegisterDef("bonds")!)) : null;
+  const summary = ctx.programme ? getBondsSummary(recordsForView(getRegisterDef("bonds")!)) : null;
 
   return (
     <div className="space-y-5">

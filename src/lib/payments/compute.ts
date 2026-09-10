@@ -180,9 +180,9 @@ function approvedClaimsByLine(db: Database.Database, programmeId: number): Map<n
 }
 
 /** Contract-level calculations for a programme, keyed by contract id. */
-export function computeContracts(db: Database.Database, programmeId: number): { contracts: Map<number, ContractComputed>; applications: Map<number, ApplicationComputed>; rows: ContractRow[]; apps: ApplicationRow[] } {
-  const rows = loadContracts(db, programmeId);
-  const apps = loadApplications(db, programmeId);
+export function computeContracts(db: Database.Database, programmeId: number, source?: { contracts: ContractRow[]; apps: ApplicationRow[] }): { contracts: Map<number, ContractComputed>; applications: Map<number, ApplicationComputed>; rows: ContractRow[]; apps: ApplicationRow[] } {
+  const rows = source ? source.contracts : loadContracts(db, programmeId);
+  const apps = source ? source.apps : loadApplications(db, programmeId);
   const applications = computeApplications(rows, apps);
   const dvo = changeFeeds(db, programmeId).dvo;
   const claims = approvedClaimsByLine(db, programmeId);
@@ -235,8 +235,8 @@ export function revisedByLine(db: Database.Database, programmeId: number): Map<n
 }
 
 /** Points for the cumulative claimed / certified / paid chart (one per application date, summed across the given contracts). */
-export function paymentTimeline(db: Database.Database, programmeId: number, contractId?: number): { date: string; claimed: number; certified: number; paid: number }[] {
-  const { applications, apps } = computeContracts(db, programmeId);
+export function paymentTimeline(db: Database.Database, programmeId: number, contractId?: number, source?: { contracts: ContractRow[]; apps: ApplicationRow[] }): { date: string; claimed: number; certified: number; paid: number }[] {
+  const { applications, apps } = computeContracts(db, programmeId, source);
   const mine = contractId ? apps.filter((a) => a.contract_id === contractId) : apps;
   const dates = [...new Set(mine.map((a) => a.application_date))].sort();
   const latest = new Map<number, { claimed: number; certified: number; paid: number }>();

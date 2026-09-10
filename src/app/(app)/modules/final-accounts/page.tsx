@@ -2,7 +2,7 @@ import { AlertTriangle } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth";
 import { getAppContext } from "@/lib/context";
 import { getRegisterDef } from "@/lib/registers";
-import { listRecords } from "@/lib/registers/engine";
+import { recordsForView } from "@/lib/view-mode";
 import { formatMoney } from "@/lib/format";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { RegisterPage } from "@/components/register/RegisterPage";
@@ -15,7 +15,7 @@ export const metadata = { title: "Final Account Status" };
 export default async function FinalAccountsPage() {
   const user = (await getCurrentUser())!;
   const ctx = getAppContext();
-  const rows = ctx.programme ? listRecords(getRegisterDef("final_accounts")!) : [];
+  const rows = ctx.programme ? recordsForView(getRegisterDef("final_accounts")!) : [];
   const by = (status: string) => rows.filter((r) => r.status === status);
   const sum = (list: typeof rows) => list.reduce((t, r) => t + Number(r.afa ?? 0), 0);
   const open = by("Open");

@@ -3,9 +3,10 @@ import { getCurrentUser } from "@/lib/auth";
 import { getAppContext } from "@/lib/context";
 import { getModule } from "@/lib/modules";
 import { getRegisterDef } from "@/lib/registers";
-import { listRecords } from "@/lib/registers/engine";
+import { recordsForView, paymentSourceForView } from "@/lib/view-mode";
 import { getDb } from "@/lib/db";
 import { paymentTimeline } from "@/lib/payments/compute";
+import type { ContractRow, ApplicationRow } from "@/lib/payments/compute";
 import { formatMoney, formatPercent } from "@/lib/format";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { RegisterPage } from "@/components/register/RegisterPage";
@@ -27,13 +28,13 @@ export default async function PaymentsPage() {
       </div>
     );
   }
-  const contracts = listRecords(getRegisterDef("contracts")!);
+  const contracts = recordsForView(getRegisterDef("contracts")!);
   const num = (v: unknown) => (v === null || v === undefined || v === "" ? 0 : Number(v));
   const revised = contracts.reduce((t, r) => t + num(r.revised_contract_value), 0);
   const certified = contracts.reduce((t, r) => t + num(r.latest_cum_certified), 0);
   const applied = contracts.reduce((t, r) => t + num(r.net_cum_applied), 0);
   const paid = contracts.reduce((t, r) => t + num(r.cum_paid), 0);
-  const points = paymentTimeline(getDb(), ctx.programme.id);
+  const points = paymentTimeline(getDb(), ctx.programme.id, undefined, paymentSourceForView<ContractRow, ApplicationRow>(getDb(), ctx.programme.id));
 
   return (
     <div className="space-y-5">

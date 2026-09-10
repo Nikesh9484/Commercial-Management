@@ -3,7 +3,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { getAppContext } from "@/lib/context";
 import { getModule } from "@/lib/modules";
 import { getRegisterDef } from "@/lib/registers";
-import { listRecords } from "@/lib/registers/engine";
+import { recordsForView } from "@/lib/view-mode";
 import { formatMoney } from "@/lib/format";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Chip } from "@/components/ui/Chip";
@@ -15,7 +15,7 @@ export default async function ProvisionalSumsPage() {
   const user = (await getCurrentUser())!;
   const mod = getModule("provisional-sums")!;
   const ctx = getAppContext();
-  const rows = ctx.programme ? listRecords(getRegisterDef("provisional_sums")!) : [];
+  const rows = ctx.programme ? recordsForView(getRegisterDef("provisional_sums")!) : [];
   const num = (v: unknown) => (v === null || v === undefined || v === "" ? 0 : Number(v));
   const budget = rows.reduce((t, r) => t + num(r.budget), 0);
   const instructed = rows.reduce((t, r) => t + num(r.contract_value), 0);

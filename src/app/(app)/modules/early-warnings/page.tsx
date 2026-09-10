@@ -3,7 +3,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { getAppContext } from "@/lib/context";
 import { getModule } from "@/lib/modules";
 import { getRegisterDef } from "@/lib/registers";
-import { listRecords } from "@/lib/registers/engine";
+import { recordsForView } from "@/lib/view-mode";
 import { getEwSummary, getRiskSummary } from "@/lib/risks/summary";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EwRisksPage } from "@/components/risks/EwRisksPage";
@@ -25,8 +25,8 @@ export default async function EarlyWarningsModule({ searchParams }: { searchPara
       </div>
     );
   }
-  const ew = getEwSummary(listRecords(getRegisterDef("early_warnings")!));
-  const risks = getRiskSummary(listRecords(getRegisterDef("risks")!));
+  const ew = getEwSummary(recordsForView(getRegisterDef("early_warnings")!));
+  const risks = getRiskSummary(recordsForView(getRegisterDef("risks")!));
   return (
     <div>
       <PageHeader exportSection="D" eyebrow={`Module ${mod.no}`} title={mod.title} subtitle="Early warning notices (feeding column L of the cost report) and the commercial risk & opportunity register with its heat map." />
