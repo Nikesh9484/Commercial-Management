@@ -38,7 +38,7 @@ export default async function BondsPage() {
           </div>
           <ExpiringSoonCard items={summary.expiring} expired={summary.expired} released={summary.released} superseded={summary.superseded} />
           <p className="text-xs text-muted">
-            Rows turn amber within 60 days of expiry and red within 30 days or once expired. A bond whose contract is closed (Final Account Status closed / not required, contract Closed or Completed, or &quot;Contract closed&quot; ticked on the row) shows as Released and is not flagged. An older policy replaced by a newer one of the same type on the same contract shows as Superseded. Contract requirement = the % entered × revised contract value (or the original sum if no cost line is linked), or the fixed SAR amount. Types are managed under Settings → Insurance / Bond Types.
+            Rows turn amber within 60 days of expiry and red within 30 days or once expired. A bond whose contract is closed shows as Released and is not flagged: the Final Account Status decides first (Closed, Not Required or Direct Payment – No FA), Payment Tracking (Closed, Completed, Terminated) decides where there is no final account, and &quot;Contract closed&quot; can be ticked on the row. Contracts are recognised by their code (031C02), so a closed contract releases the bonds on every one of its cost lines. An older policy replaced by a newer one of the same type on the same contract shows as Superseded. Contract requirement = the % entered × revised contract value (or the original sum if no cost line is linked), or the fixed SAR amount. Types are managed under Settings → Insurance / Bond Types.
           </p>
           <RegisterPage registerKey="bonds" isAdmin={user.role === "admin"} />
         </>

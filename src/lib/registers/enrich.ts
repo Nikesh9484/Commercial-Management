@@ -211,6 +211,7 @@ function enrichProvisionalSum(row: RecordRow) {
 function enrichBond(row: RecordRow, revised: Map<number, number>, closed: ClosedContracts, superseded: boolean) {
   const lineIdRaw = row.cost_line_id === null || row.cost_line_id === undefined ? null : Number(row.cost_line_id);
   const released = row.contract_closed === true || (lineIdRaw !== null ? closed.lines.has(lineIdRaw) : closed.contractors.has(Number(row.contractor_id)));
+  row.contract_closed_reason = released ? (row.contract_closed === true ? "Ticked on the row" : lineIdRaw !== null ? "Final Account Status / Payment Tracking: contract closed" : "All this contractor's contracts are closed") : null;
   row.released = released || superseded;
   row.superseded = superseded && !released;
   const lineId = row.cost_line_id === null || row.cost_line_id === undefined ? null : Number(row.cost_line_id);
