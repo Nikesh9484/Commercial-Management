@@ -101,7 +101,8 @@ function flatten(doc: EarDocument): Line[] {
 
 const pad = (cells: string[], n: number) => Array.from({ length: n }, (_, i) => cells[i] ?? "");
 const splitRow = (s: string) => s.split(/\s*\|\s*/);
-const norm = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
+/** Comparison key: whitespace and the space after a leading paragraph number do not count. */
+export const norm = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase().replace(/^(\d+(?:\.\d+)*)\s+/, "$1");
 
 /** Splits the previous report (Word / PDF text) into paragraphs. PDF text keeps printed line breaks, so those are joined back. */
 export function paragraphsFromText(text: string, kind: string): string[] {
@@ -130,7 +131,7 @@ export function paragraphsFromText(text: string, kind: string): string[] {
   return out.filter((l) => l.length > 1 && !/^page \d+( of \d+)?$/i.test(l) && !/· Confidential · Page/.test(l));
 }
 
-interface Aligned {
+export interface Aligned {
   /** per new line: unchanged, inserted, or changed from `old` */
   mode: ("same" | "inserted" | "changed")[];
   old: (string | undefined)[];
@@ -150,7 +151,7 @@ function similarity(a: string, b: string): number {
 }
 
 /** Lines of the new report against the paragraphs of the previous one. */
-function align(oldLines: string[], lines: Line[]): Aligned {
+export function align(oldLines: string[], lines: { text: string }[]): Aligned {
   const res: Aligned = { mode: lines.map(() => "inserted"), old: lines.map(() => undefined), deletedBefore: new Map() };
   const chunks = diffArrays(oldLines.map(norm), lines.map((l) => norm(l.text)));
   let oi = 0;

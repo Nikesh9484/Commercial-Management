@@ -5,6 +5,7 @@ import { logAudit } from "../audit";
 import type { UserInfo } from "../registers/types";
 import { EAR_SCHEMA, normaliseEar, para, note, bullets, table, type EarDocument } from "./model";
 import { renderEarDocx, paragraphsFromText } from "./docx";
+import { inspectTemplate, renderIntoTemplate, type TemplateInfo } from "./template-docx";
 import { getCase, listFiles, fileText, filePath, outputPath, setGeneration, type EarCase, type EarFile, type EarBucket } from "./store";
 import { extOf } from "./extract";
 
@@ -111,7 +112,26 @@ interface Bundle {
   stats: { chars: number; files: number; unreadable: string[]; imageCount: number };
 }
 
-function bundle(c: EarCase, files: EarFile[], programme: string): Bundle {
+/** The Word template, when there is one: its bytes and its heading outline. */
+async function wordTemplate(caseId: number, files: EarFile[]): Promise<{ bytes: Buffer; info: TemplateInfo } | null> {
+  const f = files.find((x) => x.bucket === "template" && /\.(docx|docm|dotx)$/i.test(x.rel_path));
+  if (!f) return null;
+  try {
+    const bytes = fs.readFileSync(filePath(caseId, f));
+    const info = await inspectTemplate(bytes);
+    if (!info.usable) console.error("[ear] template not usable as-is:", f.rel_path, bytes.length, "bytes");
+    return info.usable ? { bytes, info } : null;
+  } catch (e) {
+    console.error("[ear] template read failed:", e);
+    return null;
+  }
+}
+
+function outlineText(info: TemplateInfo): string {
+  return info.outline.map((h) => `${"  ".repeat(h.level - 1)}- (level ${h.level}) ${h.heading}`).join("\n");
+}
+
+function bundle(c: EarCase, files: EarFile[], programme: string, tpl: TemplateInfo | null): Bundle {
   const groups: [EarBucket, string][] = [
     ["template", "EAR TEMPLATE (structure and wording to follow)"],
     ["submission", "CONTRACTOR'S CLAIM SUBMISSION AND SUPPORTING DOCUMENTS"],
@@ -132,9 +152,10 @@ function bundle(c: EarCase, files: EarFile[], programme: string): Bundle {
   const imgs = images(c.id, files);
   const content: Anthropic.ContentBlockParam[] = [{ type: "text", text: parts.join("\n\n") }];
   if (imgs.length) content.push({ type: "text", text: `# PHOTOGRAPHS / IMAGES FROM THE SUBMISSION (${imgs.length})` }, ...imgs);
+  const outline = tpl && tpl.outline.length ? `\n\nREQUIRED OUTLINE – the Word template's own headings. Use exactly these headings, in this order, with these levels (you may add level 2 or level 3 sub-headings under them where the assessment needs them, e.g. one per delay event). Do NOT put numbers in headings or at the start of paragraphs: the numbering (1.0, 1.1, 1.1.1, Table n) is applied automatically in the template's style. Do not repeat the heading text inside the paragraphs.\n${outlineText(tpl)}` : "";
   content.push({
     type: "text",
-    text: `Now write the complete Employer's Assessment Report for this case as JSON in the required format.${c.revised ? `\n\n${REVISION_RULES}` : ""}\nThe "meta" cover block must include: Project, Employer, Contractor, Contract No, Claim reference, Submission reference and date, Report revision, Report date, Prepared by ("Commercial Manager").`,
+    text: `Now write the complete Employer's Assessment Report for this case as JSON in the required format.${c.revised ? `\n\n${REVISION_RULES}` : ""}\nThe "meta" cover block must include: Project, Employer, Contractor, Contract No, Contract title (the works, as named in the contract), Claim reference, Submission reference and date, Report revision, Report date, Prepared by ("Commercial Manager").${outline}`,
   });
   return { content, stats: { chars, files: nFiles, unreadable, imageCount: imgs.length } };
 }
@@ -175,8 +196,8 @@ function templateHeadings(files: EarFile[]): string[] {
   return out.length >= 3 ? out.slice(0, 40) : ["Introduction", "Contractor's submission", "Contractual basis and notices", "Assessment of delay", "Assessment of cost", "Conclusion and recommendation"];
 }
 
-function skeleton(c: EarCase, files: EarFile[], programme: string, b: Bundle): EarDocument {
-  const heads = templateHeadings(files);
+function skeleton(c: EarCase, files: EarFile[], programme: string, b: Bundle, tpl: TemplateInfo | null): EarDocument {
+  const heads = tpl && tpl.outline.length ? tpl.outline.map((h) => ({ text: h.heading, level: h.level })) : templateHeadings(files).map((h) => ({ text: h.replace(/^\d+(\.\d+)*\.?\s+/, ""), level: /^\d+\.\d+/.test(h) ? 2 : 1 }));
   const list = (bucket: EarBucket) => files.filter((f) => f.bucket === bucket).map((f) => `${f.rel_path} (${f.kind}${f.note ? ` – ${f.note}` : ""})`);
   return {
     title: "Employer's Assessment Report",
@@ -206,7 +227,8 @@ function skeleton(c: EarCase, files: EarFile[], programme: string, b: Bundle): E
           ]),
         ],
       },
-      ...heads.map((h) => ({ heading: h.replace(/^\d+(\.\d+)*\.?\s+/, ""), level: (/^\d+\.\d+/.test(h) ? 2 : 1) as number, blocks: [para("[To be written]")] })),
+      // a placeholder paragraph only under headings that have no sub-headings of their own
+      ...heads.map((h, k) => ({ heading: h.text, level: h.level, blocks: heads[k + 1] && heads[k + 1].level > h.level ? [] : [para("[To be written]")] })),
       { heading: "Contractor's submission – document list", level: 1, blocks: [bullets(list("submission").length ? list("submission") : ["(none uploaded)"])] },
     ],
     documents_relied_on: [...list("template"), ...list("contract")],
@@ -222,7 +244,8 @@ export async function generateEar(caseId: number, user: UserInfo, programmeName:
   if (c.revised && !files.some((f) => f.bucket === "prev_ear")) throw new Error("This is a revised submission: upload the previous EAR so the report can be written with tracked changes.");
   setGeneration(caseId, { status: "Generating", note: null }, user);
   try {
-    const b = bundle(c, files, programmeName);
+    const tpl = await wordTemplate(caseId, files);
+    const b = bundle(c, files, programmeName, tpl?.info ?? null);
     let doc: EarDocument;
     let how: string;
     if (engineConfigured()) {
@@ -230,7 +253,7 @@ export async function generateEar(caseId: number, user: UserInfo, programmeName:
       doc = r.doc;
       how = `Written by the drafting engine (${EAR_MODEL}; ${r.usage}) from ${b.stats.files} documents (${Math.round(b.stats.chars / 1000)}k characters read${b.stats.imageCount ? `, ${b.stats.imageCount} images` : ""}).`;
     } else {
-      doc = skeleton(c, files, programmeName, b);
+      doc = skeleton(c, files, programmeName, b, tpl?.info ?? null);
       how = `Skeleton only – the drafting engine is not configured (add ANTHROPIC_API_KEY on the server). ${b.stats.files} documents received.`;
     }
     if (b.stats.unreadable.length) how += ` Not readable: ${b.stats.unreadable.length} file${b.stats.unreadable.length === 1 ? "" : "s"}.`;
@@ -241,7 +264,19 @@ export async function generateEar(caseId: number, user: UserInfo, programmeName:
       if (prev) previousLines = paragraphsFromText(fileText(prev.id), prev.kind);
       if (!previousLines?.length) how += " The previous EAR had no readable text, so the file has no tracked changes.";
     }
-    const buf = await renderEarDocx(doc, { previousLines, revised: !!c.revised, revisionNo: c.revision_no, reference: c.claim_ref || c.contract_no || undefined });
+    let buf: Buffer | null = null;
+    if (tpl) {
+      const metaValue = (re: RegExp) => doc.meta.find((m) => re.test(m.label))?.value ?? "";
+      const today = new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
+      buf = await renderIntoTemplate(tpl.bytes, doc, {
+        previousLines,
+        revised: !!c.revised,
+        revisionNo: c.revision_no,
+        cover: { contractNo: c.contract_no || metaValue(/contract\s*no/i), contractor: c.contractor || metaValue(/^contractor/i), claimRef: c.claim_ref || metaValue(/claim/i), date: today, title: metaValue(/contract title/i) || metaValue(/^project/i) },
+      });
+      how += buf ? " Written into your Word template (its fonts, styles, cover, header and footer are unchanged; numbering regenerated)." : " The Word template could not be used as-is, so the report was laid out in the standard style.";
+    }
+    if (!buf) buf = await renderEarDocx(doc, { previousLines, revised: !!c.revised, revisionNo: c.revision_no, reference: c.claim_ref || c.contract_no || undefined });
     fs.writeFileSync(outputPath(caseId), buf);
     const clean = c.title.replace(/[^\w\- ]+/g, " ").replace(/\s+/g, " ").replace(/\s*-?\s*rev(ision)?\s*\d+\s*$/i, "").trim().slice(0, 60);
     const name = `EAR - ${clean}${c.revised ? ` - Rev ${c.revision_no}` : ""}.docx`;
