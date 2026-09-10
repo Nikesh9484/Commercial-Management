@@ -6,7 +6,7 @@
  * This file must stay free of server-only imports: it is shared with the browser.
  */
 
-export type Role = "admin" | "editor" | "viewer";
+export type Role = "admin" | "editor" | "contributor" | "viewer";
 
 export type FieldType =
   | "text"
@@ -121,6 +121,7 @@ export interface AuditEntry {
 export const ROLE_LABELS: Record<Role, string> = {
   admin: "Admin",
   editor: "Editor",
+  contributor: "Data entry (add only)",
   viewer: "Viewer",
 };
 
@@ -130,8 +131,18 @@ export function canEditRegister(def: RegisterDef, role: Role): boolean {
 }
 
 export function canViewRegister(def: RegisterDef, role: Role): boolean {
-  const roles = def.viewRoles ?? ["admin", "editor", "viewer"];
+  const roles = def.viewRoles ?? ["admin", "editor", "contributor", "viewer"];
   return roles.includes(role);
+}
+
+/** Adding rows: editors and admins, plus "data entry" users on every register an editor may edit. */
+export function canCreateRegister(def: RegisterDef, role: Role): boolean {
+  return canEditRegister(def, role) || (role === "contributor" && canEditRegister(def, "editor"));
+}
+
+/** Roles that may change existing data (edit, delete, cash flow, report control, imports). */
+export function isEditorRole(role: Role): boolean {
+  return role === "admin" || role === "editor";
 }
 
 /** Colour for a status value: green / amber / red / blue / grey. */

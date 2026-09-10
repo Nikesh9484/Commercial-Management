@@ -18,7 +18,7 @@ export default async function CostReportModule({ searchParams }: { searchParams:
         subtitle="Schedule A (Level 1, by asset and cost category) and Schedule B (Level 2, by package / contractor). All formulas are calculated by the app."
         exportSection={tab === "level1" ? "level1" : tab === "setup" ? undefined : "level2"}
       />
-      <CostReportPage key={tab ?? "level2"} canEdit={user.role !== "viewer"} isAdmin={user.role === "admin"} initialTab={tab} />
+      <CostReportPage key={tab ?? "level2"} canEdit={user.role === "admin" || user.role === "editor"} isAdmin={user.role === "admin"} initialTab={tab} />
     </div>
   );
 }

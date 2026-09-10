@@ -198,6 +198,23 @@ function seed(db: Database.Database) {
     ).run(name, email, bcrypt.hashSync(password, 10), stamp, stamp);
   }
 
+  // Two "data entry" accounts (add new rows, run reports and emails; cannot edit or delete). Created once;
+  // the Admin can rename, re-password or delete them under Settings -> Users.
+  if (getSetting(db, "seeded_data_entry_users") !== "1") {
+    const password = process.env.DATA_ENTRY_PASSWORD || "123456";
+    const ins = db.prepare(
+      `INSERT INTO users(name, email, role, active, password_hash, created_at, created_by, updated_at, updated_by)
+       VALUES(?, ?, 'contributor', 1, ?, ?, 'system', ?, 'system')`,
+    );
+    for (const [name, email] of [
+      ["User-1", "user1@commercial.local"],
+      ["User-2", "user2@commercial.local"],
+    ]) {
+      if (!db.prepare("SELECT 1 FROM users WHERE lower(email) = ?").get(email)) ins.run(name, email, bcrypt.hashSync(password, 10), stamp, stamp);
+    }
+    setSetting(db, "seeded_data_entry_users", "1");
+  }
+
   seedList(db, "approval_statuses", ["Approved", "Rejected", "Pending", "Revised & Re-submit", "Superseded", "Cancelled", "Transferred", "Review Complete"], stamp);
   seedList(db, "change_initiators", ["Contract", "Consultant", "Contractor", "Employer", "Authority"], stamp);
   seedList(db, "project_stages", ["Pre-Contract Variation", "Post-Contract Variation", "Consultant Variation"], stamp);

@@ -34,7 +34,7 @@ export default async function ImportWorkbookPage() {
         <div className="card flex items-center gap-2 p-5 text-sm text-muted">
           <AlertTriangle size={16} /> Select a programme in the top bar first.
         </div>
-      ) : user.role === "viewer" ? (
+      ) : user.role !== "admin" && user.role !== "editor" ? (
         <div className="card p-5 text-sm text-muted">Only Editors and Admins can import.</div>
       ) : (
         <WorkbookImporter registers={registers} periods={periods} isAdmin={user.role === "admin"} defaultReportNo={nextNo} />

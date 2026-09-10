@@ -8,7 +8,7 @@ import { looksLikeMarinaReport, convertMarinaReport, toSheetValues } from "@/lib
 
 export async function POST(req: Request, ctx: unknown) {
   return withUser(async (user) => {
-    if (user.role === "viewer") throw new AuthError("Viewers cannot import.");
+    if (user.role !== "admin" && user.role !== "editor") throw new AuthError("Only Editors and Admins can import a workbook.");
     let name = "";
     let bytes: Buffer;
     const type = req.headers.get("content-type") ?? "";

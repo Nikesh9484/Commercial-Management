@@ -36,7 +36,7 @@ export default async function HomePage() {
   const d = getDashboard(getDb(), ctx.programme.id, ctx.period?.id ?? null);
   const movement = getMovement(getDb(), ctx.programme.id, ctx.period?.id ?? null);
   const g = executiveTotals(d.report);
-  const canEdit = user.role !== "viewer";
+  const canEdit = user.role === "admin" || user.role === "editor";
 
   const money: { label: string; value: number; sub?: string; signed?: boolean; col: string }[] = [
     { label: "Approved Budget", value: g.E, col: "E" },

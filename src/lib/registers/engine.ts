@@ -2,7 +2,7 @@ import type Database from "better-sqlite3";
 import { getDb, columnFor, getSetting } from "../db";
 import { getRegisterDef, allRegisters } from "./index";
 import type { FieldDef, LookupOption, RecordRow, RegisterDef, UserInfo } from "./types";
-import { canEditRegister, canViewRegister } from "./types";
+import { canEditRegister, canViewRegister, canCreateRegister } from "./types";
 import { logAudit } from "../audit";
 import { hashPassword, AuthError } from "../auth";
 import { nowIso, parseDateInput, formatMonthYear } from "../format";
@@ -28,7 +28,13 @@ export function assertCanView(def: RegisterDef, user: UserInfo) {
 }
 
 export function assertCanEdit(def: RegisterDef, user: UserInfo) {
-  if (!canEditRegister(def, user.role)) throw new AuthError("Your role is view-only for this register.");
+  if (!canEditRegister(def, user.role)) {
+    throw new AuthError(user.role === "contributor" ? "Your role can add new rows but not change or delete existing ones. Ask an Editor or Admin." : "Your role is view-only for this register.");
+  }
+}
+
+export function assertCanCreate(def: RegisterDef, user: UserInfo) {
+  if (!canCreateRegister(def, user.role)) throw new AuthError("Your role is view-only for this register.");
 }
 
 /* ------------------------------------------------------------------ */
@@ -321,7 +327,8 @@ function applyRules(def: RegisterDef, prepared: Prepared, mode: "create" | "upda
 /* ------------------------------------------------------------------ */
 
 export function createRecord(def: RegisterDef, input: Record<string, unknown>, user: UserInfo, source: "form" | "import" = "form"): RecordRow {
-  assertCanEdit(def, user);
+  if (source === "import") assertCanEdit(def, user);
+  else assertCanCreate(def, user);
   const db = getDb();
   const withScope = { ...scopeDefaults(def), ...input };
   for (const [k, v] of Object.entries(scopeDefaults(def))) if (withScope[k] === null || withScope[k] === undefined || withScope[k] === "") withScope[k] = v;

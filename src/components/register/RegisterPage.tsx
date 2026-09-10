@@ -27,6 +27,8 @@ interface Loaded {
   rows: RecordRow[];
   lookups: Record<string, LookupOption[]>;
   canEdit: boolean;
+  /** May add rows (editors, admins and "data entry" users). canEdit covers editing and deleting. */
+  canCreate?: boolean;
   readOnlyReason?: string | null;
   scopeDefaults?: Record<string, number>;
 }
@@ -260,7 +262,7 @@ export function RegisterPage({
               <Upload size={16} /> Import
             </button>
           )}
-          {data.canEdit && (
+          {(data.canEdit || data.canCreate) && (
             <button className="btn btn-primary" onClick={openNew}>
               <Plus size={16} /> Add {def.singular}
             </button>

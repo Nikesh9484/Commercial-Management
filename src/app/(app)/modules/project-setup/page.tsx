@@ -38,7 +38,7 @@ export default async function ProjectSetupPage() {
   const checklist = period ? getChecklist(period.id) : [];
   if (programme) ensureDefaultTeam(programme.id);
 
-  const canEdit = user.role !== "viewer";
+  const canEdit = user.role === "admin" || user.role === "editor";
   const isAdmin = user.role === "admin";
 
   return (

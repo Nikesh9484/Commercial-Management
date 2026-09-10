@@ -10,7 +10,7 @@ const CONTROL_FIELDS = ["aconex_ref", "prepared_by", "prepared_date", "reviewed_
 
 export async function PUT(req: Request, ctx: Ctx) {
   return withUser<Ctx>(async (user, { params }) => {
-    if (user.role === "viewer") throw new AuthError("Viewers cannot change report control details.");
+    if (user.role !== "admin" && user.role !== "editor") throw new AuthError("Only Editors and Admins can change report control details.");
     const { id } = await params;
     const body = await readJson(req);
     const input: Record<string, unknown> = {};

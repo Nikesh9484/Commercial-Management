@@ -190,7 +190,7 @@ export const users: RegisterDef = {
   fields: [
     { key: "name", label: "Full name", type: "text", required: true },
     { key: "email", label: "Email (login)", type: "text", required: true, unique: true },
-    { key: "role", label: "Role", type: "select", required: true, options: ["admin", "editor", "viewer"], chip: true, defaultValue: "editor" },
+    { key: "role", label: "Role", type: "select", required: true, options: ["admin", "editor", "contributor", "viewer"], chip: true, defaultValue: "editor", help: "Admin: everything. Editor: add, edit and delete. Contributor (data entry): add new rows, run reports and emails, but not change existing rows. Viewer: read only." },
     { key: "active", label: "Active", type: "boolean", defaultValue: true, help: "Inactive users cannot log in." },
     { key: "password", label: "Password", type: "password", help: "At least 8 characters. Leave blank when editing to keep the current password." },
   ],

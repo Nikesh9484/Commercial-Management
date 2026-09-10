@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { withUser, readJson } from "@/lib/api";
 import { requireDef, assertCanView, listRecords, lookupsFor, createRecord, scopeDefaults } from "@/lib/registers/engine";
-import { canEditRegister } from "@/lib/registers/types";
+import { canEditRegister, canCreateRegister } from "@/lib/registers/types";
 import { viewingLockedPeriod } from "@/lib/view-mode";
 
 type Ctx = { params: Promise<{ key: string }> };
@@ -17,6 +17,7 @@ export const GET = withUser<Ctx>(async (user, { params }) => {
     rows: listRecords(def),
     lookups: lookupsFor(def),
     canEdit: canEditRegister(def, user.role) && !viewed,
+    canCreate: canCreateRegister(def, user.role) && !viewed,
     readOnlyReason: viewed ? `${viewed.label} is locked – you are viewing the issued report. Switch the top bar to an open period to add or change rows.` : null,
     scopeDefaults: scopeDefaults(def),
   });
