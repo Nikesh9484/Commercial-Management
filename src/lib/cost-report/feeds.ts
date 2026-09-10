@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 import { CHANGE_STAGES, DEAD_STATUSES } from "../registers/defs/changes";
 import { claimCostReportAmount } from "../registers/defs/claims";
+import { certifiedByLine } from "../payments/compute";
 
 /**
  * "Feeds" are the columns of the cost report that come from other modules.
@@ -112,7 +113,7 @@ export function getCostFeeds(db: Database.Database, programmeId: number, periodI
     rfc: changes.rfc,
     earlyWarnings: earlyWarningFeeds(db, programmeId),
     claims: claimFeeds(db, programmeId),
-    certified: new Map(),
+    certified: certifiedByLine(db, programmeId),
   };
   const status: FeedStatus[] = [
     { column: "F", label: "Budget Transfers", module: "Module 10 – Budget Transfers", available: false },
@@ -121,7 +122,7 @@ export function getCostFeeds(db: Database.Database, programmeId: number, periodI
     { column: "K", label: "Requests for Change", module: "Module 3 – Change Management", available: true },
     { column: "L", label: "Early Warnings", module: "Module 5 – Early Warnings", available: true },
     { column: "M", label: "Claims", module: "Module 4 – Claims & Disputes", available: true },
-    { column: "P", label: "Certified to Date", module: "Module 8 – Invoice & Payment Tracking", available: false },
+    { column: "P", label: "Certified to Date", module: "Module 8 – Invoice & Payment Tracking", available: true },
   ];
   return { feeds, status };
 }

@@ -88,6 +88,9 @@ export interface RegisterDef {
   scope?: "programme" | "asset";
   /** Money / number fields to total in a footer row of the table (over the rows currently shown). */
   totals?: string[];
+  /** Adds an "open" link per row, e.g. "/modules/invoices-payments/{id}". */
+  rowLinkTemplate?: string;
+  rowLinkLabel?: string;
 }
 
 export interface UserInfo {

@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Search, Download, Upload, Pencil, Trash2, History, ChevronUp, ChevronDown, ChevronsUpDown, RefreshCw, Lock, Unlock, Filter, X } from "lucide-react";
+import Link from "next/link";
+import { Plus, Search, Download, Upload, Pencil, Trash2, History, ChevronUp, ChevronDown, ChevronsUpDown, RefreshCw, Lock, Unlock, Filter, X, ExternalLink } from "lucide-react";
 import type { FieldDef, LookupOption, RecordRow, RegisterDef } from "@/lib/registers/types";
 import { formatDate, formatMoney, formatNumber, formatPercent } from "@/lib/format";
 import { Chip } from "@/components/ui/Chip";
@@ -29,7 +30,19 @@ interface Loaded {
   scopeDefaults?: Record<string, number>;
 }
 
-export function RegisterPage({ registerKey, isAdmin = false }: { registerKey: string; isAdmin?: boolean }) {
+export function RegisterPage({
+  registerKey,
+  isAdmin = false,
+  fixedFilter,
+  hideFields = [],
+}: {
+  registerKey: string;
+  isAdmin?: boolean;
+  /** Only show rows where these fields have these values; new records get them by default. */
+  fixedFilter?: Record<string, number | string>;
+  /** Fields to leave out of the table (e.g. the one fixed by fixedFilter). */
+  hideFields?: string[];
+}) {
   const toast = useToast();
   const router = useRouter();
   const [data, setData] = useState<Loaded | null>(null);
@@ -66,19 +79,20 @@ export function RegisterPage({ registerKey, isAdmin = false }: { registerKey: st
   }, [registerKey]);
 
   const def = data?.def;
-  const tableFields = useMemo(() => def?.fields.filter((f) => !f.hideInTable && f.type !== "password") ?? [], [def]);
+  const tableFields = useMemo(() => def?.fields.filter((f) => !f.hideInTable && f.type !== "password" && !hideFields.includes(f.key)) ?? [], [def, hideFields]);
   const filterFields = useMemo(() => {
     if (!def) return [];
-    const explicit = def.fields.filter((f) => f.filter);
+    const explicit = def.fields.filter((f) => f.filter && !(fixedFilter && f.key in fixedFilter));
     if (explicit.length) return explicit.filter((f) => f.type === "select" || f.type === "lookup" || f.type === "boolean");
-    return def.fields.filter((f) => f.type === "select" || f.type === "lookup" || f.type === "boolean");
-  }, [def]);
+    return def.fields.filter((f) => (f.type === "select" || f.type === "lookup" || f.type === "boolean") && !(fixedFilter && f.key in fixedFilter));
+  }, [def, fixedFilter]);
   const effectiveSort = sort ?? def?.defaultSort ?? null;
 
   const visible = useMemo(() => {
     if (!data) return [];
     const q = search.trim().toLowerCase();
     let rows = data.rows;
+    if (fixedFilter) rows = rows.filter((r) => Object.entries(fixedFilter).every(([k, v]) => String(r[k] ?? "") === String(v)));
     if (q) {
       rows = rows.filter((r) => data.def.fields.some((f) => String(displayValue(f, r) ?? "").toLowerCase().includes(q)) || String(r.id) === q);
     }
@@ -104,7 +118,7 @@ export function RegisterPage({ registerKey, isAdmin = false }: { registerKey: st
       });
     }
     return rows;
-  }, [data, search, filters, effectiveSort]);
+  }, [data, search, filters, effectiveSort, fixedFilter]);
 
   const pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount);
@@ -128,6 +142,7 @@ export function RegisterPage({ registerKey, isAdmin = false }: { registerKey: st
     const values: FormValues = {};
     for (const f of def.fields) if (f.defaultValue !== undefined) values[f.key] = f.defaultValue as FormValues[string];
     for (const [k, v] of Object.entries(data?.scopeDefaults ?? {})) values[k] = v;
+    for (const [k, v] of Object.entries(fixedFilter ?? {})) values[k] = v;
     setFormErrors({});
     setFormError(null);
     setEditing({ row: null, values });
@@ -308,6 +323,11 @@ export function RegisterPage({ registerKey, isAdmin = false }: { registerKey: st
                   ))}
                   <td className="text-right">
                     <div className="inline-flex items-center gap-0.5">
+                      {def.rowLinkTemplate && (
+                        <Link href={def.rowLinkTemplate.replace("{id}", String(r.id))} className="btn btn-secondary btn-sm">
+                          <ExternalLink size={13} /> {def.rowLinkLabel ?? "Open"}
+                        </Link>
+                      )}
                       {isPeriods &&
                         isAdmin &&
                         (r.status === "Locked" ? (
@@ -353,7 +373,7 @@ export function RegisterPage({ registerKey, isAdmin = false }: { registerKey: st
         </div>
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line px-3 py-2 text-xs text-muted">
           <span>
-            {visible.length} of {data.rows.length} {def.title.toLowerCase()}
+            {visible.length} of {fixedFilter ? visible.length : data.rows.length} {def.title.toLowerCase()}
             {data.canEdit && <span className="hidden sm:inline"> · double-click a row to edit</span>}
           </span>
           {pageCount > 1 && (

@@ -1,5 +1,7 @@
 import type { RecordRow, RegisterDef } from "./types";
-import { todayIso, toDate } from "../format";
+import { todayIso } from "../format";
+import { daysBetween } from "./enrich-utils";
+import { computeContracts } from "../payments/compute";
 import { CHANGE_STAGES, CLOSED_STATUSES } from "./defs/changes";
 import { CLAIM_TYPES, NOTICE_LIMIT_DAYS, DETAIL_LIMIT_DAYS, claimCostReportAmount } from "./defs/claims";
 import { businessDaysBetween } from "../workdays";
@@ -17,6 +19,28 @@ export function enrichRows(def: RegisterDef, rows: RecordRow[]) {
   if (def.key === "claims") rows.forEach(enrichClaim);
   if (def.key === "risks") rows.forEach(enrichRisk);
   if (def.key === "provisional_sums") rows.forEach(enrichProvisionalSum);
+  if ((def.key === "contracts" || def.key === "payment_applications") && rows.length) {
+    const programmeId = Number(rows[0].programme_id);
+    const { contracts, applications } = computeContracts(getDb(), programmeId);
+    for (const r of rows) {
+      const comp = def.key === "contracts" ? contracts.get(r.id) : applications.get(r.id);
+      if (!comp) continue;
+      const { row_tone, ...values } = comp as unknown as Record<string, unknown> & { row_tone?: string | null };
+      Object.assign(r, values);
+      if (def.key === "payment_applications") {
+        r.__row_tone = row_tone ?? null;
+        const late = (k: string) => {
+          const v = r[k] as number | null;
+          r[`${k}__tone`] = v === null || v === undefined ? null : v > 0 ? "red" : v < 0 ? "green" : null;
+        };
+        late("ipc_days_late");
+        late("payment_days_late");
+      } else {
+        const pct = r.pct_certified as number | null;
+        r.pct_certified__tone = pct === null ? null : pct >= 100 ? "green" : null;
+      }
+    }
+  }
   if (def.key === "bonds" && rows.length) {
     const programmeId = Number(rows[0].programme_id);
     const revised = revisedContractValues(getDb(), programmeId);
@@ -24,12 +48,7 @@ export function enrichRows(def: RegisterDef, rows: RecordRow[]) {
   }
 }
 
-export function daysBetween(fromIso: string, toIso: string): number {
-  const a = toDate(fromIso);
-  const b = toDate(toIso);
-  if (!a || !b) return 0;
-  return Math.round((b.getTime() - a.getTime()) / 86400000);
-}
+export { daysBetween };
 
 /** True when a stage has anything recorded against it. */
 export function stageHasData(row: RecordRow, prefix: string): boolean {
