@@ -105,7 +105,8 @@ Add people under *Settings → Users*.
 1. Make sure every module is up to date for the month.
 2. *Settings → Reporting Periods → Lock* on the current period. The app stores a snapshot of every module register.
 3. Add the next period (*Add Reporting Period* – the label “Monthly Report No X – Mon'YY” fills in automatically from the cut-off date).
-4. Select the new period in the top bar.
+4. Open *Monthly Report* and press *Generate PDF* / *Generate Excel* – the report is built from the locked snapshot, with the Prepared / Reviewed / Approved block from Project Setup.
+5. Select the new period in the top bar.
 
 If you find a mistake after locking, an Admin can *Unlock*, fix it, and *Lock* again (the snapshot is re-taken).
 
@@ -137,7 +138,7 @@ Every register has **Export** (all rows, formatted) and **Import**:
 | 9 | Cash Flow | **built** – monthly forecast grid per contract, actuals from payments with override, cumulative chart, accruals, Excel export |
 | 10 | Budget Transfers | **built** – from/to package transfers, approved ones feed cost report column F, net movement by package |
 | 11 | Executive Summary & Minutes of Meeting | **built** – dashboard home page with KPI cards, counts, charts, key issues, actions; meetings with carried-forward items |
-| 12 | Monthly Report Export (PDF / Excel) | placeholder |
+| 12 | Monthly Report Export (PDF / Excel) | **built** – cover, index, MoM, executive summary, Schedules A–J from the locked snapshot |
 
 Built so far: login and roles, left menu and top bar (Programme / Asset / Reporting Period), Settings
 with all dropdown lists, Users, Reporting Periods with lock / snapshot, change history, and the shared

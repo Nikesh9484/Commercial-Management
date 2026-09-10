@@ -6,6 +6,7 @@ import { nowIso, todayIso } from "./format";
 import type { RecordRow, UserInfo } from "./registers/types";
 import { AuthError } from "./auth";
 import { snapshotCostReport } from "./cost-report/compute";
+import { getCashflow } from "./cashflow/compute";
 
 export interface PeriodRow extends RecordRow {
   report_no: number;
@@ -47,6 +48,12 @@ export function lockPeriod(periodId: number, user: UserInfo): { registers: numbe
     }
     // Calculated reports are stored too, so "Previous Period" columns can be read back later.
     records += snapshotCostReport(db, periodId, stamp);
+    registers++;
+    const cfIns = db.prepare("INSERT INTO snapshots(period_id, register_key, record_id, data, taken_at) VALUES(?, 'cashflow', ?, ?, ?)");
+    for (const p of db.prepare("SELECT id FROM programmes").all() as { id: number }[]) {
+      cfIns.run(periodId, p.id, JSON.stringify(getCashflow(db, p.id)), stamp);
+      records++;
+    }
     registers++;
     db.prepare("UPDATE reporting_periods SET status = 'Locked', locked_at = ?, locked_by = ?, updated_at = ?, updated_by = ? WHERE id = ?").run(
       todayIso(),

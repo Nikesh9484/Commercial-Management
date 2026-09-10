@@ -94,13 +94,22 @@ export function computeCostReport(programmeId: number, periodId: number | null):
     };
   });
 
+  return assembleReport(lines, {
+    programme,
+    period: period ? { id: period.id, label: period.label, status: period.status } : null,
+    previousPeriod: prev ? { ...prev, snapshotAvailable: !!prevAfa } : null,
+    feeds: status,
+  });
+}
+
+/** Builds sections, totals, Level 1, the check line and the chart from a list of computed lines. */
+export function assembleReport(lines: CostLineRow[], meta: Pick<CostReport, "programme" | "period" | "previousPeriod" | "feeds">): CostReport {
   const sections = (["Committed", "Uncommitted"] as const).map((name) => {
     const rows = lines.filter((l) => l.section === name);
     return { name, lines: rows, subtotal: rows.reduce((t, r) => addMoney(t, r), zeroMoney()) };
   });
   const grandTotal = sections.reduce((t, s) => addMoney(t, s.subtotal), zeroMoney());
 
-  // Level 1 – by asset
   const byAsset = new Map<number, Level1Row>();
   for (const l of lines) {
     const row = byAsset.get(l.asset_id) ?? { asset_id: l.asset_id, asset_code: l.asset_code, asset_name: l.asset_name, lines: 0, ...zeroMoney() };
@@ -114,7 +123,6 @@ export function computeCostReport(programmeId: number, periodId: number | null):
   for (const c of MONEY_COLUMNS) check[c.key] = round2(level1Total[c.key] - grandTotal[c.key]);
   const checkOk = MONEY_COLUMNS.every((c) => Math.abs(check[c.key]) < 0.005);
 
-  // Chart – by package
   const byPackage = new Map<string, { package: string; baseline: number; afa: number }>();
   for (const l of lines) {
     const key = l.package || "(no package)";
@@ -123,21 +131,7 @@ export function computeCostReport(programmeId: number, periodId: number | null):
     row.afa = round2(row.afa + l.N);
     byPackage.set(key, row);
   }
-
-  return {
-    programme,
-    period: period ? { id: period.id, label: period.label, status: period.status } : null,
-    previousPeriod: prev ? { ...prev, snapshotAvailable: !!prevAfa } : null,
-    feeds: status,
-    lines,
-    sections,
-    grandTotal,
-    level1,
-    level1Total,
-    check,
-    checkOk,
-    chart: [...byPackage.values()],
-  };
+  return { ...meta, lines, sections, grandTotal, level1, level1Total, check, checkOk, chart: [...byPackage.values()] };
 }
 
 /** Anticipated Final Account per cost line stored when the previous period was locked. */
