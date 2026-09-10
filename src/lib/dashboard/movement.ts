@@ -5,7 +5,9 @@ import { listRecords } from "../registers/engine";
 import { computeCostReport, MONEY_COLUMNS, type Money } from "../cost-report/compute";
 import { getPeriod, type PeriodRow } from "../snapshots";
 import { snapshotRows } from "../view-mode";
-import { CHANGE_STAGES } from "../registers/defs/changes";
+import { CHANGE_STAGES, DEAD_STATUSES } from "../registers/defs/changes";
+import { claimCostReportAmount } from "../registers/defs/claims";
+import { stageHasData, daysBetween } from "../registers/enrich";
 import { executiveTotals } from "../cost-report/executive";
 import type { RecordRow } from "../registers/types";
 
@@ -45,12 +47,68 @@ export interface StageMove {
   nowAmount: number;
 }
 
+/** One line of a "key period movement": how much one change / early warning / claim moved a cost-report column. */
+export interface KeyMoveItem {
+  key: string;
+  title: string;
+  prev: number;
+  now: number;
+  delta: number;
+  note: string;
+}
+
+/** Everything that moved one cost-report column (H, J, K, L or M) since the previous report – like the Excel "Key Period Movements" block. */
+export interface KeyMovement {
+  col: "H" | "J" | "K" | "L" | "M";
+  label: string;
+  href: string;
+  kpiDelta: number;
+  itemsTotal: number;
+  items: KeyMoveItem[];
+}
+
+/** Counts of changes at one stage by outcome, previous report vs this one. */
+export interface StatusCount {
+  stage: string;
+  total: { prev: number; now: number };
+  approved: { prev: number; now: number };
+  pending: { prev: number; now: number };
+  cancelled: { prev: number; now: number };
+}
+
+export interface AgeBucket {
+  bucket: string;
+  prev: number;
+  now: number;
+  tone: "green" | "amber" | "red" | "grey";
+}
+
+/** One contract in the payment status tracker. */
+export interface PaymentTrackerRow {
+  key: string;
+  title: string;
+  contractor: string;
+  status: string;
+  revised: number;
+  certified: number;
+  certifiedPeriod: number;
+  paid: number;
+  pctCertified: number | null;
+  pctPaid: number | null;
+  lateIpcs: number;
+  latePayments: number;
+}
+
 export interface Movement {
   current: { id: number; label: string; status: string };
   previous: { id: number; label: string } | null;
   kpis: { key: string; label: string; prev: number; now: number; delta: number }[];
   stages: StageMove[];
   groups: MoveGroup[];
+  keyMovements: KeyMovement[];
+  statusCounts: StatusCount[];
+  dvoAgeing: AgeBucket[];
+  payments: PaymentTrackerRow[];
 }
 
 const num = (v: unknown) => (v === null || v === undefined || v === "" ? 0 : Number(v));
@@ -66,7 +124,7 @@ export function previousLockedPeriod(db: Database.Database, period: PeriodRow): 
 }
 
 /** Rows of a register as they stand for a period: the snapshot when the period is locked, else the live rows. */
-function rowsFor(db: Database.Database, programmeId: number, period: PeriodRow, key: string): RecordRow[] {
+export function rowsFor(db: Database.Database, programmeId: number, period: PeriodRow, key: string): RecordRow[] {
   const def = getRegisterDef(key)!;
   if (period.status === "Locked") {
     const snap = snapshotRows<RecordRow>(db, period.id, key);
@@ -82,6 +140,171 @@ function changeAmount(c: RecordRow): number {
   if (!s) return 0;
   const v = c[`${s.prefix}_cr_amount`];
   return v === null || v === undefined ? num(c[`${s.prefix}_tracker_amount`]) : num(v);
+}
+
+
+const APPROVED = ["Approved", "Review Complete"];
+
+/**
+ * Which cost-report column a change feeds and with how much – the same rule as the cost report feed
+ * (src/lib/cost-report/feeds.ts) but evaluated on register rows so it works on locked snapshots too.
+ * Returns null when the change feeds nothing (no cost line, cancelled, or no live stage).
+ */
+export function changeContribution(c: RecordRow): { col: "H" | "J" | "K"; amount: number } | null {
+  if (!c.cost_line_id) return null;
+  const status = (p: string) => String(c[`${p}_status_id__label`] ?? "");
+  if (DEAD_STATUSES.includes(String(c.overall_status_id__label ?? ""))) return null;
+  if (APPROVED.includes(status("dvo"))) return { col: "H", amount: num(c.dvo_cr_amount) };
+  for (const p of ["vo", "pvo"]) if (stageHasData(c, p) && !DEAD_STATUSES.includes(status(p))) return { col: "J", amount: num(c[`${p}_cr_amount`]) };
+  if (stageHasData(c, "rfc") && !DEAD_STATUSES.includes(status("rfc"))) return { col: "K", amount: num(c.rfc_cr_amount) };
+  return null;
+}
+
+const COL_LABELS: Record<KeyMovement["col"], string> = { H: "Determined Variation Orders (DVO)", J: "Potential Variation Orders (PVO / VO)", K: "Requests for Change (RFC)", L: "Early Warnings", M: "Claims" };
+const COL_HREF: Record<KeyMovement["col"], string> = { H: "/modules/change-management", J: "/modules/change-management", K: "/modules/change-management", L: "/modules/early-warnings", M: "/modules/claims-disputes" };
+
+/** Builds the "key period movements" per cost-report column from the rows of the two reports. */
+function keyMovements(
+  now: { changes: RecordRow[]; ews: RecordRow[]; claims: RecordRow[] },
+  before: { changes: RecordRow[]; ews: RecordRow[]; claims: RecordRow[] },
+  kpis: Movement["kpis"],
+): KeyMovement[] {
+  type Contrib = { col: KeyMovement["col"]; amount: number; title: string; state: string; label: string };
+  // Map key = type + reference (so a change and a claim with the same number never collide); label = what is shown.
+  const ref = (type: string, v: unknown, id: unknown) => {
+    const raw = String(v ?? "").trim() || String(id);
+    return { k: `${type}|${raw}`, label: /[a-z]/i.test(raw) ? raw : `${type}-${raw}` };
+  };
+  const collect = (rows: { changes: RecordRow[]; ews: RecordRow[]; claims: RecordRow[] }) => {
+    const out = new Map<string, Contrib>();
+    const state = (r: RecordRow) => String(r.overall_status_id__label ?? r.status ?? "");
+    for (const c of rows.changes) {
+      const { k, label } = ref("CH", c.item_no, c.id);
+      const v = changeContribution(c);
+      out.set(k, { label, col: v?.col ?? "K", amount: v?.amount ?? 0, title: String(c.description ?? ""), state: v ? `${v.col === "H" ? "DVO" : v.col === "J" ? "PVO/VO" : "RFC"} · ${state(c)}` : state(c) || "not in cost report" });
+    }
+    for (const e of rows.ews) {
+      const { k, label } = ref("EW", e.ew_no, e.id);
+      const live = e.status === "Open" && !!e.cost_line_id;
+      out.set(k, { label, col: "L", amount: live ? num(e.cost_impact) : 0, title: String(e.description ?? ""), state: String(e.status ?? "") });
+    }
+    for (const cl of rows.claims) {
+      const { k, label } = ref("CL", cl.claim_no, cl.id);
+      out.set(k, { label, col: "M", amount: cl.cost_line_id ? claimCostReportAmount(cl) : 0, title: String(cl.description ?? ""), state: String(cl.status ?? "") });
+    }
+    return out;
+  };
+  const nowMap = collect(now);
+  const prevMap = collect(before);
+  const items: Record<KeyMovement["col"], KeyMoveItem[]> = { H: [], J: [], K: [], L: [], M: [] };
+  const push = (col: KeyMovement["col"], key: string, title: string, prev: number, cur: number, note: string) => {
+    const delta = r2(cur - prev);
+    if (Math.abs(delta) < 0.005) return;
+    items[col].push({ key, title: title.slice(0, 100), prev: r2(prev), now: r2(cur), delta, note });
+  };
+  const keys = new Set([...nowMap.keys(), ...prevMap.keys()]);
+  for (const key of keys) {
+    const a = prevMap.get(key);
+    const b = nowMap.get(key);
+    const label = (b ?? a)!.label;
+    if (a && b) {
+      if (a.col === b.col) push(b.col, label, b.title, a.amount, b.amount, a.state === b.state ? "amount revised" : `${a.state} -> ${b.state}`);
+      else {
+        push(a.col, label, a.title, a.amount, 0, `moved to ${b.col === "H" ? "DVO" : b.col === "J" ? "PVO/VO" : b.col === "K" ? "RFC" : COL_LABELS[b.col]}`);
+        push(b.col, label, b.title, 0, b.amount, `from ${a.col === "H" ? "DVO" : a.col === "J" ? "PVO/VO" : a.col === "K" ? "RFC" : COL_LABELS[a.col]} · ${b.state}`);
+      }
+    } else if (b) push(b.col, label, b.title, 0, b.amount, `new · ${b.state}`);
+    else if (a) push(a.col, label, a.title, a.amount, 0, "removed from the register");
+  }
+  return (["H", "J", "K", "L", "M"] as const).map((col) => {
+    const list = items[col].sort((x, y) => Math.abs(y.delta) - Math.abs(x.delta));
+    return {
+      col,
+      label: COL_LABELS[col],
+      href: COL_HREF[col],
+      kpiDelta: kpis.find((k) => k.key === col)?.delta ?? 0,
+      itemsTotal: r2(list.reduce((t, i) => t + i.delta, 0)),
+      items: list,
+    };
+  });
+}
+
+/** Approved / pending / cancelled counts per stage, like the Excel "Change Management Status" box. */
+function statusCounts(now: RecordRow[], before: RecordRow[]): StatusCount[] {
+  const classify = (r: RecordRow, p: string): "approved" | "pending" | "cancelled" | null => {
+    if (!stageHasData(r, p)) return null;
+    const st = String(r[`${p}_status_id__label`] ?? "");
+    if (APPROVED.includes(st)) return "approved";
+    if (DEAD_STATUSES.includes(st) || st === "Rejected") return "cancelled";
+    return "pending";
+  };
+  return CHANGE_STAGES.filter((s) => ["rfc", "pvo", "vo", "dvo"].includes(s.prefix)).map((s) => {
+    const count = (rows: RecordRow[], what: "approved" | "pending" | "cancelled" | "total") =>
+      rows.filter((r) => {
+        const c = classify(r, s.prefix);
+        return c !== null && (what === "total" || c === what);
+      }).length;
+    const pair = (what: "approved" | "pending" | "cancelled" | "total") => ({ prev: count(before, what), now: count(now, what) });
+    return { stage: s.short, total: pair("total"), approved: pair("approved"), pending: pair("pending"), cancelled: pair("cancelled") };
+  });
+}
+
+const AGE_BUCKETS: { bucket: string; min: number; max: number; tone: AgeBucket["tone"] }[] = [
+  { bucket: "Pending under 30 days", min: -Infinity, max: 30, tone: "green" },
+  { bucket: "Pending 30 – 60 days", min: 30, max: 60, tone: "amber" },
+  { bucket: "Pending 60 – 90 days", min: 60, max: 90, tone: "amber" },
+  { bucket: "Overdue (over 90 days)", min: 90, max: Infinity, tone: "red" },
+];
+
+/** How long the DVOs still pending have been waiting, counted at each report's cut-off date. */
+function dvoAgeing(now: RecordRow[], nowEnd: string, before: RecordRow[], prevEnd: string | null): AgeBucket[] {
+  const ages = (rows: RecordRow[], end: string) =>
+    rows
+      .filter((r) => stageHasData(r, "dvo") && r.dvo_closed !== true && !APPROVED.includes(String(r.dvo_status_id__label ?? "")) && !DEAD_STATUSES.includes(String(r.dvo_status_id__label ?? "")) && !DEAD_STATUSES.includes(String(r.overall_status_id__label ?? "")))
+      .map((r) => {
+        const from = (r.dvo_date as string | null) || (r.date_raised as string | null);
+        return from ? Math.max(0, daysBetween(String(from), end)) : 0;
+      });
+  const a = ages(now, nowEnd);
+  const b = prevEnd ? ages(before, prevEnd) : [];
+  return AGE_BUCKETS.map((bk) => ({ bucket: bk.bucket, tone: bk.tone, now: a.filter((d) => d >= bk.min && d < bk.max).length, prev: b.filter((d) => d >= bk.min && d < bk.max).length }));
+}
+
+/** Payment status per contract: revised value, certified and paid to date, and how many IPCs / payments are late. */
+function paymentTracker(contracts: RecordRow[], prevContracts: RecordRow[], apps: RecordRow[]): PaymentTrackerRow[] {
+  const prevCert = new Map(prevContracts.map((c) => [String(c.reef_po_no ?? c.id), num(c.latest_cum_certified)]));
+  const late = new Map<number, { ipc: number; pay: number }>();
+  for (const a of apps) {
+    const id = Number(a.contract_id);
+    const cur = late.get(id) ?? { ipc: 0, pay: 0 };
+    if (num(a.ipc_days_late) > 0) cur.ipc++;
+    if (num(a.payment_days_late) > 0) cur.pay++;
+    late.set(id, cur);
+  }
+  return contracts
+    .map((c) => {
+      const key = String(c.reef_po_no ?? c.id);
+      const revised = num(c.revised_contract_value);
+      const certified = num(c.latest_cum_certified);
+      const netCert = num(c.net_cum_certified);
+      const paid = num(c.cum_paid);
+      const l = late.get(Number(c.id)) ?? { ipc: 0, pay: 0 };
+      return {
+        key,
+        title: String(c.title ?? ""),
+        contractor: String(c.contractor_id__label ?? ""),
+        status: String(c.current_status ?? ""),
+        revised,
+        certified,
+        certifiedPeriod: r2(certified - (prevCert.get(key) ?? 0)),
+        paid,
+        pctCertified: revised ? r2((certified / revised) * 100) : null,
+        pctPaid: netCert ? r2((paid / netCert) * 100) : null,
+        lateIpcs: l.ipc,
+        latePayments: l.pay,
+      };
+    })
+    .sort((x, y) => y.revised - x.revised);
 }
 
 interface Spec {
@@ -166,12 +389,24 @@ export function getMovement(db: Database.Database, programmeId: number, periodId
     };
   });
 
+  const nowEws = rowsFor(db, programmeId, current, "early_warnings");
+  const prevEws = prev ? rowsFor(db, programmeId, prev, "early_warnings") : [];
+  const nowClaims = rowsFor(db, programmeId, current, "claims");
+  const prevClaims = prev ? rowsFor(db, programmeId, prev, "claims") : [];
+  const nowContracts = rowsFor(db, programmeId, current, "contracts");
+  const prevContracts = prev ? rowsFor(db, programmeId, prev, "contracts") : [];
+  const nowApps = rowsFor(db, programmeId, current, "payment_applications");
+
   return {
     current: { id: current.id, label: current.label, status: current.status },
     previous: prev ? { id: prev.id, label: prev.label } : null,
     kpis,
     stages,
     groups,
+    keyMovements: keyMovements({ changes: nowChanges, ews: nowEws, claims: nowClaims }, { changes: prevChanges, ews: prevEws, claims: prevClaims }, kpis),
+    statusCounts: statusCounts(nowChanges, prevChanges),
+    dvoAgeing: dvoAgeing(nowChanges, current.period_end, prevChanges, prev?.period_end ?? null),
+    payments: paymentTracker(nowContracts, prevContracts, nowApps),
   };
 }
 

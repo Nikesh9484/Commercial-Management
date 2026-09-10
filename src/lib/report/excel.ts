@@ -60,6 +60,7 @@ function movementSheet(wb: ExcelJS.Workbook, d: ReportData) {
   ws.addRow([`Movement since the previous issued report · ${d.period.label}`]).font = { bold: true, size: 12, color: { argb: NAVY } };
   if (!m || !m.previous) {
     ws.addRow(["No earlier locked report to compare with yet."]);
+    if (m) statusAndAgeing(ws, m);
     return;
   }
   ws.addRow([`${m.previous.label}  →  ${m.current.label}`]).font = { italic: true };
@@ -76,6 +77,22 @@ function movementSheet(wb: ExcelJS.Workbook, d: ReportData) {
     const r = ws.addRow([st.stage, st.prevCount, st.nowCount, st.prevAmount, st.nowAmount, st.nowAmount - st.prevAmount]);
     [4, 5, 6].forEach((c) => (r.getCell(c).numFmt = MONEY_FMT));
   }
+  ws.addRow([]);
+  ws.addRow(["Key period movements – the items that moved each cost-report column"]).font = { bold: true, size: 11, color: { argb: NAVY } };
+  for (const k of m.keyMovements) {
+    ws.addRow([]);
+    const tie = Math.abs(k.itemsTotal - k.kpiDelta) < 0.5;
+    const t = ws.addRow([`${k.col}  ${k.label}`, null, null, k.kpiDelta, tie ? "" : `items listed ${formatMoney(k.itemsTotal)} – rest not linked to a cost line / in budget hold`]);
+    t.font = { bold: true, color: { argb: NAVY } };
+    t.getCell(4).numFmt = MONEY_FMT;
+    header(ws.addRow(["Ref", "Description", "What happened", "Previous", "This report", "Movement"]));
+    if (!k.items.length) ws.addRow(["No movement."]);
+    for (const it of k.items) {
+      const r = ws.addRow([it.key, it.title, it.note, it.prev, it.now, it.delta]);
+      [4, 5, 6].forEach((c) => (r.getCell(c).numFmt = MONEY_FMT));
+    }
+  }
+  statusAndAgeing(ws, m);
   for (const g of m.groups) {
     ws.addRow([]);
     const t = ws.addRow([`${g.label}: ${g.prevCount} → ${g.nowCount} rows · ${g.valueLabel} ${formatMoney(g.prevValue)} → ${formatMoney(g.nowValue)}`]);
@@ -94,6 +111,38 @@ function movementSheet(wb: ExcelJS.Workbook, d: ReportData) {
       r.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
     }
   }
+}
+
+
+function statusAndAgeing(ws: ExcelJS.Worksheet, m: NonNullable<ReportData["movement"]>) {
+  const pair = (p: { prev: number; now: number }) => (m.previous ? `${p.prev} → ${p.now}` : p.now);
+  ws.addRow([]);
+  ws.addRow([`Change management status${m.previous ? ` (${m.previous.label} → this report)` : ""}`]).font = { bold: true, size: 11, color: { argb: NAVY } };
+  header(ws.addRow(["Stage", "Total", "Approved", "Pending", "Cancelled"]));
+  for (const s of m.statusCounts) ws.addRow([s.stage, pair(s.total), pair(s.approved), pair(s.pending), pair(s.cancelled)]);
+  ws.addRow([]);
+  ws.addRow(["DVO ageing – pending determined variation orders by days since raised"]).font = { bold: true, size: 11, color: { argb: NAVY } };
+  header(ws.addRow(["Age", m.previous ? "Previous → this report" : "Count"]));
+  for (const b of m.dvoAgeing) ws.addRow([b.bucket, pair({ prev: b.prev, now: b.now })]);
+}
+
+function paymentTrackerBlock(ws: ExcelJS.Worksheet, d: ReportData) {
+  const m = d.movement;
+  if (!m) return;
+  ws.addRow([]);
+  ws.addRow(["Payment status tracker"]).font = { bold: true, size: 11, color: { argb: NAVY } };
+  header(ws.addRow(["Contract", "Contractor / consultant", "Status", "Revised value", "Certified to date", "Certified this period", "% certified", "Paid (net)", "% of certified paid", "Late IPCs", "Late payments"]));
+  for (const r of m.payments) {
+    const row = ws.addRow([`${r.key} ${r.title}`.trim(), r.contractor, r.status, r.revised, r.certified, r.certifiedPeriod, r.pctCertified === null ? null : r.pctCertified / 100, r.paid, r.pctPaid === null ? null : r.pctPaid / 100, r.lateIpcs, r.latePayments]);
+    [4, 5, 6, 8].forEach((c) => (row.getCell(c).numFmt = MONEY_FMT));
+    [7, 9].forEach((c) => (row.getCell(c).numFmt = "0.0%"));
+  }
+  const tot = (k: "revised" | "certified" | "certifiedPeriod" | "paid") => m.payments.reduce((t, r) => t + r[k], 0);
+  const t = ws.addRow(["TOTAL", "", "", tot("revised"), tot("certified"), tot("certifiedPeriod"), tot("revised") ? tot("certified") / tot("revised") : null, tot("paid"), null, m.payments.reduce((a, r) => a + r.lateIpcs, 0), m.payments.reduce((a, r) => a + r.latePayments, 0)]);
+  bold(t);
+  [4, 5, 6, 8].forEach((c) => (t.getCell(c).numFmt = MONEY_FMT));
+  t.getCell(7).numFmt = "0.0%";
+  ws.addRow(["Certified = gross cumulative certified excl. VAT. Paid = net payments released. Late = after the contractual due date."]).font = { italic: true, size: 9 };
 }
 
 export async function renderMonthlyReportExcel(data: ReportData): Promise<Buffer> {
@@ -188,7 +237,7 @@ function momSheet(wb: ExcelJS.Workbook, d: ReportData) {
 
 function execSheet(wb: ExcelJS.Workbook, d: ReportData) {
   const ws = wb.addWorksheet("Executive Summary");
-  [40, 20, 50].forEach((w, i) => (ws.getColumn(i + 1).width = w));
+  [40, 28, 50, 18, 18, 18, 12, 18, 14, 10, 12].forEach((w, i) => (ws.getColumn(i + 1).width = w));
   const g = executiveTotals(d.costReport);
   const dash = d.dashboard;
   header(ws.addRow(["Measure", "SAR", "Note"]));
@@ -209,6 +258,7 @@ function execSheet(wb: ExcelJS.Workbook, d: ReportData) {
   ws.addRow(["Open claims", dash.openClaims, `${formatMoney(dash.claimsPendingValue)} claimed and pending`]);
   ws.addRow(["Open early warnings", dash.openEarlyWarnings, `${formatMoney(dash.ewOpenValue)} potential cost`]);
   ws.addRow(["Bonds & insurance expiring within 60 days", dash.bonds.expiring.length, `${dash.bonds.expired} expired`]);
+  paymentTrackerBlock(ws, d);
   ws.addRow([]);
   ws.addRow(["Key issues this period"]).font = { bold: true, color: { argb: NAVY } };
   ws.addRow([dash.keyIssues || "None recorded."]).alignment = { wrapText: true };

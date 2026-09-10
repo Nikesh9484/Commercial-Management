@@ -13,6 +13,7 @@ import { ExpiringSoonCard } from "@/components/bonds/ExpiringSoonCard";
 import { KeyIssues } from "@/components/dashboard/KeyIssues";
 import { ActionsList } from "@/components/dashboard/ActionsList";
 import { MovementPanel } from "@/components/dashboard/MovementPanel";
+import { PaymentTracker } from "@/components/dashboard/PaymentTracker";
 import { getMovement } from "@/lib/dashboard/movement";
 import { executiveTotals } from "@/lib/cost-report/executive";
 
@@ -120,6 +121,9 @@ export default async function HomePage() {
 
       {/* What changed since the last issued report */}
       {movement && <MovementPanel m={movement} />}
+
+      {/* Payment status per contract */}
+      {movement && <PaymentTracker rows={movement.payments} previousLabel={movement.previous?.label ?? null} />}
 
       {/* Commentary + actions */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">

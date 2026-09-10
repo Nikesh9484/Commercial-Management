@@ -352,6 +352,8 @@ function executiveSummary(ctx: Ctx) {
     { zebra: true },
   );
 
+  paymentTrackerSection(ctx);
+
   subheading(ctx, "Key issues this period");
   doc.font("Helvetica").fontSize(9).fillColor("#172033").text(d.keyIssues || "No key issues recorded for this period.", { width: PAGE.width - PAGE.margin * 2 });
 
@@ -391,6 +393,8 @@ function movementSection(ctx: Ctx) {
   const m = data.movement;
   if (!m || !m.previous) {
     doc.fillColor(MUTED).font("Helvetica").fontSize(9).text("No earlier locked report to compare with yet. Lock each month in turn; this section then lists every change month on month.");
+    doc.moveDown(0.5);
+    if (m) keyMovementsAndStatus(ctx);
     return;
   }
   const money = (v: unknown) => formatMoney(v as number);
@@ -424,6 +428,7 @@ function movementSection(ctx: Ctx) {
     m.stages.map((st) => ({ ...st, delta: st.nowAmount - st.prevAmount })),
     { zebra: true },
   );
+  keyMovementsAndStatus(ctx);
   for (const g of m.groups) {
     const rows: Record<string, unknown>[] = [
       ...g.added.map((it) => ({ kind: "New", key: it.key, title: it.title, from: "", to: it.to ?? "", amount: it.amount ?? null })),
@@ -450,6 +455,104 @@ function movementSection(ctx: Ctx) {
       { zebra: true },
     );
   }
+}
+
+/** Key period movements per cost-report column, change status counts and DVO ageing (Excel "Executive Summary" boxes). */
+function keyMovementsAndStatus(ctx: Ctx) {
+  const { doc, data } = ctx;
+  const m = data.movement!;
+  const signed = (v: unknown) => {
+    const n = Number(v ?? 0);
+    return Math.abs(n) < 0.005 ? "–" : `${n > 0 ? "+" : ""}${formatMoney(n)}`;
+  };
+  const pair = (p: { prev: number; now: number }) => (m.previous ? `${p.prev} -> ${p.now}${p.now !== p.prev ? ` (${p.now > p.prev ? "+" : ""}${p.now - p.prev})` : ""}` : String(p.now));
+  if (m.previous) {
+    subheading(ctx, "Key period movements", `The changes, early warnings and claims that moved each cost-report column since ${m.previous.label}.`);
+    for (const k of m.keyMovements) {
+      ensureSpace(ctx, 60);
+      const tie = Math.abs(k.itemsTotal - k.kpiDelta) < 0.5;
+      doc.font("Helvetica-Bold").fontSize(9).fillColor(NAVY).text(`${k.col}  ${k.label}: ${signed(k.kpiDelta)}${tie ? "" : `  (items listed ${signed(k.itemsTotal)}; the rest is not linked to a cost line or sits in a budget hold)`}`);
+      doc.moveDown(0.2);
+      if (!k.items.length) {
+        doc.fillColor(MUTED).font("Helvetica").fontSize(8.5).text("No movement.");
+        doc.moveDown(0.4);
+        continue;
+      }
+      table(
+        ctx,
+        [
+          { key: "key", label: "Ref", width: 1.1 },
+          { key: "title", label: "Description", width: 4.5 },
+          { key: "note", label: "What happened", width: 2.4 },
+          { key: "prev", label: "Previous", width: 1.4, align: "right", format: (v) => formatMoney(v as number) },
+          { key: "now", label: "This report", width: 1.4, align: "right", format: (v) => formatMoney(v as number) },
+          { key: "delta", label: "Movement", width: 1.4, align: "right", format: signed },
+        ],
+        k.items as unknown as Record<string, unknown>[],
+        { zebra: true },
+      );
+    }
+  }
+  subheading(ctx, "Change management status", `Changes that have reached each stage and their outcome${m.previous ? ` (${m.previous.label} -> this report)` : ""}.`);
+  table(
+    ctx,
+    [
+      { key: "stage", label: "Stage", width: 1.2 },
+      { key: "total", label: "Total", width: 1.5, align: "right" },
+      { key: "approved", label: "Approved", width: 1.5, align: "right" },
+      { key: "pending", label: "Pending", width: 1.5, align: "right" },
+      { key: "cancelled", label: "Cancelled", width: 1.5, align: "right" },
+    ],
+    m.statusCounts.map((s) => ({ stage: s.stage, total: pair(s.total), approved: pair(s.approved), pending: pair(s.pending), cancelled: pair(s.cancelled) })),
+    { zebra: true },
+  );
+  subheading(ctx, "DVO ageing", "Determined variation orders still pending, by days since the DVO was raised, at the cut-off date.");
+  table(
+    ctx,
+    [
+      { key: "bucket", label: "Age", width: 3 },
+      { key: "count", label: m.previous ? "Previous -> this report" : "Count", width: 2, align: "right" },
+    ],
+    m.dvoAgeing.map((b) => ({ bucket: b.bucket, count: pair({ prev: b.prev, now: b.now }) })),
+    { zebra: true },
+  );
+}
+
+/** Payment status per contract (Excel "Payment Status Tracker"). */
+function paymentTrackerSection(ctx: Ctx) {
+  const { doc, data } = ctx;
+  const m = data.movement;
+  if (!m) return;
+  const pct = (v: unknown) => (v === null || v === undefined ? "–" : `${Number(v).toFixed(1)}%`);
+  subheading(ctx, "Payment status tracker", "Certified = gross cumulative certified excl. VAT; paid = net payments released; late = after the contractual due date.");
+  if (!m.payments.length) {
+    doc.fillColor(MUTED).font("Helvetica").fontSize(8.5).text("No contracts yet.");
+    return;
+  }
+  const rows = m.payments.map((r) => ({ ...r, contract: `${r.key} ${r.title}`.trim() }));
+  const tot = (k: "revised" | "certified" | "certifiedPeriod" | "paid") => rows.reduce((t, r) => t + r[k], 0);
+  rows.push({
+    key: "", title: "", contract: "TOTAL", contractor: "", status: "", revised: tot("revised"), certified: tot("certified"), certifiedPeriod: tot("certifiedPeriod"), paid: tot("paid"),
+    pctCertified: tot("revised") ? (tot("certified") / tot("revised")) * 100 : null, pctPaid: null, lateIpcs: rows.reduce((t, r) => t + r.lateIpcs, 0), latePayments: rows.reduce((t, r) => t + r.latePayments, 0),
+  });
+  table(
+    ctx,
+    [
+      { key: "contract", label: "Contract", width: 2.6 },
+      { key: "contractor", label: "Contractor / consultant", width: 2.2 },
+      { key: "status", label: "Status", width: 0.9 },
+      { key: "revised", label: "Revised value", width: 1.5, align: "right", format: (v) => formatMoney(v as number) },
+      { key: "certified", label: "Certified to date", width: 1.5, align: "right", format: (v) => formatMoney(v as number) },
+      { key: "certifiedPeriod", label: "This period", width: 1.3, align: "right", format: (v) => formatMoney(v as number) },
+      { key: "pctCertified", label: "% cert.", width: 0.8, align: "right", format: pct },
+      { key: "paid", label: "Paid (net)", width: 1.5, align: "right", format: (v) => formatMoney(v as number) },
+      { key: "pctPaid", label: "% paid", width: 0.8, align: "right", format: pct },
+      { key: "lateIpcs", label: "Late IPCs", width: 0.7, align: "right" },
+      { key: "latePayments", label: "Late pay.", width: 0.7, align: "right" },
+    ],
+    rows as unknown as Record<string, unknown>[],
+    { zebra: true },
+  );
 }
 
 /* ------------------------------------------------------------------ */

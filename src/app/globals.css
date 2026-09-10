@@ -166,6 +166,11 @@ table.data td {
   vertical-align: middle;
   white-space: nowrap;
 }
+table.data.compact th,
+table.data.compact td {
+  padding: 0.35rem 0.5rem;
+  font-size: 0.78rem;
+}
 table.data tbody tr:nth-child(even) {
   background: #fafbfe;
 }
