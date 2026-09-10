@@ -16,10 +16,16 @@ export function LoginForm() {
     e.preventDefault();
     setBusy(true);
     setError(null);
-    const res = await fetch("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, password }) });
+    let res: Response;
+    try {
+      res = await fetch("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, password }) });
+    } catch {
+      setBusy(false);
+      return setError("Could not reach the server. Wait a minute and try again.");
+    }
     const j = await res.json().catch(() => ({}));
     setBusy(false);
-    if (!res.ok) return setError(j.error ?? "Login failed.");
+    if (!res.ok) return setError(j.error ?? `Login failed (server error ${res.status}). Wait a minute and try again; if it keeps happening, check the Render logs.`);
     const next = params.get("next");
     router.replace(next && next.startsWith("/") ? next : "/");
     router.refresh();
