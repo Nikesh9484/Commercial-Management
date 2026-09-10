@@ -7,6 +7,8 @@ import { CANVAS, PALETTE, SERIES_COLORS, type Deck, type DeckSlide, type DeckBlo
  */
 const S = 72; // points per inch
 const TONE_COLOR: Record<Tone, string> = { neutral: PALETTE.navy, good: PALETTE.green, bad: PALETTE.red, accent: PALETTE.accent, info: PALETTE.blue };
+const NEUTRAL_TILES = [PALETTE.navy, PALETTE.teal, PALETTE.purple, "3B6EA5"];
+const BAND_W = 0.16;
 const hex = (c: string) => `#${c}`;
 type Doc = InstanceType<typeof PDFDocument>;
 const px = (f: Frame) => ({ x: f.x * S, y: f.y * S, w: f.w * S, h: f.h * S });
@@ -36,11 +38,15 @@ const text = (doc: Doc, str: string, x: number, y: number, w: number, o: { size?
 
 function titleSlide(doc: Doc, deck: Deck, s: DeckSlide) {
   doc.rect(0, 0, CANVAS.w * S, CANVAS.h * S).fill(hex(PALETTE.navy));
-  doc.rect(0, 0, 0.35 * S, CANVAS.h * S).fill(hex(PALETTE.accent));
-  doc.rect(0.9 * S, 3.55 * S, 2.2 * S, 0.08 * S).fill(hex(PALETTE.teal));
-  text(doc, deck.meta.appName.toUpperCase(), 0.9 * S, 1.0 * S, 11 * S, { size: 12, color: "9FB3C8" });
-  text(doc, s.title, 0.9 * S, 1.5 * S, 11.5 * S, { size: 44, bold: true, color: PALETTE.white });
-  text(doc, s.subtitle ?? "", 0.9 * S, 2.75 * S, 11.5 * S, { size: 20, color: "DCE6F2" });
+  doc.rect(0, 0, 0.35 * S, CANVAS.h * S).fill(hex(s.accent));
+  doc.save().rect(0, 0, CANVAS.w * S, CANVAS.h * S).clip();
+  doc.circle((9.6 + 2.6) * S, (-1.6 + 2.6) * S, 2.6 * S).fillOpacity(0.3).fill(hex(PALETTE.teal));
+  doc.circle((11.2 + 1.7) * S, (0.9 + 1.7) * S, 1.7 * S).fillOpacity(0.45).fill(hex(s.accent));
+  doc.restore().fillOpacity(1);
+  doc.rect(0.9 * S, 3.55 * S, 2.2 * S, 0.08 * S).fill(hex(s.accent));
+  text(doc, deck.meta.appName.toUpperCase(), 0.9 * S, 1.0 * S, 8 * S, { size: 12, color: "9FB3C8" });
+  text(doc, s.title, 0.9 * S, 1.5 * S, 9 * S, { size: 44, bold: true, color: PALETTE.white });
+  text(doc, s.subtitle ?? "", 0.9 * S, 2.75 * S, 9 * S, { size: 20, color: "DCE6F2" });
   for (const b of s.blocks) {
     if (b.kind !== "text") continue;
     const f = px(b.frame);
@@ -55,39 +61,46 @@ function titleSlide(doc: Doc, deck: Deck, s: DeckSlide) {
 
 function contentSlide(doc: Doc, deck: Deck, s: DeckSlide, n: number, total: number) {
   doc.rect(0, 0, CANVAS.w * S, CANVAS.h * S).fill(hex(PALETTE.white));
+  doc.rect(0, 0, BAND_W * S, CANVAS.h * S).fill(hex(s.accent));
   text(doc, s.title, 0.45 * S, 0.3 * S, 8.6 * S, { size: 24, bold: true, color: PALETTE.navy });
   if (s.subtitle) text(doc, s.subtitle, 0.45 * S, 0.76 * S, 8.6 * S, { size: 11, color: PALETTE.grey });
   text(doc, deck.meta.programmeCode, 9.0 * S, 0.32 * S, 3.9 * S, { size: 10, bold: true, color: PALETTE.navy, align: "right" });
   text(doc, `${deck.meta.period} · cut-off ${deck.meta.cutOff}`, 9.0 * S, 0.52 * S, 3.9 * S, { size: 10, color: PALETTE.grey, align: "right" });
   doc.rect(0.45 * S, 1.08 * S, (CANVAS.w - 0.9) * S, 0.03 * S).fill(hex(PALETTE.line));
-  doc.rect(0.45 * S, 1.06 * S, 1.4 * S, 0.07 * S).fill(hex(PALETTE.accent));
+  doc.rect(0.45 * S, 1.06 * S, 1.4 * S, 0.07 * S).fill(hex(s.accent));
   doc.rect(0.45 * S, 7.02 * S, (CANVAS.w - 0.9) * S, 0.01 * S).fill(hex(PALETTE.line));
   text(doc, `${deck.meta.appName} · Monthly Report No ${deck.meta.reportNo} · ${deck.meta.status} · all amounts SAR`, 0.45 * S, 7.1 * S, 9 * S, { size: 8, color: PALETTE.grey });
-  text(doc, `Confidential · ${n} / ${total}`, 9.5 * S, 7.1 * S, 3.4 * S, { size: 8, color: PALETTE.grey, align: "right" });
-  for (const b of s.blocks) block(doc, b);
+  text(doc, "Confidential", 10.4 * S, 7.1 * S, 1.6 * S, { size: 8, color: PALETTE.grey, align: "right" });
+  doc.roundedRect(12.1 * S, 7.07 * S, 0.78 * S, 0.26 * S, 0.13 * S).fill(hex(s.accent));
+  text(doc, `${n} / ${total}`, 12.1 * S, 7.12 * S, 0.78 * S, { size: 8, bold: true, color: PALETTE.white, align: "center" });
+  for (const b of s.blocks) block(doc, b, s.accent);
 }
 
-function blockTitle(doc: Doc, f: Frame, title?: string): Frame {
+function blockTitle(doc: Doc, f: Frame, accent: string, title?: string): Frame {
   if (!title) return f;
-  text(doc, title, f.x * S, f.y * S + 2, f.w * S, { size: 11, bold: true, color: PALETTE.navy });
+  doc.rect(f.x * S, f.y * S + 0.09 * S, 0.12 * S, 0.12 * S).fill(hex(accent));
+  text(doc, title, f.x * S + 0.18 * S, f.y * S + 2, f.w * S - 0.18 * S, { size: 11, bold: true, color: PALETTE.navy });
   return { x: f.x, y: f.y + 0.32, w: f.w, h: f.h - 0.32 };
 }
 
-function block(doc: Doc, b: DeckBlock) {
+function block(doc: Doc, b: DeckBlock, accent: string) {
   if (b.kind === "kpis") return kpis(doc, b.frame, b.items);
-  if (b.kind === "table") return table(doc, blockTitle(doc, b.frame, b.title), b.table);
-  if (b.kind === "chart") return chart(doc, blockTitle(doc, b.frame, b.title), b.chart);
-  const f = px(blockTitle(doc, b.frame, b.title));
+  if (b.kind === "table") return table(doc, blockTitle(doc, b.frame, accent, b.title), b.table, accent);
+  if (b.kind === "chart") return chart(doc, blockTitle(doc, b.frame, accent, b.title), b.chart);
+  const f = px(blockTitle(doc, b.frame, accent, b.title));
   if (b.kind === "bullets") {
     const size = b.fontSize ?? 12;
-    let y = f.y;
+    doc.roundedRect(f.x, f.y, f.w, f.h, 5).fillAndStroke(hex(PALETTE.tile), hex(PALETTE.line));
+    let y = f.y + 0.1 * S;
+    const left = f.x + 0.1 * S;
+    const width = f.w - 0.2 * S - 14;
     for (const item of b.items) {
-      doc.circle(f.x + 4, y + size * 0.55, 2).fill(hex(PALETTE.accent));
       doc.font("Helvetica").fontSize(size).fillColor(hex(PALETTE.ink));
-      const h = doc.heightOfString(item, { width: f.w - 14, lineGap: 2 });
-      if (y + h > f.y + f.h) break;
-      doc.text(item, f.x + 14, y, { width: f.w - 14, lineGap: 2 });
-      y += h + size * 0.6;
+      const h = doc.heightOfString(item, { width, lineGap: 2 });
+      if (y + h > f.y + f.h - 4) break;
+      doc.rect(left, y + size * 0.3, 5, 5).fill(hex(accent));
+      doc.fillColor(hex(PALETTE.ink)).text(item, left + 14, y, { width, lineGap: 2 });
+      y += h + size * 0.7;
     }
     return;
   }
@@ -98,26 +111,29 @@ function kpis(doc: Doc, frame: Frame, items: DeckKpi[]) {
   const f = px(frame);
   const gap = 0.15 * S;
   const w = (f.w - gap * (items.length - 1)) / items.length;
+  let neutral = 0;
   items.forEach((k, i) => {
     const x = f.x + i * (w + gap);
-    const color = TONE_COLOR[k.tone ?? "neutral"];
-    doc.roundedRect(x, f.y, w, f.h, 5).fillAndStroke(hex(PALETTE.tile), hex(PALETTE.line));
-    doc.rect(x, f.y + 0.12 * S, 0.06 * S, f.h - 0.24 * S).fill(hex(color));
-    text(doc, k.label.toUpperCase(), x + 0.15 * S, f.y + 0.1 * S, w - 0.25 * S, { size: 7, bold: true, color: PALETTE.grey, h: 0.3 * S });
-    text(doc, k.value, x + 0.15 * S, f.y + 0.42 * S, w - 0.25 * S, { size: k.value.length > 14 ? 12 : 16, bold: true, color, h: 0.4 * S });
-    if (k.sub) text(doc, k.sub, x + 0.15 * S, f.y + f.h - 0.32 * S, w - 0.25 * S, { size: 7, color: PALETTE.grey, h: 0.26 * S });
+    const tone = k.tone ?? "neutral";
+    const color = tone === "neutral" ? NEUTRAL_TILES[neutral++ % NEUTRAL_TILES.length] : TONE_COLOR[tone];
+    doc.roundedRect(x, f.y, w, f.h, 6).fill(hex(color));
+    doc.rect(x + 0.15 * S, f.y + f.h - 0.16 * S, 0.5 * S, 0.05 * S).fillOpacity(0.65).fill(hex(PALETTE.white));
+    doc.fillOpacity(1);
+    text(doc, k.label.toUpperCase(), x + 0.15 * S, f.y + 0.1 * S, w - 0.25 * S, { size: 7, bold: true, color: "E4ECF6", h: 0.3 * S });
+    text(doc, k.value, x + 0.15 * S, f.y + 0.42 * S, w - 0.25 * S, { size: k.value.length > 14 ? 13 : 17, bold: true, color: PALETTE.white, h: 0.4 * S });
+    if (k.sub) text(doc, k.sub, x + 0.15 * S, f.y + f.h - 0.4 * S, w - 0.25 * S, { size: 7, color: "E4ECF6", h: 0.24 * S });
   });
 }
 
-function table(doc: Doc, frame: Frame, t: DeckTable) {
+function table(doc: Doc, frame: Frame, t: DeckTable, accent: string) {
   const f = px(frame);
   const totalW = t.columns.reduce((a, c) => a + c.w, 0);
   const colW = t.columns.map((c) => (c.w / totalW) * f.w);
   const fs = t.fontSize ?? 9;
-  const rowH = Math.min(0.32 * S, Math.max(0.22 * S, (f.h - 0.3 * S) / Math.max(1, t.rows.length)));
-  const headH = 0.3 * S;
+  const rowH = Math.min(0.42 * S, Math.max(0.22 * S, f.h / (t.rows.length + 1)));
+  const headH = rowH;
   let y = f.y;
-  doc.rect(f.x, y, f.w, headH).fill(hex(PALETTE.navy));
+  doc.rect(f.x, y, f.w, headH).fill(hex(accent));
   let x = f.x;
   t.columns.forEach((c, i) => {
     text(doc, c.label, x + 3, y + (headH - fs) / 2 - 1, colW[i] - 6, { size: fs, bold: true, color: PALETTE.white, align: c.align ?? "left", h: headH, ellipsis: true });
@@ -132,7 +148,7 @@ function table(doc: Doc, frame: Frame, t: DeckTable) {
     const tone = t.tones?.[ri];
     let cx = f.x;
     r.forEach((cell, ci) => {
-      text(doc, cell, cx + 3, y + (rowH - fs) / 2 - 1, colW[ci] - 6, { size: fs, bold: isTotal, color: ci === 0 && tone ? TONE_COLOR[tone] : PALETTE.ink, align: t.columns[ci]?.align ?? "left", h: rowH, ellipsis: true });
+      text(doc, cell, cx + 3, y + (rowH - fs) / 2 - 1, colW[ci] - 6, { size: fs, bold: isTotal || (ci === 0 && !!tone), color: ci === 0 && tone ? TONE_COLOR[tone] : PALETTE.ink, align: t.columns[ci]?.align ?? "left", h: rowH, ellipsis: true });
       cx += colW[ci];
     });
     y += rowH;
@@ -145,9 +161,10 @@ const fmtVal = (v: number, decimals: number) => v.toLocaleString("en-US", { mini
 function chart(doc: Doc, frame: Frame, c: DeckChart) {
   const f = px(frame);
   const colors = (c.colors ?? c.series.map((s, i) => s.color ?? SERIES_COLORS[i % SERIES_COLORS.length])).map(hex);
+  doc.roundedRect(f.x, f.y, f.w, f.h, 5).fillAndStroke(hex(PALETTE.tile), hex(PALETTE.line));
   if (c.type === "doughnut" || c.type === "pie") return roundChart(doc, f, c, colors);
   const legendH = c.series.length > 1 ? 16 : 0;
-  const pad = { l: 46, r: 8, t: 8, b: c.type === "barH" ? 18 : c.categories.length > 8 ? 40 : 26 };
+  const pad = { l: c.type === "barH" ? 96 : 46, r: 8, t: 8, b: c.type === "barH" ? 18 : c.categories.length > 8 ? 40 : 26 };
   const plot = { x: f.x + pad.l, y: f.y + pad.t, w: f.w - pad.l - pad.r, h: f.h - pad.t - pad.b - legendH };
   const stacked = c.type === "stackedBar";
   const maxV = Math.max(
@@ -269,7 +286,7 @@ function roundChart(doc: Doc, f: { x: number; y: number; w: number; h: number },
     }
     a = a1;
   });
-  if (c.type === "doughnut") doc.circle(cx, cy, r * 0.55).fill(hex(PALETTE.white));
+  if (c.type === "doughnut") doc.circle(cx, cy, r * 0.55).fill(hex(PALETTE.tile));
   // legend
   const lx = cx + r + 18;
   const lw = f.x + f.w - lx;
