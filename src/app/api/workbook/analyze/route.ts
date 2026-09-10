@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { withUser } from "@/lib/api";
 import { AuthError } from "@/lib/auth";
 import { analyzeWorkbook } from "@/lib/workbook/analyze";
-import { storeUpload, uploadPath, appendUploadPart, finishUploadParts } from "@/lib/workbook/import";
+import { storeUpload, uploadPath, appendUploadPart, finishUploadParts, saveConverted } from "@/lib/workbook/import";
 import { readWorkbookValues } from "@/lib/workbook/read";
+import { looksLikeMarinaReport, convertMarinaReport, toSheetValues } from "@/lib/workbook/marina";
 
 export async function POST(req: Request, ctx: unknown) {
   return withUser(async (user) => {
@@ -51,8 +52,16 @@ export async function POST(req: Request, ctx: unknown) {
     if (bytes[0] !== 0x50 || bytes[1] !== 0x4b) return NextResponse.json({ error: "This does not look like an .xlsx workbook. In Excel use Save As → Excel Workbook (.xlsx)." }, { status: 400 });
     const fileId = storeUpload(bytes);
     bytes = Buffer.alloc(0); // let the copy go before parsing
-    const worksheets = await readWorkbookValues(uploadPath(fileId));
-    const analysis = analyzeWorkbook(worksheets, name || "workbook.xlsx", fileId);
+    let worksheets = await readWorkbookValues(uploadPath(fileId));
+    let conversion: { notes: string[]; reportNo: number | null; periodEnd: string | null } | undefined;
+    if (looksLikeMarinaReport(worksheets)) {
+      // The Marina CM Report layout: convert the schedules into clean register sheets first.
+      const conv = convertMarinaReport(worksheets);
+      worksheets = toSheetValues(conv);
+      saveConverted(fileId, worksheets);
+      conversion = { notes: conv.notes, reportNo: conv.reportNo, periodEnd: conv.periodEnd };
+    }
+    const analysis = { ...analyzeWorkbook(worksheets, name || "workbook.xlsx", fileId), conversion };
     return NextResponse.json(analysis);
   })(req, ctx);
 }

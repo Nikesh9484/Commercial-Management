@@ -9,7 +9,9 @@ import { businessDaysBetween } from "../workdays";
 import { PROBABILITY_BANDS, IMPACT_BANDS, bandIndex, severity } from "./defs/risks";
 import { EXPIRY_AMBER_DAYS, EXPIRY_RED_DAYS } from "./defs/bonds";
 import { revisedContractValues } from "../bonds/revised";
-import { getDb } from "../db";
+import { getDb, getSetting } from "../db";
+import { computeCostReport } from "../cost-report/compute";
+import { FA_AMBER_DAYS } from "./defs/final-accounts";
 
 /**
  * Fills in the calculated ("virtual") columns of a register after its rows are read.
@@ -71,6 +73,25 @@ export function enrichRows(def: RegisterDef, rows: RecordRow[]) {
     const programmeId = Number(rows[0].programme_id);
     const revised = revisedContractValues(getDb(), programmeId);
     rows.forEach((r) => enrichBond(r, revised.values));
+  }
+  if (def.key === "final_accounts" && rows.length) {
+    const db = getDb();
+    const programmeId = Number(rows[0].programme_id);
+    const periodId = Number(getSetting(db, "current_period_id") ?? 0) || null;
+    const report = computeCostReport(programmeId, periodId);
+    const byLine = new Map(report.lines.map((l) => [l.id, l]));
+    const today = todayIso();
+    for (const r of rows) {
+      const line = byLine.get(Number(r.cost_line_id));
+      r.committed = line ? line.I : null;
+      r.afa = line ? line.N : null;
+      r.uncommitted = line ? Math.round((line.N - line.I) * 100) / 100 : null;
+      const open = r.status === "Open";
+      const days = open && r.forecast_closure_date ? daysBetween(today, String(r.forecast_closure_date)) : null;
+      r.days_remaining = days;
+      r.days_remaining__tone = days === null ? null : days < 0 ? "red" : days <= FA_AMBER_DAYS ? "amber" : "green";
+      r.status__tone = r.status === "Closed" ? "green" : open ? (days !== null && days < 0 ? "red" : "amber") : null;
+    }
   }
 }
 

@@ -81,6 +81,18 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo 
     setProgress("");
     const a = j as unknown as WorkbookAnalysis;
     setAnalysis(a);
+    if (a.conversion) {
+      // A known report layout was converted: suggest the period the report is for.
+      const existing = a.conversion.reportNo ? periods.find((p) => p.report_no === a.conversion!.reportNo) : undefined;
+      if (existing && existing.status === "Open") {
+        setPeriodMode("existing");
+        setPeriodId(existing.id);
+      } else if (!existing) {
+        setPeriodMode("new");
+        if (a.conversion.reportNo) setReportNo(String(a.conversion.reportNo));
+        if (a.conversion.periodEnd) setPeriodEnd(a.conversion.periodEnd);
+      }
+    }
     const m: typeof mapping = {};
     for (const s of a.sheets) m[s.name] = { register: s.register, columns: Object.fromEntries(s.columns.map((c) => [String(c.index), c.field])) };
     setMapping(m);
@@ -165,6 +177,16 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo 
           <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold text-ink">
             <span className="grid h-6 w-6 place-items-center rounded-full bg-navy text-xs text-white">2</span> Check how each sheet was read
           </h2>
+          {analysis.conversion && (
+            <div className="mb-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+              <div className="font-semibold">Your monthly report layout was recognised and cleaned automatically.</div>
+              <ul className="mt-1 list-disc pl-5 text-xs">
+                {analysis.conversion.notes.map((n, i) => (
+                  <li key={i}>{n}</li>
+                ))}
+              </ul>
+            </div>
+          )}
           <p className="mb-3 text-xs text-muted">
             For each sheet, confirm which register it is and which column goes to which field. Columns left as &quot;— not used —&quot; are ignored (calculated columns like Latest Budget or Anticipated Final Account should stay unused; the app calculates them). Your choices are remembered for next month.
           </p>

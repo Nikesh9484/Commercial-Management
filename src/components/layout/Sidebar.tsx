@@ -81,6 +81,7 @@ export function Sidebar({ open, onClose, role }: { open: boolean; onClose: () =>
             <div key={m.slug}>
               {link(m.slug === "executive-summary" ? "/" : `/modules/${m.slug}`, m.short, ICONS[m.icon] ?? ClipboardList, String(m.no))}
               {m.slug === "executive-summary" && <div className="pl-4">{link("/modules/executive-summary/minutes", "Minutes of Meeting", FileText)}</div>}
+              {m.slug === "invoices-payments" && <div className="pl-4">{link("/modules/final-accounts", "Final Account Status", FileText)}</div>}
             </div>
           ))}
           <div className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider text-blue-200/50">System</div>

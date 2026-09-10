@@ -14,6 +14,7 @@ export const IMPORTABLE: { key: string; label: string }[] = [
   { key: "bonds", label: "Bonds & Insurance" },
   { key: "contracts", label: "Contracts – Payment Summary" },
   { key: "payment_applications", label: "IPC Log (payment applications)" },
+  { key: "final_accounts", label: "Final Account Status" },
   { key: "budget_transfers", label: "Budget Transfers" },
   { key: "project_team", label: "Distribution & Project Team" },
   { key: "actions", label: "Meeting items & actions" },
@@ -247,6 +248,8 @@ export interface WorkbookAnalysis {
   fileId: string;
   fileName: string;
   sheets: SheetAnalysis[];
+  /** Present when a known report layout was converted into clean sheets first. */
+  conversion?: { notes: string[]; reportNo: number | null; periodEnd: string | null };
 }
 
 /** Finds the row that looks most like a header: many short text cells, few numbers. */

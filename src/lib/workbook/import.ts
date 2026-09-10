@@ -9,7 +9,7 @@ import { lockPeriod, getPeriod } from "../snapshots";
 import { logAudit } from "../audit";
 import { formatMonthYear, parseDateInput } from "../format";
 import { importKeyFields, norm } from "./analyze";
-import { cellText, getSheet, readWorkbookValues } from "./read";
+import { cellText, getSheet, readWorkbookValues, type SheetValues } from "./read";
 
 /* ------------------------------------------------------------------ */
 /* Temporary storage of the uploaded workbook (30 minutes)             */
@@ -52,6 +52,22 @@ export function uploadPath(id: string): string {
   const p = path.join(TMP, `${id}.xlsx`);
   if (!fs.existsSync(p)) throw new ValidationError("The uploaded file has expired. Please upload it again.");
   return p;
+}
+
+/** Keeps the converted (cleaned) sheets of an upload so the import reads those instead of the raw workbook. */
+export function saveConverted(id: string, sheets: SheetValues[]) {
+  const p = `${uploadPath(id)}.converted.json`;
+  fs.writeFileSync(p, JSON.stringify(sheets.map((s) => ({ name: s.name, rowCount: s.rowCount, truncated: s.truncated, rows: [...s.rows.entries()] }))));
+}
+
+/** The sheets to import for an upload: the converted ones when a converter ran, else the workbook itself. */
+export async function uploadSheets(id: string): Promise<SheetValues[]> {
+  const p = `${uploadPath(id)}.converted.json`;
+  if (fs.existsSync(p)) {
+    const raw = JSON.parse(fs.readFileSync(p, "utf8")) as { name: string; rowCount: number; truncated: boolean; rows: [number, unknown[]][] }[];
+    return raw.map((s) => ({ name: s.name, rowCount: s.rowCount, truncated: s.truncated, rows: new Map(s.rows) }));
+  }
+  return readWorkbookValues(uploadPath(id));
 }
 
 /* ------------------------------------------------------------------ */
@@ -121,7 +137,7 @@ function resolveOption(value: string, options: string[]): string | null {
 export async function importWorkbook(req: ImportRequest, user: UserInfo): Promise<ImportResult> {
   if (user.role === "viewer") throw new ValidationError("Viewers cannot import.");
   const db = getDb();
-  const worksheets = await readWorkbookValues(uploadPath(req.fileId));
+  const worksheets = await uploadSheets(req.fileId);
 
   // Reporting period
   let periodId = req.period.id ?? null;
