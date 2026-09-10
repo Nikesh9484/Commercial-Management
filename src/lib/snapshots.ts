@@ -27,11 +27,20 @@ export function listPeriods(): PeriodRow[] {
 }
 
 /** Locks a period: stores a copy of every snapshot-enabled register so it can be compared later. */
-export function lockPeriod(periodId: number, user: UserInfo): { registers: number; records: number } {
+export function lockPeriod(periodId: number, user: UserInfo, opts: { force?: boolean } = {}): { registers: number; records: number } {
   if (user.role !== "admin") throw new AuthError("Only an Admin can lock a reporting period.");
   const db = getDb();
   const period = getPeriod(periodId);
   if (!period) throw new ValidationError("Reporting period not found.");
+  // A snapshot freezes the LIVE registers. Locking an older month while a newer one exists would
+  // store the newer month's figures under the older report (and the movement between them shows 0).
+  const newer = db.prepare("SELECT label FROM reporting_periods WHERE report_no > ? ORDER BY report_no").all(period.report_no) as { label: string }[];
+  if (newer.length && !opts.force) {
+    throw new ValidationError(
+      `${newer[0].label} already exists, so the live figures are probably that month's, not ${period.label}'s. Locking now would freeze them as ${period.label} and the movement between the two reports would show 0. Lock reports in date order: import or enter ${period.label}, lock it, then load the newer month. Lock anyway only if you are sure the live figures are ${period.label}'s.`,
+      { force: "confirm" },
+    );
+  }
   const stamp = nowIso();
   let registers = 0;
   let records = 0;

@@ -65,8 +65,12 @@ export function NewMonthWizard({
     if (!working) return;
     if (!confirm(`Lock and issue ${working.label}? The figures are frozen as the issued report and every module becomes read-only for that month.`)) return;
     setBusy(true);
-    const r = await fetch(`/api/periods/${working.id}/lock`, { method: "POST" });
-    const j = await r.json().catch(() => ({}));
+    let r = await fetch(`/api/periods/${working.id}/lock`, { method: "POST" });
+    let j = await r.json().catch(() => ({}));
+    if (!r.ok && j.fieldErrors?.force === "confirm" && confirm(`${j.error}\n\nLock anyway?`)) {
+      r = await fetch(`/api/periods/${working.id}/lock`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ force: true }) });
+      j = await r.json().catch(() => ({}));
+    }
     setBusy(false);
     if (!r.ok) return toast(j.error ?? "Could not lock the period.", "error");
     toast(`${working.label} locked and issued.`);

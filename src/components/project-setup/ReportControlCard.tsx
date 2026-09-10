@@ -78,8 +78,12 @@ export function ReportControlCard({ period, canEdit, isAdmin }: { period: Period
     const action = period!.status === "Locked" ? "unlock" : "lock";
     if (action === "lock" && !window.confirm(`Lock ${period!.label}? A snapshot of every module register will be stored for this period.`)) return;
     setBusy(true);
-    const res = await fetch(`/api/periods/${period!.id}/${action}`, { method: "POST" });
-    const j = await res.json().catch(() => ({}));
+    let res = await fetch(`/api/periods/${period!.id}/${action}`, { method: "POST" });
+    let j = await res.json().catch(() => ({}));
+    if (!res.ok && j.fieldErrors?.force === "confirm" && window.confirm(`${j.error}\n\nLock anyway?`)) {
+      res = await fetch(`/api/periods/${period!.id}/${action}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ force: true }) });
+      j = await res.json().catch(() => ({}));
+    }
     setBusy(false);
     if (!res.ok) return toast(j.error ?? "Action failed.", "error");
     toast(action === "lock" ? `Period locked. Snapshot stored (${j.records ?? 0} record(s)).` : "Period unlocked.");

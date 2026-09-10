@@ -347,6 +347,8 @@ export function getMovement(db: Database.Database, programmeId: number, periodId
   let warning: string | undefined;
   if (prev && prevReport && prevReport.lines.length === 0) warning = `${prev.label} is locked but its cost report has no lines, so every "previous" figure below is 0. Unlock ${prev.label}, import or enter that month's data, and lock it again – or delete it if it was created by mistake.`;
   else if (prev && nowReport.previousPeriod && nowReport.previousPeriod.id === prev.id && !nowReport.previousPeriod.snapshotAvailable) warning = `${prev.label} has a cost report, but none of its lines match this report's lines (different codes). The cost report movement below compares totals only.`;
+  else if (prev && prevReport && prevReport.lines.length > 0 && nowReport.lines.length > 0 && kpis.every((k) => k.delta === 0))
+    warning = `${prev.label} holds exactly the same figures as ${current.label} on every column, so nothing shows as moved. That happens when ${prev.label} was locked after this month's data was loaded, or when this month's workbook has not been imported since. To fix it, re-import this month's workbook (Stand-alone imports → Monthly report workbook, choose ${current.label}); if ${prev.label} itself holds the wrong month, unlock it, import its own workbook, lock it, then re-import ${current.label}.`;
 
   const nowChanges = rowsFor(db, programmeId, current, "changes");
   const prevChanges = prev ? rowsFor(db, programmeId, prev, "changes") : [];

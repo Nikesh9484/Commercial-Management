@@ -96,6 +96,8 @@ export interface ImportRequest {
   createMissingLookups: boolean;
   /** Stand-alone imports: only these registers may be written (other sheets are ignored). */
   allowedRegisters?: string[];
+  /** The user confirmed importing a month older than the latest report (the live figures become that older month's). */
+  allowOlder?: boolean;
 }
 
 export interface SheetResult {
@@ -109,7 +111,7 @@ export interface SheetResult {
 }
 
 export interface ImportResult {
-  period: { id: number; label: string; locked: boolean };
+  period: { id: number; label: string; locked: boolean; olderThan?: string };
   sheets: SheetResult[];
   lookupsCreated: string[];
 }
@@ -149,7 +151,18 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo): Promis
   const db = getDb();
   const worksheets = await uploadSheets(req.fileId);
 
-  // Reporting period
+  // Reporting period. The live registers always hold the latest import: importing an older month
+  // over a newer one replaces the newer month's live figures – allowed only when the user has said so.
+  const targetNo = req.period.id ? (getPeriod(req.period.id)?.report_no ?? null) : Number(req.period.report_no) || null;
+  const newer = targetNo === null ? [] : (db.prepare("SELECT label FROM reporting_periods WHERE report_no > ? ORDER BY report_no DESC").all(targetNo) as { label: string }[]);
+  const olderImport = newer.length > 0;
+  if (olderImport && !req.allowOlder) {
+    const target = req.period.id ? (getPeriod(req.period.id)?.label ?? `Report No ${targetNo}`) : `Monthly Report No ${targetNo}`;
+    throw new ValidationError(
+      `This import is for ${target}, but ${newer[0].label} already exists. The dashboard's live figures are always the last month imported, so importing ${target} now would replace what ${newer[0].label} shows. Import months in date order. If ${target} is history you still want to add, tick "Import an older month", lock it, and afterwards re-import ${newer[0].label}'s workbook so the live figures return to the latest month.`,
+      { allowOlder: "confirm" },
+    );
+  }
   let periodId = req.period.id ?? null;
   if (!periodId) {
     if (!req.period.report_no || !req.period.period_end) throw new ValidationError("Choose an existing reporting period or give a report number and cut-off date for a new one.");
@@ -164,6 +177,7 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo): Promis
   }
   const period = getPeriod(periodId)!;
   if (period.status === "Locked") throw new ValidationError(`${period.label} is locked. Unlock it first if you really want to re-import that month.`);
+
   setSetting(db, "current_period_id", String(periodId));
   const programmeId = Number(getSetting(db, "current_programme_id") ?? (db.prepare("SELECT id FROM programmes ORDER BY id LIMIT 1").get() as { id: number } | undefined)?.id ?? 1);
 
@@ -325,10 +339,10 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo): Promis
   if (req.lock && user.role === "admin") {
     const totalErrors = results.reduce((t, r) => t + r.errors.length, 0);
     if (totalErrors === 0) {
-      lockPeriod(periodId, user);
+      lockPeriod(periodId, user, { force: olderImport });
       locked = true;
     }
   }
-  return { period: { id: periodId, label: period.label, locked }, sheets: results, lookupsCreated: [...new Set(lookupsCreated)] };
+  return { period: { id: periodId, label: period.label, locked, olderThan: olderImport ? newer[0].label : undefined }, sheets: results, lookupsCreated: [...new Set(lookupsCreated)] };
 }
 

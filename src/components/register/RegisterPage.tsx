@@ -218,8 +218,12 @@ export function RegisterPage({
   }
 
   async function periodAction(row: RecordRow, action: "lock" | "unlock") {
-    const res = await fetch(`/api/periods/${row.id}/${action}`, { method: "POST" });
-    const j = await res.json().catch(() => ({}));
+    let res = await fetch(`/api/periods/${row.id}/${action}`, { method: "POST" });
+    let j = await res.json().catch(() => ({}));
+    if (!res.ok && j.fieldErrors?.force === "confirm" && window.confirm(`${j.error}\n\nLock anyway?`)) {
+      res = await fetch(`/api/periods/${row.id}/${action}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ force: true }) });
+      j = await res.json().catch(() => ({}));
+    }
     if (!res.ok) return toast(j.error ?? "Action failed.", "error");
     toast(action === "lock" ? `Period locked. Snapshot stored (${j.records ?? 0} record(s)).` : "Period unlocked.");
     await load();
