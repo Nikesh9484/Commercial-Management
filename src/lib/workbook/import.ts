@@ -5,7 +5,7 @@ import { getDb, getSetting, setSetting } from "../db";
 import { getRegisterDef } from "../registers";
 import { createRecord, updateRecord, listRecords, lookupOptions, ValidationError } from "../registers/engine";
 import type { UserInfo, RecordRow } from "../registers/types";
-import { lockPeriod, getPeriod, latestPeriod, takeSnapshot, restoreFromSnapshot, hasStoredCopy } from "../snapshots";
+import { lockPeriod, getPeriod, latestPeriod, takeSnapshot, restoreFromSnapshot, hasStoredCopy, clearSnapshotRegisters, nearestStoredBefore } from "../snapshots";
 import { logAudit } from "../audit";
 import { nowIso, formatMonthYear, parseDateInput } from "../format";
 import { importKeyFields, norm } from "./analyze";
@@ -175,7 +175,22 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo): Promis
   const older = !!latest && latest.id !== periodId && latest.report_no > period.report_no;
   const olderImport = older;
   const newer = latest ? [{ label: latest.label }] : [];
-  if (older && (latest!.status !== "Locked" || !hasStoredCopy(db, latest!.id))) takeSnapshot(latest!.id, user, "preserve");
+  let baseNote = "";
+  if (older) {
+    if (latest!.status !== "Locked" || !hasStoredCopy(db, latest!.id)) takeSnapshot(latest!.id, user, "preserve");
+    // Starting point for the older month: a stand-alone import updates that report's own stored copy;
+    // a full monthly import rebuilds the month from its workbook on top of the nearest earlier report
+    // (or from nothing), so rows that only exist in later months never leak into it.
+    const own = hasStoredCopy(db, periodId) ? period : null;
+    const base = req.allowedRegisters ? (own ?? nearestStoredBefore(db, period.report_no)) : nearestStoredBefore(db, period.report_no);
+    if (base) {
+      restoreFromSnapshot(db, base.id);
+      baseNote = base.id === periodId ? `starting from ${period.label}'s own stored data` : `starting from the stored data of ${base.label}`;
+    } else {
+      clearSnapshotRegisters(db);
+      baseNote = "starting from empty registers (no earlier report is stored)";
+    }
+  }
   setSetting(db, "current_period_id", String(periodId));
   const programmeId = Number(getSetting(db, "current_programme_id") ?? (db.prepare("SELECT id FROM programmes ORDER BY id LIMIT 1").get() as { id: number } | undefined)?.id ?? 1);
 
@@ -348,7 +363,7 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo): Promis
     // put the live registers back to the latest report and return the top bar to it
     restoreFromSnapshot(db, latest!.id);
     setSetting(db, "current_period_id", String(latest!.id));
-    logAudit(db, { registerKey: "reporting_periods", recordId: latest!.id, action: "context", user, summary: `Live figures restored to ${latest!.label} after importing ${period.label}` });
+    logAudit(db, { registerKey: "reporting_periods", recordId: latest!.id, action: "context", user, summary: `Live figures restored to ${latest!.label} after importing ${period.label} (${baseNote})` });
   }
   return { period: { id: periodId, label: period.label, locked, olderThan: olderImport ? newer[0].label : undefined }, sheets: results, lookupsCreated: [...new Set(lookupsCreated)] };
 }

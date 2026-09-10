@@ -117,6 +117,23 @@ export function restoreFromSnapshot(db: Database.Database, periodId: number): nu
   return restored;
 }
 
+/** Empties every snapshot register (used as the starting point when an older month is imported and no earlier report is stored). */
+export function clearSnapshotRegisters(db: Database.Database): void {
+  const tx = db.transaction(() => {
+    for (const def of allRegisters) if (def.snapshot) db.prepare(`DELETE FROM "${def.table}"`).run();
+  });
+  tx();
+}
+
+/** The nearest stored report before the given report number, if any. */
+export function nearestStoredBefore(db: Database.Database, reportNo: number): PeriodRow | null {
+  return (
+    (db
+      .prepare("SELECT p.* FROM reporting_periods p WHERE p.report_no < ? AND EXISTS (SELECT 1 FROM snapshots s WHERE s.period_id = p.id AND s.register_key = 'cost_report') ORDER BY p.report_no DESC LIMIT 1")
+      .get(reportNo) as PeriodRow | undefined) ?? null
+  );
+}
+
 /**
  * Locks (issues) a report. The latest report is frozen from the live registers; an earlier report keeps
  * the copy stored when it was imported, so locking it later never captures another month's figures.
