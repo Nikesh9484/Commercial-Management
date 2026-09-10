@@ -82,7 +82,7 @@ export function CostReportPage({ canEdit, isAdmin }: { canEdit: boolean; isAdmin
   if (error) return <div className="card p-6 text-sm text-red-700">{error}</div>;
   if (!report) return <div className="card p-6 text-sm text-muted">Calculating…</div>;
 
-  const assets = report.level1.map((r) => ({ id: r.asset_id, label: `${r.asset_code} · ${r.asset_name}` }));
+  const assets = [...new Map(report.level1.map((r) => [r.asset_id, { id: r.asset_id, label: `${r.asset_code} · ${r.asset_name}` }])).values()];
   const pendingFeeds = report.feeds.filter((f) => !f.available);
 
   return (

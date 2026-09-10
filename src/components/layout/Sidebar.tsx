@@ -85,6 +85,10 @@ export function Sidebar({ open, onClose, role }: { open: boolean; onClose: () =>
             </div>
           ))}
           <div className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider text-blue-200/50">System</div>
+          <a href="/user-guide.pdf" target="_blank" rel="noopener" className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-blue-100/80 hover:bg-white/10 hover:text-white">
+            <FileText size={18} className="shrink-0" />
+            <span className="truncate">User guide (PDF)</span>
+          </a>
           {link("/activity", "Change history", History)}
           {link("/settings", role === "viewer" ? "Reference data" : "Settings", Settings)}
         </nav>
