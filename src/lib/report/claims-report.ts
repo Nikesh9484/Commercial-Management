@@ -160,7 +160,7 @@ export function buildClaimsReport(data: ReportData): ClaimsReport {
         label: `Since ${mv.previous.label}`,
         items: [
           ...grp.added.map((i) => `New: ${i.key} ${i.title}${i.amount ? ` (${money(i.amount)})` : ""}`),
-          ...grp.changed.map((i) => `${i.key} ${i.title}: ${i.from} -> ${i.to}${i.delta ? ` (${i.delta > 0 ? "+" : ""}${formatMoney(i.delta)})` : ""}`),
+          ...grp.changed.map((i) => (i.from === i.to ? `${i.key} ${i.title}: claimed amount ${i.delta && i.delta > 0 ? "+" : ""}${formatMoney(i.delta ?? 0)} (still ${i.to})` : `${i.key} ${i.title}: ${i.from} -> ${i.to}${i.delta ? ` (${i.delta > 0 ? "+" : ""}${formatMoney(i.delta)})` : ""}`)),
           ...grp.removed.map((i) => `Removed: ${i.key} ${i.title}`),
         ],
       }
