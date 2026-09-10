@@ -8,16 +8,21 @@ export interface ViewedPeriod {
 }
 
 /**
- * "Period view mode": when the period chosen in the top bar is Locked and has a stored snapshot,
- * every page shows that issued report (the snapshot) instead of the live data, read-only.
+ * "Period view mode": every report keeps its own data. The live registers belong to the latest
+ * report; when the top bar shows a locked report or an earlier one, every page shows that report's
+ * stored copy, read-only.
  */
-export function viewingLockedPeriod(db: Database.Database = getDb()): ViewedPeriod | null {
+export function viewingLockedPeriod(db: Database.Database = getDb()): (ViewedPeriod & { status: string; reason: string }) | null {
   const id = Number(getSetting(db, "current_period_id") ?? 0);
   if (!id) return null;
   const p = db.prepare("SELECT id, label, report_no, status FROM reporting_periods WHERE id = ?").get(id) as (ViewedPeriod & { status: string }) | undefined;
-  if (!p || p.status !== "Locked") return null;
-  const n = (db.prepare("SELECT COUNT(*) AS n FROM snapshots WHERE period_id = ?").get(id) as { n: number }).n;
-  return n ? { id: p.id, label: p.label, report_no: p.report_no } : null;
+  if (!p) return null;
+  const n = (db.prepare("SELECT COUNT(*) AS n FROM snapshots WHERE period_id = ? AND register_key = 'cost_report'").get(id) as { n: number }).n;
+  if (!n) return null;
+  const newer = db.prepare("SELECT label FROM reporting_periods WHERE report_no > ? ORDER BY report_no DESC LIMIT 1").get(p.report_no) as { label: string } | undefined;
+  if (p.status !== "Locked" && !newer) return null;
+  const reason = p.status === "Locked" ? `${p.label} is locked – you are viewing the issued report.` : `${p.label} is an earlier report – you are viewing its stored data; ${newer!.label} is the live one.`;
+  return { id: p.id, label: p.label, report_no: p.report_no, status: p.status, reason };
 }
 
 /** Snapshot rows of one register for a period (already enriched when they were taken). */

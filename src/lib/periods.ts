@@ -1,7 +1,7 @@
 import { getDb, getSetting, setSetting } from "./db";
 import { getRegisterDef } from "./registers";
 import { updateRecord, ValidationError } from "./registers/engine";
-import { getPeriod, listPeriods, type PeriodRow } from "./snapshots";
+import { getPeriod, listPeriods, latestPeriod, storedCopyAt, type PeriodRow } from "./snapshots";
 import { logAudit } from "./audit";
 import { AuthError } from "./auth";
 import { formatMonthYear } from "./format";
@@ -25,8 +25,11 @@ export interface LibraryRow {
   source_file: string | null;
   imported_at: string | null;
   imported_by: string | null;
-  /** records held in the issued snapshot (0 when open) */
+  /** records held in the stored copy (0 when none) */
   snapshot_records: number;
+  /** "live" (latest report, live registers) | "stored" (its own stored copy) | "issued" (locked) | "none" (older report without stored data) */
+  data: "live" | "stored" | "issued" | "none";
+  stored_at: string | null;
   cost_lines: number;
   current: boolean;
   created_at: string | null;
@@ -35,6 +38,7 @@ export interface LibraryRow {
 export function listReportLibrary(): LibraryRow[] {
   const db = getDb();
   const current = Number(getSetting(db, "current_period_id") ?? 0);
+  const latest = latestPeriod(db);
   const snap = db.prepare("SELECT COUNT(*) AS n, SUM(CASE WHEN register_key = 'cost_report' THEN 1 ELSE 0 END) AS lines FROM snapshots WHERE period_id = ?");
   const lastImport = db.prepare("SELECT at, user_name FROM audit_log WHERE register_key = 'reporting_periods' AND record_id = ? AND action = 'import' ORDER BY at DESC LIMIT 1");
   return listPeriods().map((p) => {
@@ -56,6 +60,8 @@ export function listReportLibrary(): LibraryRow[] {
       imported_at: imp?.at ?? null,
       imported_by: imp?.user_name ?? null,
       snapshot_records: s.n,
+      data: p.status === "Locked" && s.n ? "issued" : latest && latest.id === p.id ? "live" : s.n ? "stored" : "none",
+      stored_at: s.n ? storedCopyAt(db, p.id) : null,
       cost_lines: s.lines ?? 0,
       current: p.id === current,
       created_at: (p.created_at as string | null) ?? null,

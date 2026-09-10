@@ -7,7 +7,7 @@ import { getChecklist, type ChecklistItem } from "../checklist";
 import { getDashboard, type DashboardData } from "../dashboard/summary";
 import { getMovement, type Movement } from "../dashboard/movement";
 import { level1Matrix, type Level1Matrix } from "../cost-report/level1";
-import { getPeriod, getPreviousPeriod, type PeriodRow } from "../snapshots";
+import { getPeriod, getPreviousPeriod, readsStoredCopy, type PeriodRow } from "../snapshots";
 import { lookupOptions } from "../registers/engine";
 import type { RecordRow, RegisterDef } from "../registers/types";
 import { REPORT_SCHEDULES } from "./schedules";
@@ -48,6 +48,8 @@ export function getReportData(programmeId: number, periodId: number): ReportData
   const period = getPeriod(periodId);
   if (!period) throw new ValidationError("Reporting period not found.");
   const locked = period.status === "Locked";
+  // every report keeps its own data: a locked report, or any earlier one, is read from its stored copy
+  const stored = readsStoredCopy(db, period);
   const programme = db.prepare("SELECT id, code, name, client_id, location_id FROM programmes WHERE id = ?").get(programmeId) as { id: number; code: string; name: string; client_id: number | null; location_id: number | null } | undefined;
   if (!programme) throw new ValidationError("Programme not found.");
   const assetId = db.prepare("SELECT value FROM app_settings WHERE key = 'current_asset_id'").get() as { value: string } | undefined;
@@ -61,7 +63,7 @@ export function getReportData(programmeId: number, periodId: number): ReportData
   const keys = REPORT_SCHEDULES.flatMap((s) => (Array.isArray(s.register) ? s.register : s.register ? [s.register] : []));
   for (const key of keys) {
     const def = getRegisterDef(key)!;
-    const snap = locked ? snapshotRows(periodId, key) : null;
+    const snap = stored ? snapshotRows(periodId, key) : null;
     let rows = snap ?? listRecords(def);
     if (snap) rows = rows.filter((r) => Number(r.programme_id) === programmeId);
     registers[key] = { def, rows };
@@ -71,7 +73,7 @@ export function getReportData(programmeId: number, periodId: number): ReportData
   // Cost report
   const live = computeCostReport(programmeId, periodId);
   let costReport = live;
-  const snapLines = locked ? (snapshotRows(periodId, "cost_report") as CostLineRow[] | null) : null;
+  const snapLines = stored ? (snapshotRows(periodId, "cost_report") as CostLineRow[] | null) : null;
   if (snapLines) {
     const assetIds = new Set((db.prepare("SELECT id FROM assets WHERE programme_id = ?").all(programmeId) as { id: number }[]).map((a) => a.id));
     const mine = snapLines.filter((l) => assetIds.has(l.asset_id));
@@ -81,7 +83,7 @@ export function getReportData(programmeId: number, periodId: number): ReportData
 
   // Cash flow
   let cashflow = getCashflow(db, programmeId);
-  const cfSnap = locked ? (db.prepare("SELECT data FROM snapshots WHERE period_id = ? AND register_key = 'cashflow' AND record_id = ?").get(periodId, programmeId) as { data: string } | undefined) : undefined;
+  const cfSnap = stored ? (db.prepare("SELECT data FROM snapshots WHERE period_id = ? AND register_key = 'cashflow' AND record_id = ?").get(periodId, programmeId) as { data: string } | undefined) : undefined;
   if (cfSnap) {
     cashflow = JSON.parse(cfSnap.data) as Cashflow;
     sources.cashflow = "snapshot";

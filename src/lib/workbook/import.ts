@@ -5,7 +5,7 @@ import { getDb, getSetting, setSetting } from "../db";
 import { getRegisterDef } from "../registers";
 import { createRecord, updateRecord, listRecords, lookupOptions, ValidationError } from "../registers/engine";
 import type { UserInfo, RecordRow } from "../registers/types";
-import { lockPeriod, getPeriod } from "../snapshots";
+import { lockPeriod, getPeriod, latestPeriod, takeSnapshot, restoreFromSnapshot, hasStoredCopy } from "../snapshots";
 import { logAudit } from "../audit";
 import { nowIso, formatMonthYear, parseDateInput } from "../format";
 import { importKeyFields, norm } from "./analyze";
@@ -96,7 +96,7 @@ export interface ImportRequest {
   createMissingLookups: boolean;
   /** Stand-alone imports: only these registers may be written (other sheets are ignored). */
   allowedRegisters?: string[];
-  /** The user confirmed importing a month older than the latest report (the live figures become that older month's). */
+  /** Kept for older clients; importing an older month no longer needs a confirmation. */
   allowOlder?: boolean;
   /** Name of the uploaded workbook, kept on the period for the report library. */
   fileName?: string;
@@ -153,18 +153,9 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo): Promis
   const db = getDb();
   const worksheets = await uploadSheets(req.fileId);
 
-  // Reporting period. The live registers always hold the latest import: importing an older month
-  // over a newer one replaces the newer month's live figures – allowed only when the user has said so.
-  const targetNo = req.period.id ? (getPeriod(req.period.id)?.report_no ?? null) : Number(req.period.report_no) || null;
-  const newer = targetNo === null ? [] : (db.prepare("SELECT label FROM reporting_periods WHERE report_no > ? ORDER BY report_no DESC").all(targetNo) as { label: string }[]);
-  const olderImport = newer.length > 0;
-  if (olderImport && !req.allowOlder) {
-    const target = req.period.id ? (getPeriod(req.period.id)?.label ?? `Report No ${targetNo}`) : `Monthly Report No ${targetNo}`;
-    throw new ValidationError(
-      `This import is for ${target}, but ${newer[0].label} already exists. The dashboard's live figures are always the last month imported, so importing ${target} now would replace what ${newer[0].label} shows. Import months in date order. If ${target} is history you still want to add, tick "Import an older month", lock it, and afterwards re-import ${newer[0].label}'s workbook so the live figures return to the latest month.`,
-      { allowOlder: "confirm" },
-    );
-  }
+  // Reporting period. Every report keeps its own data: the live registers belong to the latest report.
+  // Importing an older month is done "in a sandbox": the latest report's live data is stored first,
+  // the older month is imported and stored, and the live registers are put back afterwards.
   let periodId = req.period.id ?? null;
   if (!periodId) {
     if (!req.period.report_no || !req.period.period_end) throw new ValidationError("Choose an existing reporting period or give a report number and cut-off date for a new one.");
@@ -179,7 +170,12 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo): Promis
   }
   const period = getPeriod(periodId)!;
   if (period.status === "Locked") throw new ValidationError(`${period.label} is locked. Unlock it first if you really want to re-import that month.`);
-
+  // the latest report owns the live registers; an older month is imported "in a sandbox"
+  const latest = latestPeriod(db);
+  const older = !!latest && latest.id !== periodId && latest.report_no > period.report_no;
+  const olderImport = older;
+  const newer = latest ? [{ label: latest.label }] : [];
+  if (older && (latest!.status !== "Locked" || !hasStoredCopy(db, latest!.id))) takeSnapshot(latest!.id, user, "preserve");
   setSetting(db, "current_period_id", String(periodId));
   const programmeId = Number(getSetting(db, "current_programme_id") ?? (db.prepare("SELECT id FROM programmes ORDER BY id LIMIT 1").get() as { id: number } | undefined)?.id ?? 1);
 
@@ -338,6 +334,8 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo): Promis
   });
 
   db.prepare("UPDATE reporting_periods SET source_file = ?, imported_at = ?, imported_by = ? WHERE id = ?").run(String(req.fileName ?? "").slice(0, 200) || null, nowIso(), user.name, periodId);
+  // the imported month is stored as this report's own data
+  takeSnapshot(periodId, user, "import");
   let locked = false;
   if (req.lock && user.role === "admin") {
     const totalErrors = results.reduce((t, r) => t + r.errors.length, 0);
@@ -345,6 +343,12 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo): Promis
       lockPeriod(periodId, user, { force: olderImport });
       locked = true;
     }
+  }
+  if (older) {
+    // put the live registers back to the latest report and return the top bar to it
+    restoreFromSnapshot(db, latest!.id);
+    setSetting(db, "current_period_id", String(latest!.id));
+    logAudit(db, { registerKey: "reporting_periods", recordId: latest!.id, action: "context", user, summary: `Live figures restored to ${latest!.label} after importing ${period.label}` });
   }
   return { period: { id: periodId, label: period.label, locked, olderThan: olderImport ? newer[0].label : undefined }, sheets: results, lookupsCreated: [...new Set(lookupsCreated)] };
 }

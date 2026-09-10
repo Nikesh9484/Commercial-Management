@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Upload, FileSpreadsheet, CheckCircle2, AlertTriangle, ArrowRight, Lock } from "lucide-react";
+import { Upload, FileSpreadsheet, CheckCircle2, AlertTriangle, ArrowRight, Lock, Info } from "lucide-react";
 import type { WorkbookAnalysis, SheetAnalysis } from "@/lib/workbook/analyze";
 import type { ImportResult } from "@/lib/workbook/import";
 import { Chip } from "@/components/ui/Chip";
@@ -44,7 +44,6 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo,
   const [periodEnd, setPeriodEnd] = useState("");
   const [lock, setLock] = useState(isAdmin);
   const [createLookups, setCreateLookups] = useState(true);
-  const [allowOlder, setAllowOlder] = useState(false);
   const [result, setResult] = useState<ImportResult | null>(null);
 
   const [progress, setProgress] = useState("");
@@ -129,7 +128,6 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo,
       lock: standalone ? false : lock,
       createMissingLookups: createLookups,
       allowedRegisters: standalone?.only ?? (excludeRegisters.length ? registers.map((r) => r.key) : undefined),
-      allowOlder,
       fileName: analysis.fileName,
     };
     const res = await fetch("/api/workbook/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -201,13 +199,10 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo,
           )}
         </div>
         {!standalone && olderThan && (
-          <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
-            <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+          <div className="mt-3 flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-xs text-blue-900">
+            <Info size={14} className="mt-0.5 shrink-0" />
             <div>
-              <b>This is an older month.</b> {olderThan} already exists, and the dashboard&apos;s live figures are always the last month imported. Importing this month now replaces what {olderThan} shows until you re-import {olderThan}&apos;s workbook afterwards. Import months in date order where you can.
-              <label className="mt-2 flex items-center gap-2 font-medium">
-                <input type="checkbox" checked={allowOlder} onChange={(e) => setAllowOlder(e.target.checked)} /> Import an older month – I will re-import {olderThan} afterwards
-              </label>
+              <b>Older month.</b> {olderThan} already exists and stays the live report. This month is imported and stored as its own report, and {olderThan}&apos;s live figures are put back automatically when the import finishes.
             </div>
           </div>
         )}
@@ -267,7 +262,7 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo,
           </h2>
           <div className="mb-3 flex flex-wrap gap-2">
             {!standalone && <Chip tone={result.period.locked ? "green" : "amber"}>{result.period.locked ? "Period locked – snapshot stored" : "Period left open"}</Chip>}
-            {result.period.olderThan && <Chip tone="red">Now re-import {result.period.olderThan}&apos;s workbook</Chip>}
+            {result.period.olderThan && <Chip tone="blue">Stored as its own report · {result.period.olderThan} stays live</Chip>}
             {result.lookupsCreated.length > 0 && <Chip tone="blue">{result.lookupsCreated.length} dropdown value(s) created</Chip>}
           </div>
           <table className="data w-full">

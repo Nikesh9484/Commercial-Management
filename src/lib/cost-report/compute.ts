@@ -49,8 +49,8 @@ export function computeCostReport(programmeId: number, periodId: number | null):
     ? ((db.prepare("SELECT id, label, status FROM reporting_periods WHERE report_no < ? ORDER BY report_no DESC LIMIT 1").get(period.report_no) as { id: number; label: string; status: string } | undefined) ?? null)
     : null;
 
-  // A locked period with a stored cost report is shown as issued (frozen), not recalculated.
-  if (period && period.status === "Locked") {
+  // A locked report, or any report that is not the latest, is shown from its stored copy, not recalculated.
+  if (period && (period.status === "Locked" || !!(db.prepare("SELECT 1 FROM reporting_periods WHERE report_no > ? LIMIT 1").get(period.report_no)))) {
     const snap = snapshotRows<CostLineRow>(db, period.id, "cost_report");
     if (snap) {
       const assetIds = new Set((db.prepare("SELECT id FROM assets WHERE programme_id = ?").all(programmeId) as { id: number }[]).map((a) => a.id));

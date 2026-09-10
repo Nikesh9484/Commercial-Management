@@ -3,7 +3,7 @@ import { getDb } from "../db";
 import { getRegisterDef } from "../registers";
 import { listRecords } from "../registers/engine";
 import { computeCostReport, MONEY_COLUMNS, type Money } from "../cost-report/compute";
-import { getPeriod, type PeriodRow } from "../snapshots";
+import { readsStoredCopy, getPeriod, type PeriodRow } from "../snapshots";
 import { snapshotRows } from "../view-mode";
 import { CHANGE_STAGES, DEAD_STATUSES } from "../registers/defs/changes";
 import { claimCostReportAmount } from "../registers/defs/claims";
@@ -125,10 +125,10 @@ export function previousLockedPeriod(db: Database.Database, period: PeriodRow): 
   );
 }
 
-/** Rows of a register as they stand for a period: the snapshot when the period is locked, else the live rows. */
+/** Rows of a register as they stand for a period: its stored copy when it has one (locked, or not the latest), else the live rows. */
 export function rowsFor(db: Database.Database, programmeId: number, period: PeriodRow, key: string): RecordRow[] {
   const def = getRegisterDef(key)!;
-  if (period.status === "Locked") {
+  if (readsStoredCopy(db, period)) {
     const snap = snapshotRows<RecordRow>(db, period.id, key);
     if (snap) return snap.filter((r) => Number(r.programme_id) === programmeId);
   }

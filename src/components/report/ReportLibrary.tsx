@@ -96,7 +96,7 @@ export function ReportLibrary({ rows, isAdmin, canEdit }: { rows: LibraryRow[]; 
               <th>Cut-off</th>
               <th>Status</th>
               <th>Source</th>
-              <th>Issued snapshot</th>
+              <th>Data held</th>
               <th>Last change</th>
             </tr>
           </thead>
@@ -129,7 +129,20 @@ export function ReportLibrary({ rows, isAdmin, canEdit }: { rows: LibraryRow[]; 
                     {row.imported_at && <span>{formatDateTime(row.imported_at)} · {row.imported_by}</span>}
                   </div>
                 </td>
-                <td className="whitespace-nowrap">{row.status === "Locked" ? `${row.snapshot_records.toLocaleString()} records · ${row.cost_lines} cost lines` : <span className="text-muted">live data</span>}</td>
+                <td className="whitespace-nowrap">
+                  {row.data === "live" ? (
+                    <Chip tone="blue">Live – latest report</Chip>
+                  ) : row.data === "none" ? (
+                    <Chip tone="red">No stored data – re-upload</Chip>
+                  ) : (
+                    <>
+                      <Chip tone={row.data === "issued" ? "green" : "grey"}>{row.data === "issued" ? "Issued copy" : "Stored copy"}</Chip>
+                      <div className="mt-1 text-xs text-muted">
+                        {row.snapshot_records.toLocaleString()} records · {row.cost_lines} cost lines{row.stored_at ? ` · ${formatDateTime(row.stored_at)}` : ""}
+                      </div>
+                    </>
+                  )}
+                </td>
                 <td className="whitespace-nowrap text-xs text-muted">{row.created_at ? formatDate(row.created_at) : "–"}</td>
               </tr>
               <tr className={`${row.current ? "bg-blue-50/60" : ""} border-b-2 border-line`}>
@@ -199,7 +212,7 @@ export function ReportLibrary({ rows, isAdmin, canEdit }: { rows: LibraryRow[]; 
       )}
 
       <p className="text-xs text-muted">
-        <b>Re-upload</b> opens the monthly workbook import with this report pre-selected; the workbook&apos;s rows update the existing ones by their references. A locked report is unlocked first (Admin) and should be locked again after the import. <b>Delete</b> removes the report, its issued snapshot and its checklist only; the live registers are not touched.
+        Every report keeps its own data: it is stored when its workbook is imported, when it is locked, and when the next month starts. The <b>latest</b> report is the live one (the registers you edit); every earlier report is shown from its stored copy. <b>Re-upload</b> opens the monthly workbook import with this report pre-selected; for an older month the latest report&apos;s live figures are put back automatically afterwards. A locked report is unlocked first (Admin) and should be locked again after the import. <b>Delete</b> removes the report, its stored copy and its checklist only.
       </p>
     </div>
   );

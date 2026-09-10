@@ -3,7 +3,7 @@ import { getDb, setSetting } from "./db";
 import { getRegisterDef } from "./registers";
 import { createRecord, ValidationError } from "./registers/engine";
 import { getChecklist } from "./checklist";
-import { listPeriods, type PeriodRow } from "./snapshots";
+import { listPeriods, latestPeriod, takeSnapshot, type PeriodRow } from "./snapshots";
 import { logAudit } from "./audit";
 import { formatMonthYear } from "./format";
 import { AuthError } from "./auth";
@@ -59,6 +59,9 @@ export function startPeriod(input: { report_no: number; period_end: string }, us
   if (!Number.isInteger(input.report_no) || input.report_no <= 0) throw new ValidationError("Enter the report number.");
   const d = new Date(end + "T00:00:00Z");
   const start = iso(monthStart(d.getUTCFullYear(), d.getUTCMonth()));
+  // the month that was live until now keeps its own data from here on
+  const prev = latestPeriod(db);
+  if (prev && prev.report_no < input.report_no && prev.status !== "Locked") takeSnapshot(prev.id, user, "new month");
   const row = createRecord(getRegisterDef("reporting_periods")!, { report_no: input.report_no, period_start: start, period_end: end, label: labelFor(input.report_no, end), status: "Open" }, user);
   setSetting(db, "current_period_id", String(row.id));
   getChecklist(row.id);
