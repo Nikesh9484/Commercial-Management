@@ -14,6 +14,7 @@ const NAMES: Record<string, string> = {
   level2: "Cost_Report_Level_2",
   cashflow: "Cash_Flow",
   claims_report: "Claims_Status_Report",
+  fa_report: "Final_Account_Status_Report",
 };
 
 /** GET /api/export?section=exec|movement|level1|level2|cashflow|<schedule letter>|<register>&format=pdf|xlsx[&period=ID] */

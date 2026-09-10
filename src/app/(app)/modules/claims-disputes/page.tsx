@@ -12,6 +12,7 @@ import { Chip } from "@/components/ui/Chip";
 import { RegisterPage } from "@/components/register/RegisterPage";
 import { ExportButtons } from "@/components/ui/ExportButtons";
 import { FileText } from "lucide-react";
+import { EmailReportButton } from "@/components/dashboard/EmailReportButton";
 
 export const metadata = { title: "Claims & Disputes" };
 
@@ -33,6 +34,7 @@ export default async function ClaimsPage() {
             <span className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-2 py-1 shadow-sm" title="Executive claims status report for the month: headline figures, narrative, movement, open claims and actions">
               <FileText size={14} className="text-navy" />
               <ExportButtons section="claims_report" label="Claims status report" />
+              <EmailReportButton kind="claims" label="Email claim status report" attachments="Claims Status Report.pdf" />
             </span>
           ) : undefined
         }

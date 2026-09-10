@@ -7,6 +7,7 @@ import { formatMoney, formatDate, formatNumber, formatPercent, formatDateTime } 
 import type { FieldDef } from "../registers/types";
 import { APP_NAME } from "../brand";
 import { buildClaimsReport } from "./claims-report";
+import { buildFaReport } from "./fa-report";
 
 type Doc = PDFKit.PDFDocument;
 
@@ -42,6 +43,7 @@ export function resolveSections(keys: string[]): { title: string; run: (ctx: Ctx
     else if (k === "exec") out.push({ title: "Executive Summary", run: executiveSummary });
     else if (k === "movement") out.push({ title: "Movement since the previous report", run: movementSection });
     else if (k === "claims_report") out.push({ title: "Claims Status Report", run: claimsStatusReport });
+    else if (k === "fa_report") out.push({ title: "Final Account Status Report", run: faStatusReport });
     else if (k === "level1") out.push({ title: "Schedule A – Cost Report Level 1 (Executive)", run: costLevel1 });
     else if (k === "level2") out.push({ title: "Schedule B – Cost Report Level 2 (Detailed)", run: costLevel2 });
     else if (k === "cashflow") out.push({ title: "Schedule I – Cash Flow", run: cashflow });
@@ -664,6 +666,103 @@ function claimsStatusReport(ctx: Ctx) {
   );
   doc.moveDown(0.5);
   doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(`Prepared from the Claims & Disputes register of ${APP_NAME} as at ${formatDate(r.asOf)}${data.locked ? "" : " (draft – period not locked)"}. Claimed = contractor's claim; assessed = Employer's assessment, else Engineer's recommendation; determined = determination or agreement.`, { width });
+}
+
+
+/* ------------------------------------------------------------------ */
+/* Final Account Status Report (executive)                             */
+
+function faStatusReport(ctx: Ctx) {
+  const { doc, data } = ctx;
+  const r = buildFaReport(data);
+  const h = r.headline;
+  const sar = (n: number) => formatMoney(n);
+  const kpis: [string, string, string][] = [
+    ["Packages tracked", String(h.total), `${h.open} open · ${h.closed} closed · ${h.notRequired} not required`],
+    ["Open (SAR)", sar(h.openValue), "anticipated final account of open packages"],
+    ["Closed – FAS signed (SAR)", sar(h.closedValue), ""],
+    ["Not required / direct payment (SAR)", sar(h.notRequiredValue), ""],
+    ["Total anticipated final account", sar(h.totalAfa), "all tracked packages"],
+    ["Uncommitted on open packages", sar(h.uncommittedOpen), "still to be agreed"],
+    ["Past forecast closure date", String(h.overdue), `${h.dueSoon} due within 60 days`],
+    ["No forecast date", String(h.noDate), "open packages"],
+  ];
+  const cw = (PAGE.width - PAGE.margin * 2 - 3 * 10) / 4;
+  let x = PAGE.margin;
+  let y = doc.y;
+  kpis.forEach((k, i) => {
+    doc.rect(x, y, cw, 52).fillAndStroke("#ffffff", LINE);
+    doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(k[0].toUpperCase(), x + 8, y + 7, { width: cw - 16 });
+    doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(12).text(k[1], x + 8, y + 20, { width: cw - 16 });
+    doc.fillColor(MUTED).font("Helvetica").fontSize(7).text(k[2], x + 8, y + 37, { width: cw - 16 });
+    x += cw + 10;
+    if (i === 3) {
+      x = PAGE.margin;
+      y += 62;
+    }
+  });
+  doc.y = y + 62;
+  doc.x = PAGE.margin;
+
+  const width = PAGE.width - PAGE.margin * 2;
+  subheading(ctx, "Commercial narrative");
+  for (const p of r.narrative) {
+    ensureSpace(ctx, 50);
+    doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(9.5).text(p.heading, { width });
+    doc.fillColor("#172033").font("Helvetica").fontSize(9.5).text(p.text, { width, lineGap: 1.5 });
+    doc.moveDown(0.5);
+  }
+  if (r.movement) {
+    subheading(ctx, r.movement.label);
+    if (!r.movement.items.length) doc.fillColor(MUTED).font("Helvetica").fontSize(9).text("No change to the final account status.");
+    for (const it of r.movement.items) {
+      ensureSpace(ctx, 14);
+      doc.fillColor("#172033").font("Helvetica").fontSize(9).text(`•  ${it}`, { width });
+    }
+    doc.moveDown(0.4);
+  }
+  if (r.attention.length) {
+    subheading(ctx, "Items requiring attention");
+    for (const it of r.attention) {
+      ensureSpace(ctx, 14);
+      doc.fillColor("#7c2d12").font("Helvetica").fontSize(9).text(`•  ${it}`, { width });
+    }
+    doc.moveDown(0.4);
+  }
+  subheading(ctx, "Final account status by package", "Open packages first, earliest forecast closure first. Committed and anticipated final account are read from the cost report.");
+  const money = (v: unknown) => (v === null || v === undefined ? "" : formatMoney(v as number));
+  table(
+    ctx,
+    [
+      { key: "acc_ref", label: "ACC code", width: 0.9 },
+      { key: "description", label: "Package", width: 2.4 },
+      { key: "contractor", label: "Contractor / consultant", width: 1.8 },
+      { key: "type", label: "Type", width: 0.7 },
+      { key: "committed", label: "Committed (I)", width: 1.2, align: "right", format: money },
+      { key: "afa", label: "Anticipated FA (N)", width: 1.2, align: "right", format: money },
+      { key: "uncommitted", label: "Uncommitted", width: 1.1, align: "right", format: money },
+      { key: "responsible", label: "Responsible", width: 1 },
+      { key: "forecast", label: "Forecast closure", width: 0.9, format: (v) => formatDate(v as string) },
+      { key: "daysRemaining", label: "Days", width: 0.5, align: "right" },
+      { key: "status", label: "Status", width: 0.9 },
+      { key: "comments", label: "Comments", width: 2 },
+    ],
+    r.rows as unknown as Record<string, unknown>[],
+    { zebra: true, totalRow: { acc_ref: "TOTAL", committed: formatMoney(r.rows.reduce((t, x) => t + x.committed, 0)), afa: formatMoney(h.totalAfa), uncommitted: formatMoney(r.rows.reduce((t, x) => t + x.uncommitted, 0)) } },
+  );
+  subheading(ctx, "By status");
+  table(
+    ctx,
+    [
+      { key: "status", label: "Status", width: 2 },
+      { key: "count", label: "Packages", width: 1, align: "right" },
+      { key: "afa", label: "Anticipated final account (SAR)", width: 2, align: "right", format: money },
+    ],
+    r.byStatus as unknown as Record<string, unknown>[],
+    { zebra: true },
+  );
+  doc.moveDown(0.5);
+  doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(`Prepared from the Final Account Status register of ${APP_NAME} as at ${formatDate(r.asOf)}${data.locked ? "" : " (draft – period not locked)"}.`, { width });
 }
 
 /* ------------------------------------------------------------------ */

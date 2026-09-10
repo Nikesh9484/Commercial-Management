@@ -2,6 +2,7 @@ import { APP_NAME } from "../brand";
 import ExcelJS from "exceljs";
 import { executiveTotals } from "../cost-report/executive";
 import { buildClaimsReport } from "./claims-report";
+import { buildFaReport } from "./fa-report";
 import type { ReportData } from "./data";
 import { REPORT_SCHEDULES } from "./schedules";
 import { MONEY_COLUMNS, type Money } from "../cost-report/columns";
@@ -31,6 +32,7 @@ export async function renderSectionsExcel(data: ReportData, keys: string[]): Pro
     else if (k === "exec") execSheet(wb, data);
     else if (k === "movement") movementSheet(wb, data);
     else if (k === "claims_report") claimsReportSheet(wb, data);
+    else if (k === "fa_report") faReportSheet(wb, data);
     else if (k === "level1") costL1(wb.addWorksheet("Level 1 - Executive"), data);
     else if (k === "level2") costL2(wb.addWorksheet("Level 2 - Detailed"), data);
     else if (k === "cashflow") cashflowSheet(wb.addWorksheet("Cash Flow"), data);
@@ -211,6 +213,68 @@ function claimsReportSheet(wb: ExcelJS.Workbook, d: ReportData) {
     const row = ws.addRow([c.contractor, c.claims, c.pending, c.claimedSar, c.determinedSar, c.eotClaimed, c.eotGranted]);
     [4, 5].forEach((i) => (row.getCell(i).numFmt = MONEY_FMT));
   }
+}
+
+
+function faReportSheet(wb: ExcelJS.Workbook, d: ReportData) {
+  const r = buildFaReport(d);
+  const ws = wb.addWorksheet("Final Account Status Report");
+  [12, 40, 30, 12, 18, 18, 16, 18, 14, 8, 14, 40].forEach((w, i) => (ws.getColumn(i + 1).width = w));
+  ws.addRow([r.title]).font = { bold: true, size: 14, color: { argb: NAVY } };
+  ws.addRow([`${d.programme.code} · ${d.asset ? `${d.asset.code} ${d.asset.name}` : d.programme.name} · as at ${formatDate(r.asOf)}${d.locked ? "" : " · DRAFT"}`]).font = { italic: true };
+  ws.addRow([]);
+  const h = r.headline;
+  header(ws.addRow(["Headline", "Value", "Note"]));
+  const kp: [string, unknown, string][] = [
+    ["Packages tracked", h.total, `${h.open} open · ${h.closed} closed · ${h.notRequired} not required`],
+    ["Open (SAR)", h.openValue, "anticipated final account of open packages"],
+    ["Closed – FAS signed (SAR)", h.closedValue, ""],
+    ["Not required / direct payment (SAR)", h.notRequiredValue, ""],
+    ["Total anticipated final account (SAR)", h.totalAfa, ""],
+    ["Uncommitted on open packages (SAR)", h.uncommittedOpen, "still to be agreed"],
+    ["Past forecast closure date", h.overdue, `${h.dueSoon} due within 60 days`],
+    ["No forecast date", h.noDate, "open packages"],
+  ];
+  for (const [k, v, n] of kp) {
+    const row = ws.addRow([k, v, n]);
+    if (typeof v === "number" && /SAR/.test(k)) row.getCell(2).numFmt = MONEY_FMT;
+  }
+  ws.addRow([]);
+  ws.addRow(["Commercial narrative"]).font = { bold: true, size: 12, color: { argb: NAVY } };
+  for (const p of r.narrative) {
+    ws.addRow([p.heading]).font = { bold: true };
+    const row = ws.addRow([p.text]);
+    ws.mergeCells(row.number, 1, row.number, 10);
+    row.alignment = { wrapText: true, vertical: "top" };
+    row.height = Math.min(120, 15 * Math.ceil(p.text.length / 150));
+  }
+  if (r.movement) {
+    ws.addRow([]);
+    ws.addRow([r.movement.label]).font = { bold: true, size: 12, color: { argb: NAVY } };
+    if (!r.movement.items.length) ws.addRow(["No change to the final account status."]);
+    for (const it of r.movement.items) ws.addRow([`• ${it}`]);
+  }
+  if (r.attention.length) {
+    ws.addRow([]);
+    ws.addRow(["Items requiring attention"]).font = { bold: true, size: 12, color: { argb: "FF7C2D12" } };
+    for (const it of r.attention) ws.addRow([`• ${it}`]);
+  }
+  ws.addRow([]);
+  ws.addRow(["Final account status by package"]).font = { bold: true, size: 12, color: { argb: NAVY } };
+  header(ws.addRow(["ACC code", "Package", "Contractor / consultant", "Type", "Committed (I)", "Anticipated FA (N)", "Uncommitted", "Responsible", "Forecast closure", "Days", "Status", "Comments"]));
+  for (const x of r.rows) {
+    const row = ws.addRow([x.acc_ref, x.description, x.contractor, x.type, x.committed, x.afa, x.uncommitted, x.responsible, x.forecast ? toDate(x.forecast) : null, x.daysRemaining, x.status, x.comments]);
+    [5, 6, 7].forEach((i) => (row.getCell(i).numFmt = MONEY_FMT));
+    row.getCell(9).numFmt = "DD-MMM-YY";
+    if (x.status === "Open") row.getCell(11).fill = { type: "pattern", pattern: "solid", fgColor: { argb: x.daysRemaining !== null && x.daysRemaining < 0 ? "FFFEE2E2" : "FFFEF3C7" } };
+  }
+  const t = ws.addRow(["TOTAL", "", "", "", r.rows.reduce((a, x) => a + x.committed, 0), h.totalAfa, r.rows.reduce((a, x) => a + x.uncommitted, 0)]);
+  bold(t);
+  [5, 6, 7].forEach((i) => (t.getCell(i).numFmt = MONEY_FMT));
+  ws.addRow([]);
+  ws.addRow(["By status"]).font = { bold: true, size: 12, color: { argb: NAVY } };
+  header(ws.addRow(["Status", "Packages", "Anticipated final account (SAR)"]));
+  for (const s of r.byStatus) ws.addRow([s.status, s.count, s.afa]).getCell(3).numFmt = MONEY_FMT;
 }
 
 export async function renderMonthlyReportExcel(data: ReportData): Promise<Buffer> {
