@@ -204,6 +204,17 @@ export function assembleReport(lines: CostLineRow[], meta: Pick<CostReport, "pro
     byGroup.set(key, row);
   }
   const level1 = [...byGroup.values()];
+  // Level 2 blocks (Excel "Level 02"): the lines of each asset + category with a sub-total
+  const assetsSeen = new Set(lines.map((l) => l.asset_id));
+  const blocks = new Map<string, CostReport["categories"][number]>();
+  for (const l of lines) {
+    const key = `${l.asset_id}|${l.category}`;
+    const b = blocks.get(key) ?? { key, label: assetsSeen.size > 1 ? `${l.asset_code} · ${l.category || "(no category)"}` : l.category || "(no category)", asset_code: l.asset_code, asset_name: l.asset_name, category: l.category, lines: [], subtotal: zeroMoney() };
+    b.lines.push(l);
+    addMoney(b.subtotal, l);
+    blocks.set(key, b);
+  }
+  const categories = [...blocks.values()];
   const level1Total = level1.reduce((t, r) => addMoney(t, r), zeroMoney());
   const check = zeroMoney();
   for (const c of MONEY_COLUMNS) check[c.key] = round2(level1Total[c.key] - grandTotal[c.key]);
@@ -217,7 +228,7 @@ export function assembleReport(lines: CostLineRow[], meta: Pick<CostReport, "pro
     row.afa = round2(row.afa + l.N);
     byPackage.set(key, row);
   }
-  return { ...meta, lines, sections, grandTotal, totalsExclHold, level1, level1Total, check, checkOk, chart: [...byPackage.values()] };
+  return { ...meta, lines, sections, categories, grandTotal, totalsExclHold, level1, level1Total, check, checkOk, chart: [...byPackage.values()] };
 }
 
 interface PreviousAfa {

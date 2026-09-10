@@ -31,7 +31,7 @@ function costPair(wb: ExcelJS.Workbook, data: ReportData, nameA: string | null, 
   const wsB = nameB ? wb.addWorksheet(nameB) : null;
   let ref: Level2Ref | undefined;
   if (wsB) ref = writeLevel2(wsB, data.costReport, `Schedule B – Cost Report Level 2 (Detailed) · source: ${data.sources.cost_report}`, sub(data));
-  if (wsA) writeLevel1(wsA, data.costReport, `Schedule A – Cost Report Level 1 (Executive) · source: ${data.sources.cost_report}`, sub(data), ref);
+  if (wsA) writeLevel1(wsA, data.costReport, data.level1Matrix, `Schedule A – Cost Report Level 1 (Executive) · source: ${data.sources.cost_report}`, sub(data), ref);
 }
 
 /** One or more sections only, used by the "Download Excel" buttons on each page. */

@@ -60,6 +60,8 @@ export interface CostReport {
   feeds: FeedStatus[];
   lines: CostLineRow[];
   sections: { name: "Committed" | "Uncommitted"; lines: CostLineRow[]; subtotal: Money }[];
+  /** Level 2 as on the Excel "Level 02" sheet: one block per asset + cost category with its sub-total, in the order of the categories in Settings. */
+  categories: { key: string; label: string; asset_code: string; asset_name: string; category: string; lines: CostLineRow[]; subtotal: Money }[];
   grandTotal: Money;
   level1: Level1Row[];
   level1Total: Money;

@@ -226,42 +226,34 @@ export function buildDeck(d: ReportData): Deck {
     });
   }
 
-  /* 3. Level 1 */
+  /* 3. Level 1 (Excel "Level 01" layout: categories across, report lines down) */
   {
-    const l1 = d.costReport.level1;
+    const m = d.level1Matrix;
+    const want = ["G", "awards", "H", "J", "K", "L", "M", "N", "O", "P"];
+    const picked = want.map((k) => m.rows.find((r) => r.key === k)).filter((r): r is NonNullable<typeof r> => !!r);
     const t: DeckTable = {
-      columns: [
-        { label: "Asset · category", w: 3.2 },
-        { label: "Baseline (E)", align: "right", w: 1.3 },
-        { label: "Latest budget (G)", align: "right", w: 1.4 },
-        { label: "Committed (I)", align: "right", w: 1.3 },
-        { label: "Anticipated FA (N)", align: "right", w: 1.4 },
-        { label: "Variance (O)", align: "right", w: 1.3 },
-        { label: "Certified (P)", align: "right", w: 1.3 },
-        { label: "Movement (S)", align: "right", w: 1.2 },
-      ],
-      rows: [
-        ...l1.slice(0, 11).map((r) => [`${r.asset_code} · ${r.category}`, money(r.E), money(r.G), money(r.I), money(r.N), signed(r.O), money(r.P), movementOk ? signed(r.S) : "–"]),
-        ["Total", money(d.costReport.level1Total.E), money(d.costReport.level1Total.G), money(d.costReport.level1Total.I), money(d.costReport.level1Total.N), signed(d.costReport.level1Total.O), money(d.costReport.level1Total.P), movementOk ? signed(d.costReport.level1Total.S) : "–"],
-      ],
-      totalRow: true,
-      fontSize: 9,
+      columns: [{ label: "SAR", w: 2.6 }, ...m.columns.map((c) => ({ label: clip(c.label, 22), align: "right" as const, w: 1.2 })), { label: "Total", align: "right", w: 1.3 }, { label: "Movement", align: "right", w: 1.1 }],
+      rows: picked.map((r) => [r.label.replace(/\s*\(.*\)$/, ""), ...r.values.map((v) => (r.signed ? signed(v) : money(v))), r.signed ? signed(r.total) : money(r.total), r.movement === null ? "–" : signed(r.movement)]),
+      fontSize: 8,
+      tones: picked.map((r) => (r.key === "O" ? toneOf(r.total) : r.key === "N" ? "accent" : undefined)),
     };
+    const gRow = m.rows.find((r) => r.key === "G");
+    const nRow = m.rows.find((r) => r.key === "N");
     const chart: DeckChart = {
       type: "bar",
-      categories: l1.slice(0, 8).map((r) => clip(r.category, 18)),
+      categories: m.columns.slice(0, 8).map((c) => clip(c.label, 18)),
       series: [
-        { name: "Latest budget", values: l1.slice(0, 8).map((r) => toMio(r.G)), color: PALETTE.blue },
-        { name: "Anticipated final account", values: l1.slice(0, 8).map((r) => toMio(r.N)), color: PALETTE.accent },
+        { name: "Development budget", values: (gRow?.values ?? []).slice(0, 8).map(toMio), color: PALETTE.blue },
+        { name: "Anticipated final account", values: (nRow?.values ?? []).slice(0, 8).map(toMio), color: PALETTE.accent },
       ],
       unit: "SAR million",
       decimals: 1,
     };
     const [top, bottom] = [
-      { x: M, y: BODY_Y, w: BODY_W, h: 3.3 },
-      { x: M, y: BODY_Y + 3.3 + GAP, w: BODY_W, h: BODY_H - 3.3 - GAP },
+      { x: M, y: BODY_Y, w: BODY_W, h: 3.5 },
+      { x: M, y: BODY_Y + 3.5 + GAP, w: BODY_W, h: BODY_H - 3.5 - GAP },
     ];
-    slides.push({ layout: "content", title: "Cost Report – Level 1", subtitle: "By asset and category (SAR)", blocks: [{ kind: "table", frame: top, table: t }, { kind: "chart", frame: bottom, title: "Latest budget vs anticipated final account (SAR million)", chart }] });
+    slides.push({ layout: "content", title: "Cost Report – Level 1 (Executive)", subtitle: "By cost category, executive view (budget includes the unallocated hold; other lines exclude it)", blocks: [{ kind: "table", frame: top, table: t }, { kind: "chart", frame: bottom, title: "Development budget vs anticipated final account by category (SAR million)", chart }] });
   }
 
   /* 4. Packages */

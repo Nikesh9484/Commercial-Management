@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Download, Pencil, RefreshCw, AlertTriangle, CheckCircle2, Info } from "lucide-react";
 import { MONEY_COLUMNS, type CostReport, type CostLineRow, type Money, type MoneyKey } from "@/lib/cost-report/columns";
+import type { Level1Matrix } from "@/lib/cost-report/level1";
 import type { LookupOption, RegisterDef } from "@/lib/registers/types";
 import { formatMoney } from "@/lib/format";
 import { Chip } from "@/components/ui/Chip";
@@ -21,7 +22,7 @@ export function CostReportPage({ canEdit, isAdmin, initialTab }: { canEdit: bool
   const toast = useToast();
   const router = useRouter();
   const [tab, setTab] = useState<Tab>(initialTab === "level1" || initialTab === "setup" ? initialTab : "level2");
-  const [report, setReport] = useState<CostReport | null>(null);
+  const [report, setReport] = useState<(CostReport & { level1Matrix?: Level1Matrix }) | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [assetFilter, setAssetFilter] = useState<number | "all">("all");
   const [editing, setEditing] = useState<{ id: number; values: FormValues } | null>(null);
@@ -35,7 +36,7 @@ export function CostReportPage({ canEdit, isAdmin, initialTab }: { canEdit: bool
         .then(async (r) => {
           const j = await r.json();
           if (!r.ok) throw new Error(j.error ?? "Could not load the cost report.");
-          return j as CostReport;
+          return j as CostReport & { level1Matrix?: Level1Matrix };
         })
         .then(setReport, (e: Error) => setError(e.message)),
     [],
@@ -143,53 +144,7 @@ export function CostReportPage({ canEdit, isAdmin, initialTab }: { canEdit: bool
 
       {tab === "level1" && (
         <>
-          <div className="card overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="data w-full">
-                <thead>
-                  <tr>
-                    <th className="sticky left-0 z-[2] bg-[#f7f8fb]">Asset code</th>
-                    <th>Asset</th>
-                    <th>Cost category</th>
-                    <th className="text-right">Lines</th>
-                    {MONEY_COLUMNS.map((c) => (
-                      <ColHead key={c.key} col={c} />
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {report.level1.length === 0 && (
-                    <tr>
-                      <td colSpan={4 + MONEY_COLUMNS.length} className="py-10 text-center text-muted">
-                        No cost lines yet. Add them on the Line setup tab.
-                      </td>
-                    </tr>
-                  )}
-                  {report.level1.map((r) => (
-                    <tr key={`${r.asset_id}|${r.category}`}>
-                      <td className="sticky left-0 z-[1] bg-white font-medium">{r.asset_code}</td>
-                      <td>{r.asset_name}</td>
-                      <td>{r.category || <span className="text-muted">(no category)</span>}</td>
-                      <td className="tnum text-right">{r.lines}</td>
-                      <MoneyCells m={r} />
-                    </tr>
-                  ))}
-                  <TotalRow label="Total excluding budget hold (executive view)" m={report.totalsExclHold} colSpan={4} />
-                  <TotalRow label="Total" m={report.level1Total} colSpan={4} strong />
-                  <tr className={report.checkOk ? "text-emerald-700" : "bg-red-50 font-semibold text-red-700"}>
-                    <td className={`sticky left-0 z-[1] ${report.checkOk ? "bg-white" : "bg-red-50"}`} colSpan={4}>
-                      Check: Level 1 total − Level 2 total (must be zero)
-                    </td>
-                    {MONEY_COLUMNS.map((c) => (
-                      <td key={c.key} className="tnum text-right">
-                        {formatMoney(report.check[c.key])}
-                      </td>
-                    ))}
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
+          {report.level1Matrix ? <Level1Table m={report.level1Matrix} /> : null}
           <ChartCard data={report.chart} />
         </>
       )}
@@ -206,7 +161,7 @@ export function CostReportPage({ canEdit, isAdmin, initialTab }: { canEdit: bool
                 </option>
               ))}
             </select>
-            <span className="text-xs text-muted">{report.lines.length} line(s) · double-click a row to edit</span>
+            <span className="text-xs text-muted">{report.lines.length} line(s) in {report.categories.length} categor{report.categories.length === 1 ? "y" : "ies"} · double-click a row to edit · &quot;Remaining budget&quot; lines are the unallocated budget hold</span>
           </div>
           <div className="card overflow-hidden">
             <div className="overflow-x-auto">
@@ -244,16 +199,29 @@ export function CostReportPage({ canEdit, isAdmin, initialTab }: { canEdit: bool
                       </td>
                     </tr>
                   )}
-                  {report.sections.map((section) => {
-                    const rows = section.lines.filter((l) => assetFilter === "all" || l.asset_id === assetFilter);
-                    const subtotal = assetFilter === "all" ? section.subtotal : sum(rows);
-                    if (!rows.length && report.lines.length) return null;
-                    return (
-                      <SectionRows key={section.name} name={section.name} rows={rows} subtotal={subtotal} showAsset={assetFilter === "all"} canEdit={canEdit} onEdit={openEdit} />
-                    );
+                  {report.categories.map((block) => {
+                    const rows = block.lines.filter((l) => assetFilter === "all" || l.asset_id === assetFilter);
+                    if (!rows.length) return null;
+                    return <SectionRows key={block.key} name={block.label} subtotalLabel={`Sub-Total ${block.category || block.label}`} rows={rows} subtotal={block.subtotal} showAsset={assetFilter === "all"} canEdit={canEdit} onEdit={openEdit} />;
                   })}
                   {report.lines.length > 0 && (
-                    <TotalRow label="Grand total" m={assetFilter === "all" ? report.grandTotal : sum(report.lines.filter((l) => l.asset_id === assetFilter))} colSpan={assetFilter === "all" ? 5 : 4} strong trailing={canEdit} />
+                    <>
+                      <TotalRow label="GRAND TOTAL" m={assetFilter === "all" ? report.grandTotal : sum(report.lines.filter((l) => l.asset_id === assetFilter))} colSpan={assetFilter === "all" ? 5 : 4} strong trailing={canEdit} />
+                      {assetFilter === "all" && <TotalRow label="Total excluding budget hold (executive view)" m={report.totalsExclHold} colSpan={5} trailing={canEdit} />}
+                      {assetFilter === "all" && (
+                        <tr className={report.checkOk ? "text-emerald-700" : "bg-red-50 font-semibold text-red-700"}>
+                          <td className={`sticky left-0 z-[1] ${report.checkOk ? "bg-white" : "bg-red-50"}`} colSpan={5}>
+                            Check: Level 1 total − Level 2 total (must be zero)
+                          </td>
+                          {MONEY_COLUMNS.map((c) => (
+                            <td key={c.key} className="tnum text-right">
+                              {formatMoney(report.check[c.key])}
+                            </td>
+                          ))}
+                          {canEdit && <td />}
+                        </tr>
+                      )}
+                    </>
                   )}
                 </tbody>
               </table>
@@ -351,7 +319,7 @@ function TotalRow({ label, m, colSpan, strong, trailing }: { label: string; m: M
   );
 }
 
-function SectionRows({ name, rows, subtotal, showAsset, canEdit, onEdit }: { name: string; rows: CostLineRow[]; subtotal: Money; showAsset: boolean; canEdit: boolean; onEdit: (l: CostLineRow) => void }) {
+function SectionRows({ name, subtotalLabel, rows, subtotal, showAsset, canEdit, onEdit }: { name: string; subtotalLabel?: string; rows: CostLineRow[]; subtotal: Money; showAsset: boolean; canEdit: boolean; onEdit: (l: CostLineRow) => void }) {
   const textCols = 4 + (showAsset ? 1 : 0);
   return (
     <>
@@ -368,7 +336,7 @@ function SectionRows({ name, rows, subtotal, showAsset, canEdit, onEdit }: { nam
         </tr>
       )}
       {rows.map((l) => (
-        <tr key={l.id} onDoubleClick={() => canEdit && onEdit(l)}>
+        <tr key={l.id} onDoubleClick={() => canEdit && onEdit(l)} className={l.is_budget_hold ? "italic text-muted" : ""}>
           <td className="sticky left-0 z-[1] bg-white font-medium">{l.code}</td>
           <td>{l.package}</td>
           <td className="max-w-56 truncate" title={l.name}>
@@ -386,8 +354,111 @@ function SectionRows({ name, rows, subtotal, showAsset, canEdit, onEdit }: { nam
           )}
         </tr>
       ))}
-      <TotalRow label={`${name} subtotal`} m={subtotal} colSpan={textCols} trailing={canEdit} />
+      <TotalRow label={subtotalLabel ?? `${name} subtotal`} m={subtotal} colSpan={textCols} trailing={canEdit} />
     </>
+  );
+}
+
+/** Level 1 as the Excel "Level 01" sheet: categories across, report lines down. */
+function Level1Table({ m }: { m: Level1Matrix }) {
+  const cell = (v: number | null, signed?: boolean, strong?: boolean) => {
+    if (v === null) return <td className="tnum text-right text-muted/60">–</td>;
+    const cls = signed ? (v > 0.004 ? "text-red-700" : v < -0.004 ? "text-emerald-700" : "text-muted") : v === 0 ? "text-muted/70" : "";
+    return <td className={`tnum text-right ${cls} ${strong ? "font-semibold" : ""}`}>{formatMoney(v)}</td>;
+  };
+  const span = m.columns.length + 4;
+  return (
+    <div className="card overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="data w-full">
+          <thead>
+            <tr>
+              <th className="sticky left-0 z-[2] min-w-64 bg-[#f7f8fb]">Cost Report – Executive</th>
+              {m.columns.map((c) => (
+                <th key={c.key} className="min-w-36 whitespace-normal text-right align-bottom">
+                  {c.label}
+                  <div className="text-[10px] font-normal text-muted">SAR</div>
+                </th>
+              ))}
+              <th className="min-w-40 bg-[#e8eef7] text-right align-bottom">
+                Total
+                <div className="text-[10px] font-normal text-muted">SAR</div>
+              </th>
+              <th className="min-w-36 text-right align-bottom">
+                Previous
+                <div className="text-[10px] font-normal text-muted">{m.previousLabel ? m.previousLabel.replace("Monthly Report ", "") : "no previous report"}</div>
+              </th>
+              <th className="min-w-36 text-right align-bottom">
+                Movement
+                <div className="text-[10px] font-normal text-muted">Total − Previous</div>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {m.columns.length === 0 && (
+              <tr>
+                <td colSpan={span} className="py-10 text-center text-muted">
+                  No cost lines yet. Add them on the Line setup tab.
+                </td>
+              </tr>
+            )}
+            {m.rows.map((r) =>
+              r.kind === "group" ? (
+                <tr key={r.key}>
+                  <td colSpan={span} className="sticky left-0 bg-white pt-3 text-xs font-bold uppercase tracking-wide text-navy">
+                    {r.label}
+                  </td>
+                </tr>
+              ) : (
+                <tr key={r.key} className={r.kind === "strong" ? "bg-[#f3f6fb] font-semibold text-navy" : r.kind === "muted" ? "text-muted" : ""}>
+                  <td className={`sticky left-0 z-[1] ${r.kind === "strong" ? "bg-[#f3f6fb]" : "bg-white"} ${r.kind === "muted" ? "pl-6" : ""}`}>{r.label}</td>
+                  {r.values.map((v, i) => (
+                    <Fragment key={i}>{cell(v, r.signed, r.kind === "strong")}</Fragment>
+                  ))}
+                  <td className={`tnum bg-[#e8eef7] text-right font-semibold ${r.signed ? (r.total > 0.004 ? "text-red-700" : r.total < -0.004 ? "text-emerald-700" : "") : ""}`}>{formatMoney(r.total)}</td>
+                  {cell(r.previous, r.signed)}
+                  {cell(r.movement, true)}
+                </tr>
+              ),
+            )}
+          </tbody>
+        </table>
+      </div>
+      <div className="border-t border-line px-5 py-4">
+        <h3 className="text-xs font-bold uppercase tracking-wide text-navy">Reasons for variance – this month</h3>
+        {!m.previousAvailable ? (
+          <p className="mt-1 text-xs text-muted">Lock the previous month&apos;s report to see what moved the anticipated final account this period.</p>
+        ) : m.reasons.length === 0 ? (
+          <p className="mt-1 text-xs text-muted">Nothing moved the anticipated final account since {m.previousLabel}.</p>
+        ) : (
+          <table className="data mt-2 w-full">
+            <thead>
+              <tr>
+                <th className="w-12">Col</th>
+                <th>Item</th>
+                <th className="w-40 text-right">Amount (SAR)</th>
+                <th className="w-64">Remarks</th>
+              </tr>
+            </thead>
+            <tbody>
+              {m.reasons.map((r, i) => (
+                <tr key={i}>
+                  <td className="text-muted">{r.col}</td>
+                  <td>{r.title}</td>
+                  {cell(r.amount, true)}
+                  <td className="text-muted">{r.remark}</td>
+                </tr>
+              ))}
+              <tr className="bg-[#e8eef7] font-semibold text-navy">
+                <td colSpan={2}>NET Movement (variance to last month)</td>
+                {cell(m.netMovement, true, true)}
+                <td />
+              </tr>
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
   );
 }
 

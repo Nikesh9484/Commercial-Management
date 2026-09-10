@@ -774,21 +774,44 @@ const moneyCols = (keys: readonly string[]): Col[] =>
 function costLevel1(ctx: Ctx) {
   const { data } = ctx;
   const r = data.costReport;
-  const note = `${r.period?.label ?? ""} · previous period: ${r.previousPeriod ? r.previousPeriod.label + (r.previousPeriod.snapshotAvailable ? "" : ` (${r.previousPeriod.note ?? "not locked"})`) : "none"} · source: ${data.sources.cost_report}`;
-  const rows = r.level1.map((l) => ({ ...l }));
-  const part = (title: string, keys: string[]) => {
-    subheading(ctx, title, note);
-    const cols: Col[] = [
-      { key: "asset_code", label: "Asset code", width: 1.1 },
-      { key: "asset_name", label: "Asset", width: 1.5 },
-      { key: "category", label: "Cost category", width: 1.6 },
-      { key: "lines", label: "Lines", width: 0.55, align: "right" },
-      ...moneyCols(keys),
-    ];
-    table(ctx, cols, rows as Record<string, unknown>[], { zebra: true, totals: [{ label: "Total", values: r.level1Total, labelKey: "asset_code" }, { label: "Total excl. budget hold", values: r.totalsExclHold, labelKey: "asset_code" }, { label: "Check: L1 - L2 (must be zero)", values: r.check, labelKey: "asset_code", tone: r.checkOk ? "green" : "red" }] });
-  };
-  part("By asset and cost category – columns E to I", ["E", "F", "G", "H", "I"]);
-  part("By asset and cost category – columns J to S", ["J", "K", "L", "M", "N", "O", "P", "Q", "R", "S"]);
+  const m = data.level1Matrix;
+  const note = `${r.period?.label ?? ""} · previous report: ${m.previousLabel ?? "none"}${m.previousAvailable ? "" : " (no issued previous report – previous and movement columns empty)"} · source: ${data.sources.cost_report} · executive view: budget rows include the unallocated budget hold, all other rows exclude it`;
+  subheading(ctx, "Cost Report – Executive (Excel Level 01 layout)", note);
+  const fmt = (v: unknown) => (v === null || v === undefined || v === "" ? "" : formatMoney(v as number));
+  const cols: Col[] = [
+    { key: "label", label: "SAR", width: 2.4 },
+    ...m.columns.map((c) => ({ key: c.key, label: c.label, width: 1.15, align: "right" as const, format: fmt })),
+    { key: "total", label: `Total ${data.asset?.name ?? data.programme.name}`, width: 1.3, align: "right", format: fmt },
+    { key: "previous", label: "Previous", width: 1.15, align: "right", format: fmt },
+    { key: "movement", label: "Movement", width: 1.15, align: "right", format: fmt },
+  ];
+  const rows: Record<string, unknown>[] = m.rows.map((row) => {
+    const o: Record<string, unknown> = { label: row.label, total: row.kind === "group" ? null : row.total, previous: row.previous, movement: row.movement, __kind: row.kind };
+    m.columns.forEach((c, i) => (o[c.key] = row.kind === "group" ? null : row.values[i]));
+    return o;
+  });
+  table(ctx, cols, rows, {
+    rowStyle: (row) => (row.__kind === "group" ? { span: true } : row.__kind === "strong" ? { bold: true, bg: "#eef2f8" } : row.__kind === "muted" ? { color: MUTED } : undefined),
+  });
+  subheading(ctx, "Reasons for variance – this month", m.previousAvailable ? `Movement of the anticipated final account since ${m.previousLabel}` : "No issued previous report to compare with");
+  if (m.reasons.length) {
+    table(
+      ctx,
+      [
+        { key: "col", label: "Col", width: 0.4 },
+        { key: "title", label: "Item", width: 3 },
+        { key: "amount", label: "Amount (SAR)", width: 1.2, align: "right", format: fmt },
+        { key: "remark", label: "Remarks", width: 2.2 },
+      ],
+      m.reasons as unknown as Record<string, unknown>[],
+      { zebra: true, totalRow: { col: "", title: "NET Movement (variance to last month)", amount: formatMoney(m.netMovement), remark: "" } },
+    );
+  } else {
+    ctx.doc.font("Helvetica").fontSize(8).fillColor(MUTED).text(m.previousAvailable ? "Nothing moved the anticipated final account this period." : "Lock the previous month's report to list the movements.", { width: PAGE.width - PAGE.margin * 2 });
+    ctx.doc.moveDown(0.5);
+  }
+  ctx.doc.font("Helvetica").fontSize(7.5).fillColor(r.checkOk ? "#047857" : "#b91c1c").text(`Check: Level 1 total - Level 2 total (must be zero): ${r.checkOk ? "OK" : "FAILED – " + MONEY_COLUMNS.filter((c) => Math.abs(r.check[c.key]) >= 0.005).map((c) => `${c.key} ${formatMoney(r.check[c.key])}`).join(", ")}`, { width: PAGE.width - PAGE.margin * 2 });
+  ctx.doc.moveDown(0.5);
 }
 
 function costLevel2(ctx: Ctx) {
@@ -796,21 +819,30 @@ function costLevel2(ctx: Ctx) {
   const r = data.costReport;
   const textCols: Col[] = [
     { key: "code", label: "A Code", width: 1 },
-    { key: "package", label: "B Package", width: 1.6 },
-    { key: "name", label: "C Name", width: 1.6 },
-    { key: "contractor", label: "D Contractor", width: 1.4 },
+    { key: "package", label: "B Package", width: 1.5 },
+    { key: "name", label: "C Name", width: 1.5 },
+    { key: "contractor", label: "D Contractor", width: 1.3 },
   ];
   const part = (title: string, keys: string[]) => {
-    subheading(ctx, title, `source: ${data.sources.cost_report}`);
+    subheading(ctx, title, `grouped by cost category as on the Excel Level 02 sheet · "Remaining budget" lines are the unallocated budget hold · source: ${data.sources.cost_report}`);
     const cols = [...textCols, ...moneyCols(keys)];
     const rows: Record<string, unknown>[] = [];
     const bands: { index: number; label: string; values?: Money; kind: "section" | "subtotal" }[] = [];
-    for (const s of r.sections) {
-      bands.push({ index: rows.length, label: s.name, kind: "section" });
-      for (const l of s.lines) rows.push(l as unknown as Record<string, unknown>);
-      bands.push({ index: rows.length, label: `${s.name} subtotal`, values: s.subtotal, kind: "subtotal" });
+    for (const b of r.categories) {
+      bands.push({ index: rows.length, label: b.label, kind: "section" });
+      for (const l of b.lines) rows.push(l as unknown as Record<string, unknown>);
+      bands.push({ index: rows.length, label: `Sub-Total ${b.category || b.label}`, values: b.subtotal, kind: "subtotal" });
     }
-    table(ctx, cols, rows, { zebra: true, bands, totals: [{ label: "Grand total", values: r.grandTotal, labelKey: "code" }] });
+    table(ctx, cols, rows, {
+      zebra: true,
+      bands,
+      rowStyle: (row) => (row.is_budget_hold ? { color: MUTED } : undefined),
+      totals: [
+        { label: "GRAND TOTAL", values: r.grandTotal, labelKey: "code" },
+        { label: "Total excl. budget hold (executive)", values: r.totalsExclHold, labelKey: "code" },
+        { label: "Check: L1 - L2 (must be zero)", values: r.check, labelKey: "code", tone: r.checkOk ? "green" : "red" },
+      ],
+    });
   };
   part("Columns E – I", ["E", "F", "G", "H", "I"]);
   part("Columns J – S", ["J", "K", "L", "M", "N", "O", "P", "Q", "R", "S"]);
@@ -919,6 +951,8 @@ function formatField(f: FieldDef, v: unknown): string {
 
 interface TableOpts {
   zebra?: boolean;
+  /** per-row emphasis, e.g. bold sub-totals inside the rows */
+  rowStyle?: (row: Record<string, unknown>, index: number) => { bold?: boolean; bg?: string; color?: string; span?: boolean } | undefined;
   totalRow?: Record<string, unknown>;
   totals?: { label: string; values: Money; labelKey: string; tone?: "green" | "red" }[];
   bands?: { index: number; label: string; values?: Money; kind: "section" | "subtotal" }[];
@@ -996,7 +1030,9 @@ function table(ctx: Ctx, cols: Col[], rows: Record<string, unknown>[], opts: Tab
         else drawRow(cols.map((c) => cellText(c, moneyRow(b.label, b.values!, cols[0].key))), { bold: true, bg: ZEBRA });
       }
     }
-    drawRow(cols.map((c) => cellText(c, r)), { bg: opts.zebra && i % 2 === 1 ? ZEBRA : undefined });
+    const st = opts.rowStyle?.(r, i);
+    if (st?.span) drawRow([String(r[cols[0].key] ?? "")], { bold: true, color: st.color ?? NAVY, span: true });
+    else drawRow(cols.map((c) => cellText(c, r)), { bg: st?.bg ?? (opts.zebra && i % 2 === 1 ? ZEBRA : undefined), bold: st?.bold, color: st?.color });
   });
   for (const b of opts.bands ?? []) if (b.index === rows.length && b.kind === "subtotal") drawRow(cols.map((c) => cellText(c, moneyRow(b.label, b.values!, cols[0].key))), { bold: true, bg: ZEBRA });
   if (opts.totalRow) drawRow(cols.map((c) => (opts.totalRow![c.key] === undefined ? "" : String(opts.totalRow![c.key]))), { bold: true, bg: "#e8eef7" });

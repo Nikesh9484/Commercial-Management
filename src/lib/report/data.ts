@@ -6,6 +6,7 @@ import { getCashflow, type Cashflow } from "../cashflow/compute";
 import { getChecklist, type ChecklistItem } from "../checklist";
 import { getDashboard, type DashboardData } from "../dashboard/summary";
 import { getMovement, type Movement } from "../dashboard/movement";
+import { level1Matrix, type Level1Matrix } from "../cost-report/level1";
 import { getPeriod, getPreviousPeriod, type PeriodRow } from "../snapshots";
 import { lookupOptions } from "../registers/engine";
 import type { RecordRow, RegisterDef } from "../registers/types";
@@ -27,6 +28,8 @@ export interface ReportData {
   dashboard: DashboardData;
   movement: Movement | null;
   costReport: CostReport;
+  /** Level 1 as on the Excel "Level 01" sheet (categories across, report lines down). */
+  level1Matrix: Level1Matrix;
   cashflow: Cashflow;
   registers: Record<string, { def: RegisterDef; rows: RecordRow[] }>;
   /** Which sources came from the locked snapshot vs live data. */
@@ -104,6 +107,9 @@ export function getReportData(programmeId: number, periodId: number): ReportData
       };
     });
 
+  const movement = getMovement(db, programmeId, periodId);
+  const prevReport = movement?.previous ? computeCostReport(programmeId, movement.previous.id) : null;
+
   return {
     generatedAt: new Date().toISOString(),
     locked,
@@ -117,8 +123,9 @@ export function getReportData(programmeId: number, periodId: number): ReportData
     checklist: getChecklist(periodId),
     meetings,
     dashboard: getDashboard(db, programmeId, periodId),
-    movement: getMovement(db, programmeId, periodId),
+    movement,
     costReport,
+    level1Matrix: level1Matrix(costReport, prevReport, movement?.keyMovements ?? null),
     cashflow,
     registers,
     sources,
