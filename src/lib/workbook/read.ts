@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import { execFile } from "node:child_process";
 
 /** One worksheet reduced to its cell values only (no formatting), read row by row to keep memory low. */
@@ -25,11 +26,17 @@ export async function readWorkbookValues(filePath: string): Promise<SheetValues[
   const outFile = `${filePath}.values.json`;
   const heapMb = Number(process.env.WORKBOOK_READER_HEAP_MB || 200);
   const result = await new Promise<{ code: number | null; signal: NodeJS.Signals | null; stderr: string }>((resolve, reject) => {
-    execFile(process.execPath, [`--max-old-space-size=${heapMb}`, script, filePath, outFile], { timeout: 120_000, maxBuffer: 1 << 20 }, (error, _stdout, stderr) => {
+    const child = execFile(process.execPath, [`--max-old-space-size=${heapMb}`, script, filePath, outFile], { timeout: 120_000, maxBuffer: 1 << 20 }, (error, _stdout, stderr) => {
       const err = error as (Error & { code?: number | string; signal?: NodeJS.Signals; killed?: boolean }) | null;
       if (err && typeof err.code !== "number" && !err.signal && !err.killed) return reject(err); // could not start node at all
       resolve({ code: err ? (typeof err.code === "number" ? err.code : null) : 0, signal: err?.signal ?? null, stderr: String(stderr ?? "") });
     });
+    // Low CPU priority so the web server keeps answering (and passes the host's health checks) while a big file is read.
+    try {
+      if (child.pid) os.setPriority(child.pid, 15);
+    } catch {
+      /* not supported on this platform */
+    }
   });
   try {
     if (result.code !== 0) {
