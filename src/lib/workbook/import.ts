@@ -88,6 +88,9 @@ export interface SheetMapping {
   columns: Record<string, string | null>;
 }
 
+/** Registers that are fed only by their stand-alone imports (Claims Tracker, Bonds & Insurance, Final Account Status) – never by the monthly workbook. */
+export const STANDALONE_ONLY = ["claims", "bonds", "final_accounts"] as const;
+
 export interface ImportRequest {
   fileId: string;
   period: { id?: number; report_no?: number; period_end?: string };
@@ -178,11 +181,12 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo): Promis
   let baseNote = "";
   if (older) {
     if (latest!.status !== "Locked" || !hasStoredCopy(db, latest!.id)) takeSnapshot(latest!.id, user, "preserve");
-    // Starting point for the older month: a stand-alone import updates that report's own stored copy;
-    // a full monthly import rebuilds the month from its workbook on top of the nearest earlier report
-    // (or from nothing), so rows that only exist in later months never leak into it.
+    // Starting point for the older month: that report's own stored copy (else the nearest earlier report,
+    // else nothing). A full monthly import then removes, from the registers it fed, every row the workbook
+    // did not contain, so rows that only exist in later months never leak into it; the stand-alone
+    // registers (claims, bonds, final accounts) are left exactly as that report holds them.
     const own = hasStoredCopy(db, periodId) ? period : null;
-    const base = req.allowedRegisters ? (own ?? nearestStoredBefore(db, period.report_no)) : nearestStoredBefore(db, period.report_no);
+    const base = own ?? nearestStoredBefore(db, period.report_no);
     if (base) {
       restoreFromSnapshot(db, base.id);
       baseNote = base.id === periodId ? `starting from ${period.label}'s own stored data` : `starting from the stored data of ${base.label}`;
@@ -197,9 +201,13 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo): Promis
   const lookupsCreated: string[] = [];
   const results: SheetResult[] = [];
 
+  const monthly = !req.allowedRegisters;
+  const touchedByRegister = new Map<string, Set<number>>();
   for (const m of req.sheets) {
     if (!m.register) continue;
     if (req.allowedRegisters && !req.allowedRegisters.includes(m.register)) continue;
+    // the monthly workbook never writes the stand-alone registers
+    if (monthly && (STANDALONE_ONLY as readonly string[]).includes(m.register)) continue;
     const def = getRegisterDef(m.register);
     const ws = getSheet(worksheets, m.sheet);
     if (!def || !ws) continue;
@@ -223,6 +231,8 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo): Promis
 
     const keyFields = importKeyFields(def);
     const existingRows = listRecords(def);
+    const touched = touchedByRegister.get(def.key) ?? new Set<number>();
+    touchedByRegister.set(def.key, touched);
     const hasPeriodField = def.fields.some((f) => f.key === "period_id");
     const hasCostLine = def.fields.some((f) => f.key === "cost_line_id" && f.type === "lookup");
     const costLines = hasCostLine ? (db.prepare("SELECT id, package_id, contractor_id FROM cost_lines").all() as { id: number; package_id: number | null; contractor_id: number | null }[]) : [];
@@ -325,10 +335,12 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo): Promis
             if (after.updated_at === before) result.unchanged++;
             else result.updated++;
             Object.assign(match, after);
+            touched.add(match.id);
           } else {
             const created = createRecord(def, input, user, "import");
             existingRows.push(created as RecordRow);
             result.created++;
+            touched.add(created.id);
           }
         } catch (e) {
           const msg = e instanceof ValidationError ? [e.message, ...Object.values(e.fieldErrors)].join(" ") : e instanceof Error ? e.message : String(e);
@@ -340,12 +352,26 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo): Promis
     results.push(result);
   }
 
+  // An older month rebuilt from its monthly workbook: rows the workbook did not contain are removed from
+  // the registers it fed (matched rows keep their ids, so links from claims, bonds and final accounts hold).
+  let pruned = 0;
+  if (older && monthly) {
+    for (const [key, ids] of touchedByRegister) {
+      const def = getRegisterDef(key);
+      if (!def || !def.snapshot || (STANDALONE_ONLY as readonly string[]).includes(key)) continue;
+      const scoped = def.fields.some((f) => f.key === "programme_id");
+      const list = [...ids];
+      const where = `${scoped ? "programme_id = ? AND " : ""}id NOT IN (${list.map(() => "?").join(",") || "-1"})`;
+      pruned += db.prepare(`DELETE FROM "${def.table}" WHERE ${where}`).run(...(scoped ? [programmeId] : []), ...list).changes;
+    }
+  }
+
   logAudit(db, {
     registerKey: "workbook",
     recordId: periodId,
     action: "import",
     user,
-    summary: `Imported workbook for ${period.label}: ${results.map((r) => `${r.sheet} → ${r.register} (${r.created} added, ${r.updated} updated, ${r.errors.length} errors)`).join("; ")}`,
+    summary: `Imported workbook for ${period.label}: ${results.map((r) => `${r.sheet} → ${r.register} (${r.created} added, ${r.updated} updated, ${r.errors.length} errors)`).join("; ")}${pruned ? `; ${pruned} row(s) not in the workbook removed from this older report` : ""}`,
   });
 
   db.prepare("UPDATE reporting_periods SET source_file = ?, imported_at = ?, imported_by = ? WHERE id = ?").run(String(req.fileName ?? "").slice(0, 200) || null, nowIso(), user.name, periodId);

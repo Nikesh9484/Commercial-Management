@@ -13,8 +13,8 @@ import { WorkbookImporter, type StandaloneMode } from "@/components/workbook/Wor
 export const IMPORT_KINDS: Record<string, { title: string; subtitle: string; only?: string[]; exclude?: string[]; intro?: string; fileHint?: string; doneHref?: string; doneLabel?: string }> = {
   monthly: {
     title: "Import monthly workbook",
-    subtitle: "Upload one of your Excel monthly reports and the app records it against a reporting period. Import past months in date order, locking each one, to build the history; then each new month shows its movement against the last. Claims & Disputes are not taken from the workbook: use Stand-alone imports → Claims Tracker.",
-    exclude: ["claims"],
+    subtitle: "Upload one of your Excel monthly reports and the app records it against a reporting period. Each month is stored as its own report, so months can be loaded in any order and each one shows its movement against the last. Claims & Disputes, Bonds & Insurance and Final Account Status are never taken from the workbook: they come only from their stand-alone imports (Claims Tracker, Bonds & Insurance, Final Account Status).",
+    exclude: ["claims", "bonds", "final_accounts"],
   },
   bonds: {
     title: "Import Bonds & Insurance",
