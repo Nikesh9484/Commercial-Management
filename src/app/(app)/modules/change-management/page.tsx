@@ -19,7 +19,7 @@ export default async function ChangeManagementPage() {
 
   return (
     <div className="space-y-5">
-      <PageHeader eyebrow={`Module ${mod.no}`} title={mod.title} subtitle="Every change in one record, followed from Early Warning → RFC → PVO → VO → EI → DVO → Funding. Approved DVOs, live PVO / VOs and RFCs feed the cost report automatically." />
+      <PageHeader exportSection="changes" eyebrow={`Module ${mod.no}`} title={mod.title} subtitle="Every change in one record, followed from Early Warning → RFC → PVO → VO → EI → DVO → Funding. Approved DVOs, live PVO / VOs and RFCs feed the cost report automatically." />
 
       {summary && (
         <>

@@ -30,15 +30,11 @@ export function getDashboard(db: Database.Database, programmeId: number, periodI
   const report = computeCostReport(programmeId, periodId);
   const payments = paymentTimeline(db, programmeId);
 
-  const openStages = CHANGE_STAGES.filter((s) => ["rfc", "pvo", "vo", "dvo"].includes(s.prefix)).map((s) => {
-    const n = (
-      db
-        .prepare(`SELECT COUNT(*) AS n FROM changes c JOIN approval_statuses st ON st.id = c.${s.prefix}_status_id WHERE c.programme_id = ? AND st.name IN (${OPEN_STAGE_STATUSES.map(() => "?").join(",")})`)
-        .get(programmeId, ...OPEN_STAGE_STATUSES) as { n: number }
-    ).n;
-    return { stage: s.short, open: n };
-  });
   const changes = listRecords(getRegisterDef("changes")!);
+  const openStages = CHANGE_STAGES.filter((s) => ["rfc", "pvo", "vo", "dvo"].includes(s.prefix)).map((s) => ({
+    stage: s.short,
+    open: changes.filter((c) => OPEN_STAGE_STATUSES.includes(String(c[`${s.prefix}_status_id__label`] ?? ""))).length,
+  }));
   const claims = listRecords(getRegisterDef("claims")!);
   const ews = listRecords(getRegisterDef("early_warnings")!);
   const risks = listRecords(getRegisterDef("risks")!);

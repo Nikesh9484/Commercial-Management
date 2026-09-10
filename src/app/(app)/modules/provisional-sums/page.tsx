@@ -29,7 +29,7 @@ export default async function ProvisionalSumsPage() {
 
   return (
     <div className="space-y-5">
-      <PageHeader eyebrow={`Module ${mod.no}`} title={mod.title} subtitle="Provisional sum allowances, what has been instructed against each, and the saving or extra that results." />
+      <PageHeader exportSection="provisional_sums" eyebrow={`Module ${mod.no}`} title={mod.title} subtitle="Provisional sum allowances, what has been instructed against each, and the saving or extra that results." />
 
       {ctx.programme ? (
         <>

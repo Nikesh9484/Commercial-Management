@@ -31,7 +31,7 @@ export function TopBar({ context, user, onMenu }: { context: AppContext; user: U
     "w-full max-w-[13rem] truncate rounded-md border border-white/20 bg-white/10 px-2 py-0.5 text-sm text-white outline-none focus:bg-white/20 disabled:opacity-80 [&>option]:text-ink";
 
   return (
-    <header className="sticky top-0 z-20 flex h-14 items-center gap-3 bg-navy px-3 text-white shadow-md sm:px-4">
+    <header className="app-topbar sticky top-0 z-20 flex h-14 items-center gap-3 px-3 text-white shadow-md sm:px-4">
       <button className="rounded p-1.5 hover:bg-white/10 lg:hidden" onClick={onMenu} aria-label="Open menu">
         <Menu size={20} />
       </button>
@@ -74,8 +74,8 @@ export function TopBar({ context, user, onMenu }: { context: AppContext; user: U
             </select>
             {context.period &&
               (context.period.status === "Locked" ? (
-                <span title="Locked (snapshot taken)" className="inline-flex items-center gap-1 rounded-full bg-emerald-500/20 px-2 py-0.5 text-[11px] text-emerald-200">
-                  <Lock size={11} /> Locked
+                <span title="This month was issued. You are viewing the issued report; switch to an open period to edit." className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-emerald-500/20 px-2 py-0.5 text-[11px] text-emerald-200">
+                  <Lock size={11} /> Issued · viewing
                 </span>
               ) : (
                 <span title="Open for editing" className="inline-flex items-center gap-1 rounded-full bg-amber-400/20 px-2 py-0.5 text-[11px] text-amber-100">

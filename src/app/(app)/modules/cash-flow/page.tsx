@@ -11,7 +11,7 @@ export default async function CashFlowModule() {
   const ctx = getAppContext();
   return (
     <div>
-      <PageHeader eyebrow={`Module ${mod.no}`} title={mod.title} subtitle="Monthly forecast per contract against the actual payments made, with the cumulative picture and what has been certified but not yet paid." />
+      <PageHeader exportSection="cashflow" eyebrow={`Module ${mod.no}`} title={mod.title} subtitle="Monthly forecast per contract against the actual payments made, with the cumulative picture and what has been certified but not yet paid." />
       {ctx.programme ? (
         <CashflowPage />
       ) : (

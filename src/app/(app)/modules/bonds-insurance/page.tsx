@@ -21,7 +21,7 @@ export default async function BondsPage() {
 
   return (
     <div className="space-y-5">
-      <PageHeader eyebrow={`Module ${mod.no}`} title={mod.title} subtitle="Every bond and insurance policy: what the contract requires, what has been provided, and when it expires." />
+      <PageHeader exportSection="bonds" eyebrow={`Module ${mod.no}`} title={mod.title} subtitle="Every bond and insurance policy: what the contract requires, what has been provided, and when it expires." />
       {summary ? (
         <>
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">

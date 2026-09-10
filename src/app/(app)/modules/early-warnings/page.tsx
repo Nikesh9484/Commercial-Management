@@ -18,7 +18,7 @@ export default async function EarlyWarningsModule({ searchParams }: { searchPara
   if (!ctx.programme) {
     return (
       <div>
-        <PageHeader eyebrow={`Module ${mod.no}`} title={mod.title} />
+        <PageHeader exportSection="D" eyebrow={`Module ${mod.no}`} title={mod.title} />
         <div className="card flex items-center gap-2 p-5 text-sm text-muted">
           <AlertTriangle size={16} /> Select a programme in the top bar first.
         </div>
@@ -29,7 +29,7 @@ export default async function EarlyWarningsModule({ searchParams }: { searchPara
   const risks = getRiskSummary(listRecords(getRegisterDef("risks")!));
   return (
     <div>
-      <PageHeader eyebrow={`Module ${mod.no}`} title={mod.title} subtitle="Early warning notices (feeding column L of the cost report) and the commercial risk & opportunity register with its heat map." />
+      <PageHeader exportSection="D" eyebrow={`Module ${mod.no}`} title={mod.title} subtitle="Early warning notices (feeding column L of the cost report) and the commercial risk & opportunity register with its heat map." />
       <EwRisksPage ew={ew} risks={risks} isAdmin={user.role === "admin"} initialTab={tab === "risks" ? "risks" : "ew"} />
     </div>
   );

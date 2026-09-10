@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { viewingLockedPeriod } from "../view-mode";
 import { getSetting, setSetting } from "../db";
 import { computeContracts } from "../payments/compute";
 import { logAudit } from "../audit";
@@ -124,6 +125,11 @@ export function setRange(db: Database.Database, programmeId: number, start: stri
 }
 
 export function getCashflow(db: Database.Database, programmeId: number): Cashflow {
+  const viewed = viewingLockedPeriod(db);
+  if (viewed) {
+    const snap = db.prepare("SELECT data FROM snapshots WHERE period_id = ? AND register_key = 'cashflow' AND record_id = ?").get(viewed.id, programmeId) as { data: string } | undefined;
+    if (snap) return JSON.parse(snap.data) as Cashflow;
+  }
   const contracts = db
     .prepare(
       `SELECT c.id, c.transaction_no, c.title, c.scope_of_work, c.coding, c.cbs, ct.name AS supplier, p.code AS programme

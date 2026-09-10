@@ -17,10 +17,10 @@ import { CostChart } from "./CostChart";
 type Tab = "level1" | "level2" | "setup";
 const SIGNED: MoneyKey[] = ["O", "S"]; // positive = adverse (over budget / increase)
 
-export function CostReportPage({ canEdit, isAdmin }: { canEdit: boolean; isAdmin: boolean }) {
+export function CostReportPage({ canEdit, isAdmin, initialTab }: { canEdit: boolean; isAdmin: boolean; initialTab?: string }) {
   const toast = useToast();
   const router = useRouter();
-  const [tab, setTab] = useState<Tab>("level2");
+  const [tab, setTab] = useState<Tab>(initialTab === "level1" || initialTab === "setup" ? initialTab : "level2");
   const [report, setReport] = useState<CostReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [assetFilter, setAssetFilter] = useState<number | "all">("all");
@@ -174,6 +174,7 @@ export function CostReportPage({ canEdit, isAdmin }: { canEdit: boolean; isAdmin
                       <MoneyCells m={r} />
                     </tr>
                   ))}
+                  <TotalRow label="Total excluding budget hold (executive view)" m={report.totalsExclHold} colSpan={4} />
                   <TotalRow label="Total" m={report.level1Total} colSpan={4} strong />
                   <tr className={report.checkOk ? "text-emerald-700" : "bg-red-50 font-semibold text-red-700"}>
                     <td className={`sticky left-0 z-[1] ${report.checkOk ? "bg-white" : "bg-red-50"}`} colSpan={4}>

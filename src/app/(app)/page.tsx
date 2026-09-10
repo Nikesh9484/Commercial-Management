@@ -12,6 +12,9 @@ import { PaymentChart } from "@/components/payments/PaymentChart";
 import { ExpiringSoonCard } from "@/components/bonds/ExpiringSoonCard";
 import { KeyIssues } from "@/components/dashboard/KeyIssues";
 import { ActionsList } from "@/components/dashboard/ActionsList";
+import { MovementPanel } from "@/components/dashboard/MovementPanel";
+import { getMovement } from "@/lib/dashboard/movement";
+import { executiveTotals } from "@/lib/cost-report/executive";
 
 export const metadata = { title: "Executive Summary" };
 
@@ -21,7 +24,7 @@ export default async function HomePage() {
   if (!ctx.programme) {
     return (
       <div>
-        <PageHeader title="Executive Summary" />
+        <PageHeader exportSection="exec" title="Executive Summary" />
         <div className="card flex items-center gap-2 p-5 text-sm text-muted">
           <AlertTriangle size={16} /> Add a programme under Settings and select it in the top bar.
         </div>
@@ -29,7 +32,8 @@ export default async function HomePage() {
     );
   }
   const d = getDashboard(getDb(), ctx.programme.id, ctx.period?.id ?? null);
-  const g = d.report.grandTotal;
+  const movement = getMovement(getDb(), ctx.programme.id, ctx.period?.id ?? null);
+  const g = executiveTotals(d.report);
   const canEdit = user.role !== "viewer";
 
   const money: { label: string; value: number; sub?: string; signed?: boolean; col: string }[] = [
@@ -45,7 +49,7 @@ export default async function HomePage() {
 
   return (
     <div className="space-y-5">
-      <PageHeader
+      <PageHeader exportSection="exec"
         eyebrow={`${ctx.programme.code} · ${ctx.asset?.code ?? ""} · Module 11`}
         title="Executive Summary"
         subtitle={`${ctx.period?.label ?? "No reporting period"}${ctx.period ? ` · cut-off ${formatDate(ctx.period.period_end)}` : ""} · all amounts SAR`}
@@ -72,7 +76,7 @@ export default async function HomePage() {
       {/* Money cards */}
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {money.map((m) => (
-          <Link key={m.col} href="/modules/cost-report" className="card min-w-0 p-4 transition hover:border-accent">
+          <Link key={m.col} href={`/modules/cost-report?tab=${["E", "G"].includes(m.col) ? "level1" : "level2"}`} className={`card kpi kpi-${m.col} min-w-0 p-4 transition hover:border-accent`}>
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium uppercase tracking-wide text-muted">{m.label}</span>
               <span className="rounded bg-navy/10 px-1 text-[10px] font-bold text-navy">{m.col}</span>
@@ -91,7 +95,7 @@ export default async function HomePage() {
 
       {/* Count cards */}
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Link href="/modules/change-management" className="card min-w-0 p-4 transition hover:border-accent">
+        <Link href="/modules/change-management" className="card kpi kpi-blue min-w-0 p-4 transition hover:border-accent">
           <div className="text-xs font-medium uppercase tracking-wide text-muted">Open changes by stage</div>
           <div className="mt-2 grid grid-cols-4 gap-1 text-center">
             {d.openStages.map((s) => (
@@ -113,6 +117,9 @@ export default async function HomePage() {
           tone={d.bonds.expired + d.bonds.red ? "red" : d.bonds.amber ? "amber" : "green"}
         />
       </div>
+
+      {/* What changed since the last issued report */}
+      {movement && <MovementPanel m={movement} />}
 
       {/* Commentary + actions */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -142,7 +149,7 @@ export default async function HomePage() {
 function Count({ href, label, value, sub, tone }: { href: string; label: string; value: number; sub?: string; tone?: "red" | "amber" | "green" }) {
   const cls = tone === "red" ? "text-red-700" : tone === "amber" ? "text-amber-700" : tone === "green" ? "text-emerald-700" : "text-ink";
   return (
-    <Link href={href} className="card min-w-0 p-4 transition hover:border-accent">
+    <Link href={href} className={`card kpi kpi-${tone ?? "blue"} min-w-0 p-4 transition hover:border-accent`}>
       <div className="text-xs font-medium uppercase tracking-wide text-muted">{label}</div>
       <div className={`mt-1 text-lg font-semibold tnum ${cls}`}>{value}</div>
       {sub && (

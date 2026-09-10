@@ -20,7 +20,7 @@ export default async function PaymentsPage() {
   if (!ctx.programme) {
     return (
       <div>
-        <PageHeader eyebrow={`Module ${mod.no}`} title={mod.title} />
+        <PageHeader exportSection="H" eyebrow={`Module ${mod.no}`} title={mod.title} />
         <div className="card flex items-center gap-2 p-5 text-sm text-muted">
           <AlertTriangle size={16} /> Select a programme in the top bar first.
         </div>
@@ -37,7 +37,7 @@ export default async function PaymentsPage() {
 
   return (
     <div className="space-y-5">
-      <PageHeader eyebrow={`Module ${mod.no}`} title={mod.title} subtitle="Contract summary (one row per contract) and, behind each contract, its IPC log of payment applications, certificates and payments." />
+      <PageHeader exportSection="H" eyebrow={`Module ${mod.no}`} title={mod.title} subtitle="Contract summary (one row per contract) and, behind each contract, its IPC log of payment applications, certificates and payments." />
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Stat label="Revised contract value" value={formatMoney(revised)} sub={`${contracts.length} contract(s)`} />
         <Stat label="Net cumulative applied" value={formatMoney(applied)} sub="after advance recovery and retention" />

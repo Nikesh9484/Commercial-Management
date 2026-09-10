@@ -15,7 +15,7 @@ export default async function MinutesListPage() {
       <Link href="/" className="inline-flex items-center gap-1 text-sm text-muted hover:text-ink">
         <ChevronLeft size={16} /> Executive Summary
       </Link>
-      <PageHeader eyebrow="Module 11" title="Minutes of Meeting" subtitle="One row per meeting. Open the minutes to record items and actions; anything still open is carried forward to the next meeting automatically." />
+      <PageHeader exportSection="minutes" eyebrow="Module 11" title="Minutes of Meeting" subtitle="One row per meeting. Open the minutes to record items and actions; anything still open is carried forward to the next meeting automatically." />
       {ctx.programme ? (
         <RegisterPage registerKey="meetings" isAdmin={user.role === "admin"} />
       ) : (

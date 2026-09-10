@@ -22,7 +22,7 @@ export default async function FinalAccountsPage() {
 
   return (
     <div className="space-y-5">
-      <PageHeader
+      <PageHeader exportSection="final_accounts"
         eyebrow="Module 8"
         title="Final Account Status"
         subtitle="One row per contract: is the final account statement open, signed or not required, and when is closure expected. Committed cost and the anticipated final account are read from the cost report line, so the totals tie to Schedule B."

@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 import { getDb } from "../db";
 import { getCostFeeds } from "./feeds";
+import { snapshotRows } from "../view-mode";
 import { MONEY_COLUMNS, type Money, type CostLineRow, type Level1Row, type CostReport } from "./columns";
 
 export { MONEY_COLUMNS, type Money, type MoneyKey, type CostLineRow, type Level1Row, type CostReport } from "./columns";
@@ -47,6 +48,19 @@ export function computeCostReport(programmeId: number, periodId: number | null):
   const prev = period
     ? ((db.prepare("SELECT id, label, status FROM reporting_periods WHERE report_no < ? ORDER BY report_no DESC LIMIT 1").get(period.report_no) as { id: number; label: string; status: string } | undefined) ?? null)
     : null;
+
+  // A locked period with a stored cost report is shown as issued (frozen), not recalculated.
+  if (period && period.status === "Locked") {
+    const snap = snapshotRows<CostLineRow>(db, period.id, "cost_report");
+    if (snap) {
+      const assetIds = new Set((db.prepare("SELECT id FROM assets WHERE programme_id = ?").all(programmeId) as { id: number }[]).map((a) => a.id));
+      const { status } = getCostFeeds(db, programmeId, period.id);
+      return assembleReport(
+        snap.filter((l) => assetIds.has(l.asset_id)).map((l) => ({ ...l, category: l.category ?? "", is_budget_hold: !!l.is_budget_hold })),
+        { programme, period: { id: period.id, label: period.label, status: period.status }, previousPeriod: prev ? { ...prev, snapshotAvailable: true } : null, feeds: status },
+      );
+    }
+  }
 
   const raw = db
     .prepare(
@@ -142,6 +156,7 @@ export function assembleReport(lines: CostLineRow[], meta: Pick<CostReport, "pro
     return { name, lines: rows, subtotal: rows.reduce((t, r) => addMoney(t, r), zeroMoney()) };
   });
   const grandTotal = sections.reduce((t, s) => addMoney(t, s.subtotal), zeroMoney());
+  const totalsExclHold = lines.filter((l) => !l.is_budget_hold).reduce((t, l) => addMoney(t, l), zeroMoney());
 
   // Level 1: one row per asset and cost category (lines keep the order of the categories in Settings)
   const byGroup = new Map<string, Level1Row>();
@@ -166,7 +181,7 @@ export function assembleReport(lines: CostLineRow[], meta: Pick<CostReport, "pro
     row.afa = round2(row.afa + l.N);
     byPackage.set(key, row);
   }
-  return { ...meta, lines, sections, grandTotal, level1, level1Total, check, checkOk, chart: [...byPackage.values()] };
+  return { ...meta, lines, sections, grandTotal, totalsExclHold, level1, level1Total, check, checkOk, chart: [...byPackage.values()] };
 }
 
 /** Anticipated Final Account per cost line stored when the previous period was locked. */

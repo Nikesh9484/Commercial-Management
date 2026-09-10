@@ -20,7 +20,7 @@ export default async function BudgetTransfersPage() {
 
   return (
     <div className="space-y-5">
-      <PageHeader eyebrow={`Module ${mod.no}`} title={mod.title} subtitle="Budget moved between packages. Approved transfers reduce the From package and increase the To package in column F of the cost report." />
+      <PageHeader exportSection="budget_transfers" eyebrow={`Module ${mod.no}`} title={mod.title} subtitle="Budget moved between packages. Approved transfers reduce the From package and increase the To package in column F of the cost report." />
       {summary ? (
         <>
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">

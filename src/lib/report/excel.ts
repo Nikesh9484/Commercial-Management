@@ -1,4 +1,5 @@
 import ExcelJS from "exceljs";
+import { executiveTotals } from "../cost-report/executive";
 import type { ReportData } from "./data";
 import { REPORT_SCHEDULES } from "./schedules";
 import { MONEY_COLUMNS, type Money } from "../cost-report/columns";
@@ -18,6 +19,83 @@ function bold(row: ExcelJS.Row, fill = "FFDCE6F2") {
 }
 const MONEY_FMT = "#,##0.00;[Red]-#,##0.00";
 
+/** One or more sections only, used by the "Download Excel" buttons on each page. */
+export async function renderSectionsExcel(data: ReportData, keys: string[]): Promise<Buffer> {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = "Commercial Dashboard";
+  for (const raw of keys) {
+    const k = raw.trim();
+    if (k === "minutes") momSheet(wb, data);
+    else if (k === "exec") execSheet(wb, data);
+    else if (k === "movement") movementSheet(wb, data);
+    else if (k === "level1") costL1(wb.addWorksheet("Level 1 - Executive"), data);
+    else if (k === "level2") costL2(wb.addWorksheet("Level 2 - Detailed"), data);
+    else if (k === "cashflow") cashflowSheet(wb.addWorksheet("Cash Flow"), data);
+    else {
+      const sched = REPORT_SCHEDULES.find((sc) => sc.letter === k.toUpperCase());
+      const reg = sched ? null : REPORT_SCHEDULES.find((sc) => (Array.isArray(sc.register) ? sc.register.includes(k) : sc.register === k));
+      if (sched) addSchedule(wb, sched, data);
+      else if (reg && data.registers[k]) registerBlock(wb.addWorksheet(data.registers[k].def.title.slice(0, 31).replace(/[\\/?*[\]:]/g, " ")), data.registers[k].def, data.registers[k].rows, data.sources[k]);
+    }
+  }
+  if (!wb.worksheets.length) wb.addWorksheet("Empty").addRow(["Nothing to export for this section."]);
+  return Buffer.from(await wb.xlsx.writeBuffer());
+}
+
+function addSchedule(wb: ExcelJS.Workbook, s: (typeof REPORT_SCHEDULES)[number], data: ReportData) {
+  const name = `Sch ${s.letter} - ${s.title}`.slice(0, 31).replace(/[\\/?*[\]:]/g, " ");
+  if (s.special === "cost_l1") costL1(wb.addWorksheet(name), data);
+  else if (s.special === "cost_l2") costL2(wb.addWorksheet(name), data);
+  else if (s.special === "cashflow") cashflowSheet(wb.addWorksheet(name), data);
+  else {
+    const ws = wb.addWorksheet(name);
+    for (const key of Array.isArray(s.register) ? s.register : [s.register!]) registerBlock(ws, data.registers[key].def, data.registers[key].rows, data.sources[key]);
+  }
+}
+
+function movementSheet(wb: ExcelJS.Workbook, d: ReportData) {
+  const ws = wb.addWorksheet("Movement");
+  [44, 22, 22, 22, 30, 30].forEach((w, i) => (ws.getColumn(i + 1).width = w));
+  const m = d.movement;
+  ws.addRow([`Movement since the previous issued report · ${d.period.label}`]).font = { bold: true, size: 12, color: { argb: NAVY } };
+  if (!m || !m.previous) {
+    ws.addRow(["No earlier locked report to compare with yet."]);
+    return;
+  }
+  ws.addRow([`${m.previous.label}  →  ${m.current.label}`]).font = { italic: true };
+  ws.addRow([]);
+  header(ws.addRow(["Cost report column", `Previous (${m.previous.label})`, "This report", "Movement"]));
+  for (const k of m.kpis) {
+    const r = ws.addRow([`${k.key}  ${k.label}`, k.prev, k.now, k.delta]);
+    [2, 3, 4].forEach((c) => (r.getCell(c).numFmt = MONEY_FMT));
+    if (["N", "O"].includes(k.key)) bold(r, "FFEFF6FF");
+  }
+  ws.addRow([]);
+  header(ws.addRow(["Open changes by stage", "Previous count", "This report", "Previous amount", "This report amount", "Movement"]));
+  for (const st of m.stages) {
+    const r = ws.addRow([st.stage, st.prevCount, st.nowCount, st.prevAmount, st.nowAmount, st.nowAmount - st.prevAmount]);
+    [4, 5, 6].forEach((c) => (r.getCell(c).numFmt = MONEY_FMT));
+  }
+  for (const g of m.groups) {
+    ws.addRow([]);
+    const t = ws.addRow([`${g.label}: ${g.prevCount} → ${g.nowCount} rows · ${g.valueLabel} ${formatMoney(g.prevValue)} → ${formatMoney(g.nowValue)}`]);
+    t.font = { bold: true, color: { argb: NAVY } };
+    header(ws.addRow(["What", "Ref", "Description", "Was", "Now", "Amount / movement"]));
+    const rows = [
+      ...g.added.map((it) => ["New", it.key, it.title, "", it.to ?? "", it.amount ?? null]),
+      ...g.changed.map((it) => ["Updated", it.key, it.title, it.from ?? "", it.to ?? "", it.delta ?? null]),
+      ...g.removed.map((it) => ["Removed", it.key, it.title, it.from ?? "", "", it.amount === null || it.amount === undefined ? null : -it.amount]),
+    ];
+    if (!rows.length) ws.addRow(["No movement."]);
+    for (const row of rows) {
+      const r = ws.addRow(row);
+      r.getCell(6).numFmt = MONEY_FMT;
+      const fill = row[0] === "New" ? "FFDCFCE7" : row[0] === "Removed" ? "FFFEE2E2" : "FFFEF3C7";
+      r.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
+    }
+  }
+}
+
 export async function renderMonthlyReportExcel(data: ReportData): Promise<Buffer> {
   const wb = new ExcelJS.Workbook();
   wb.creator = "Commercial Dashboard";
@@ -25,6 +103,7 @@ export async function renderMonthlyReportExcel(data: ReportData): Promise<Buffer
   indexSheet(wb, data);
   momSheet(wb, data);
   execSheet(wb, data);
+  movementSheet(wb, data);
   for (const s of REPORT_SCHEDULES) {
     const name = `Sch ${s.letter} - ${s.title}`.slice(0, 31).replace(/[\\/?*[\]:]/g, " ");
     if (s.special === "cost_l1") costL1(wb.addWorksheet(name), data);
@@ -110,7 +189,7 @@ function momSheet(wb: ExcelJS.Workbook, d: ReportData) {
 function execSheet(wb: ExcelJS.Workbook, d: ReportData) {
   const ws = wb.addWorksheet("Executive Summary");
   [40, 20, 50].forEach((w, i) => (ws.getColumn(i + 1).width = w));
-  const g = d.costReport.grandTotal;
+  const g = executiveTotals(d.costReport);
   const dash = d.dashboard;
   header(ws.addRow(["Measure", "SAR", "Note"]));
   const kp: [string, number, string][] = [
@@ -149,6 +228,7 @@ function costL1(ws: ExcelJS.Worksheet, d: ReportData) {
   header(ws.addRow(["Asset code", "Asset", "Cost category", "Lines", ...MONEY_COLUMNS.map((c) => `${c.key} ${c.label}`)]));
   for (const l of r.level1) ws.addRow([l.asset_code, l.asset_name, l.category, l.lines, ...moneyValues(l)]);
   bold(ws.addRow(["Total", "", "", r.lines.length, ...moneyValues(r.level1Total)]));
+  bold(ws.addRow(["Total excl. budget hold", "", "", r.lines.filter((l) => !l.is_budget_hold).length, ...moneyValues(r.totalsExclHold)]), "FFF1F5F9");
   const chk = ws.addRow(["Check: L1 − L2 (must be zero)", "", "", "", ...moneyValues(r.check)]);
   chk.font = { bold: true, color: { argb: r.checkOk ? "FF047857" : "FFB91C1C" } };
   [14, 26, 22, 8].forEach((w, i) => (ws.getColumn(i + 1).width = w));

@@ -21,7 +21,7 @@ export default async function ClaimsPage() {
 
   return (
     <div className="space-y-5">
-      <PageHeader eyebrow={`Module ${mod.no}`} title={mod.title} subtitle="Schedule E: every claim with its notice compliance, detailed claim, assessment by each party and the determination." />
+      <PageHeader exportSection="claims" eyebrow={`Module ${mod.no}`} title={mod.title} subtitle="Schedule E: every claim with its notice compliance, detailed claim, assessment by each party and the determination." />
 
       {summary && (
         <>

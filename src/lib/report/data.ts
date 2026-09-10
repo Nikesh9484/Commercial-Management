@@ -5,6 +5,7 @@ import { assembleReport, computeCostReport, type CostReport, type CostLineRow } 
 import { getCashflow, type Cashflow } from "../cashflow/compute";
 import { getChecklist, type ChecklistItem } from "../checklist";
 import { getDashboard, type DashboardData } from "../dashboard/summary";
+import { getMovement, type Movement } from "../dashboard/movement";
 import { getPeriod, getPreviousPeriod, type PeriodRow } from "../snapshots";
 import { lookupOptions } from "../registers/engine";
 import type { RecordRow, RegisterDef } from "../registers/types";
@@ -24,6 +25,7 @@ export interface ReportData {
   checklist: ChecklistItem[];
   meetings: { meeting: RecordRow; carried: RecordRow[]; items: RecordRow[] }[];
   dashboard: DashboardData;
+  movement: Movement | null;
   costReport: CostReport;
   cashflow: Cashflow;
   registers: Record<string, { def: RegisterDef; rows: RecordRow[] }>;
@@ -115,6 +117,7 @@ export function getReportData(programmeId: number, periodId: number): ReportData
     checklist: getChecklist(periodId),
     meetings,
     dashboard: getDashboard(db, programmeId, periodId),
+    movement: getMovement(db, programmeId, periodId),
     costReport,
     cashflow,
     registers,

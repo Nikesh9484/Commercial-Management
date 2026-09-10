@@ -63,6 +63,8 @@ export interface CostReport {
   grandTotal: Money;
   level1: Level1Row[];
   level1Total: Money;
+  /** Totals of the lines that are not budget hold – the asset costs as reported on the Excel Level 01 sheet. */
+  totalsExclHold: Money;
   /** Level 1 total minus Level 2 total, per column – must all be zero. */
   check: Money;
   checkOk: boolean;

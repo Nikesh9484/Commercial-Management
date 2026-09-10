@@ -27,6 +27,7 @@ interface Loaded {
   rows: RecordRow[];
   lookups: Record<string, LookupOption[]>;
   canEdit: boolean;
+  readOnlyReason?: string | null;
   scopeDefaults?: Record<string, number>;
 }
 
@@ -231,6 +232,11 @@ export function RegisterPage({
 
   return (
     <div className="space-y-3">
+      {data.readOnlyReason && (
+        <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+          <Lock size={14} /> {data.readOnlyReason}
+        </div>
+      )}
       {/* Toolbar */}
       <div className="card flex flex-col gap-3 p-3 sm:flex-row sm:items-center">
         <div className="relative flex-1">

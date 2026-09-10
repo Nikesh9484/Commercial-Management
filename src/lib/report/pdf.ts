@@ -1,4 +1,5 @@
 import PDFDocument from "pdfkit";
+import { executiveTotals } from "../cost-report/executive";
 import type { ReportData } from "./data";
 import { REPORT_SCHEDULES } from "./schedules";
 import { MONEY_COLUMNS, type Money } from "../cost-report/columns";
@@ -30,6 +31,60 @@ interface Ctx {
 }
 
 /** Renders the full monthly report and returns the PDF bytes. */
+/** Section keys accepted by the per-page export: "minutes", "exec", "movement", schedule letters, register keys, "level1", "level2", "cashflow". */
+export function resolveSections(keys: string[]): { title: string; run: (ctx: Ctx) => void }[] {
+  const out: { title: string; run: (ctx: Ctx) => void }[] = [];
+  for (const raw of keys) {
+    const k = raw.trim();
+    if (k === "minutes") out.push({ title: "Minutes of Meeting", run: minutes });
+    else if (k === "exec") out.push({ title: "Executive Summary", run: executiveSummary });
+    else if (k === "movement") out.push({ title: "Movement since the previous report", run: movementSection });
+    else if (k === "level1") out.push({ title: "Schedule A – Cost Report Level 1 (Executive)", run: costLevel1 });
+    else if (k === "level2") out.push({ title: "Schedule B – Cost Report Level 2 (Detailed)", run: costLevel2 });
+    else if (k === "cashflow") out.push({ title: "Schedule I – Cash Flow", run: cashflow });
+    else {
+      const sched = REPORT_SCHEDULES.find((sc) => sc.letter === k.toUpperCase());
+      if (sched) {
+        const run = (ctx: Ctx) => {
+          if (sched.special === "cost_l1") costLevel1(ctx);
+          else if (sched.special === "cost_l2") costLevel2(ctx);
+          else if (sched.special === "cashflow") cashflow(ctx);
+          else for (const key of Array.isArray(sched.register) ? sched.register : [sched.register!]) registerTable(ctx, key);
+        };
+        out.push({ title: `Schedule ${sched.letter} – ${sched.title}`, run });
+      } else {
+        const sched2 = REPORT_SCHEDULES.find((sc) => (Array.isArray(sc.register) ? sc.register.includes(k) : sc.register === k));
+        if (sched2) out.push({ title: `Schedule ${sched2.letter} – ${sched2.title}`, run: (ctx) => registerTable(ctx, k) });
+      }
+    }
+  }
+  return out;
+}
+
+/** One or more sections only (no cover / index): used by the "Download PDF" buttons on each page. */
+export async function renderSectionsPdf(data: ReportData, keys: string[]): Promise<Buffer> {
+  const parts = resolveSections(keys);
+  const doc = new PDFDocument({ size: "A4", layout: "landscape", margin: PAGE.margin, bufferPages: true, info: { Title: `${data.period.label} – ${parts.map((p) => p.title).join(", ")}`, Author: "Commercial Dashboard" } });
+  const chunks: Buffer[] = [];
+  doc.on("data", (c: Buffer) => chunks.push(c));
+  const done = new Promise<Buffer>((resolve) => doc.on("end", () => resolve(Buffer.concat(chunks))));
+  const ctx: Ctx = { doc, data, sections: [], sectionTitle: "" };
+  parts.forEach((part, i) => {
+    if (i > 0) doc.addPage();
+    ctx.sections.push({ title: part.title, page: doc.bufferedPageRange().count });
+    ctx.sectionTitle = part.title;
+    heading(ctx, part.title, `${data.programme.code} · ${data.programme.name} · ${data.period.label}${data.locked ? "" : " · DRAFT (period not locked)"} · generated ${formatDateTime(data.generatedAt)}`);
+    part.run(ctx);
+  });
+  const range = doc.bufferedPageRange();
+  for (let i = 0; i < range.count; i++) {
+    doc.switchToPage(i);
+    footer(ctx, i + 1, range.count);
+  }
+  doc.end();
+  return done;
+}
+
 export async function renderMonthlyReportPdf(data: ReportData): Promise<Buffer> {
   const doc = new PDFDocument({ size: "A4", layout: "landscape", margin: PAGE.margin, bufferPages: true, info: { Title: `${data.period.label} – ${data.programme.code}`, Author: "Commercial Dashboard" } });
   const chunks: Buffer[] = [];
@@ -45,6 +100,8 @@ export async function renderMonthlyReportPdf(data: ReportData): Promise<Buffer> 
   minutes(ctx);
   newSection(ctx, "Executive Summary");
   executiveSummary(ctx);
+  newSection(ctx, "Movement since the previous report");
+  movementSection(ctx);
   for (const s of REPORT_SCHEDULES) {
     newSection(ctx, `Schedule ${s.letter} – ${s.title}`);
     if (s.special === "cost_l1") costLevel1(ctx);
@@ -247,7 +304,7 @@ function minutes(ctx: Ctx) {
 
 function executiveSummary(ctx: Ctx) {
   const { doc, data } = ctx;
-  const g = data.costReport.grandTotal;
+  const g = executiveTotals(data.costReport);
   const d = data.dashboard;
   const kpis: [string, string, string][] = [
     ["Approved Budget (E)", formatMoney(g.E), ""],
@@ -327,6 +384,75 @@ function executiveSummary(ctx: Ctx) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Movement since the previous issued report                           */
+
+function movementSection(ctx: Ctx) {
+  const { doc, data } = ctx;
+  const m = data.movement;
+  if (!m || !m.previous) {
+    doc.fillColor(MUTED).font("Helvetica").fontSize(9).text("No earlier locked report to compare with yet. Lock each month in turn; this section then lists every change month on month.");
+    return;
+  }
+  const money = (v: unknown) => formatMoney(v as number);
+  const signed = (v: unknown) => {
+    const n = Number(v ?? 0);
+    return Math.abs(n) < 0.005 ? "–" : `${n > 0 ? "+" : ""}${formatMoney(n)}`;
+  };
+  subheading(ctx, `Cost report: ${m.previous.label} -> ${m.current.label}`, "Executive view (budget columns include the budget hold; change and forecast columns exclude it).");
+  table(
+    ctx,
+    [
+      { key: "label", label: "Column", width: 3 },
+      { key: "prev", label: `Previous (${m.previous.label})`, width: 2, align: "right", format: money },
+      { key: "now", label: "This report", width: 2, align: "right", format: money },
+      { key: "delta", label: "Movement", width: 2, align: "right", format: signed },
+    ],
+    m.kpis.map((k) => ({ label: `${k.key}  ${k.label}`, prev: k.prev, now: k.now, delta: k.delta })),
+    { zebra: true },
+  );
+  subheading(ctx, "Open changes by stage", "Number of open changes at each stage and the cost-report amount they carry.");
+  table(
+    ctx,
+    [
+      { key: "stage", label: "Stage", width: 1.5 },
+      { key: "prevCount", label: "Previous count", width: 1.2, align: "right" },
+      { key: "nowCount", label: "This report", width: 1.2, align: "right" },
+      { key: "prevAmount", label: "Previous amount", width: 2, align: "right", format: money },
+      { key: "nowAmount", label: "This report amount", width: 2, align: "right", format: money },
+      { key: "delta", label: "Movement", width: 2, align: "right", format: signed },
+    ],
+    m.stages.map((st) => ({ ...st, delta: st.nowAmount - st.prevAmount })),
+    { zebra: true },
+  );
+  for (const g of m.groups) {
+    const rows: Record<string, unknown>[] = [
+      ...g.added.map((it) => ({ kind: "New", key: it.key, title: it.title, from: "", to: it.to ?? "", amount: it.amount ?? null })),
+      ...g.changed.map((it) => ({ kind: "Updated", key: it.key, title: it.title, from: it.from ?? "", to: it.to ?? "", amount: it.delta ?? null })),
+      ...g.removed.map((it) => ({ kind: "Removed", key: it.key, title: it.title, from: it.from ?? "", to: "", amount: it.amount === null || it.amount === undefined ? null : -it.amount })),
+    ];
+    subheading(ctx, `${g.label}: ${g.prevCount} -> ${g.nowCount} rows · ${g.valueLabel} ${formatMoney(g.prevValue)} -> ${formatMoney(g.nowValue)} (${signed(g.nowValue - g.prevValue)})`);
+    if (!rows.length) {
+      doc.fillColor(MUTED).font("Helvetica").fontSize(8.5).text("No movement.");
+      doc.moveDown(0.3);
+      continue;
+    }
+    table(
+      ctx,
+      [
+        { key: "kind", label: "What", width: 0.9 },
+        { key: "key", label: "Ref", width: 1.1 },
+        { key: "title", label: "Description", width: 4 },
+        { key: "from", label: "Was", width: 2 },
+        { key: "to", label: "Now", width: 2 },
+        { key: "amount", label: "Amount / movement", width: 1.6, align: "right", format: (v) => (v === null || v === undefined ? "" : signed(v)) },
+      ],
+      rows,
+      { zebra: true },
+    );
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* Cost report                                                         */
 
 const moneyCols = (keys: readonly string[]): Col[] =>
@@ -346,7 +472,7 @@ function costLevel1(ctx: Ctx) {
       { key: "lines", label: "Lines", width: 0.55, align: "right" },
       ...moneyCols(keys),
     ];
-    table(ctx, cols, rows as Record<string, unknown>[], { zebra: true, totals: [{ label: "Total", values: r.level1Total, labelKey: "asset_code" }, { label: "Check: L1 - L2 (must be zero)", values: r.check, labelKey: "asset_code", tone: r.checkOk ? "green" : "red" }] });
+    table(ctx, cols, rows as Record<string, unknown>[], { zebra: true, totals: [{ label: "Total", values: r.level1Total, labelKey: "asset_code" }, { label: "Total excl. budget hold", values: r.totalsExclHold, labelKey: "asset_code" }, { label: "Check: L1 - L2 (must be zero)", values: r.check, labelKey: "asset_code", tone: r.checkOk ? "green" : "red" }] });
   };
   part("By asset and cost category – columns E to I", ["E", "F", "G", "H", "I"]);
   part("By asset and cost category – columns J to S", ["J", "K", "L", "M", "N", "O", "P", "Q", "R", "S"]);

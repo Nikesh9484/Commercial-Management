@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import {
   ClipboardList,
   Calculator,
@@ -41,7 +41,9 @@ const ICONS: Record<string, LucideIcon> = {
 
 export function Sidebar({ open, onClose, role }: { open: boolean; onClose: () => void; role: Role }) {
   const pathname = usePathname();
-  const isActive = (href: string) => (href === "/" ? pathname === "/" || pathname === "/modules/executive-summary" : pathname.startsWith(href));
+  const search = useSearchParams();
+  const isActive = (href: string) =>
+    href.includes("?") ? pathname + "?" + search.toString() === href : href === "/" ? pathname === "/" || pathname === "/modules/executive-summary" : pathname === href || (pathname.startsWith(href + "/") && href !== "/") || (href === "/modules/cost-report" && pathname === href && !search.get("tab")) || (false && pathname.startsWith(href));
 
   const link = (href: string, label: string, Icon: LucideIcon, badge?: string) => (
     <Link
@@ -62,7 +64,7 @@ export function Sidebar({ open, onClose, role }: { open: boolean; onClose: () =>
     <>
       {open && <div className="fixed inset-0 z-30 bg-navy-dark/60 lg:hidden" onClick={onClose} />}
       <aside
-        className={`fixed inset-y-0 left-0 z-40 flex w-68 flex-col bg-navy-dark text-white transition-transform lg:static lg:translate-x-0 ${
+        className={`app-sidebar fixed inset-y-0 left-0 z-40 flex w-68 flex-col text-white transition-transform lg:static lg:translate-x-0 ${
           open ? "translate-x-0" : "-translate-x-full"
         }`}
       >
@@ -82,6 +84,13 @@ export function Sidebar({ open, onClose, role }: { open: boolean; onClose: () =>
               {link(m.slug === "executive-summary" ? "/" : `/modules/${m.slug}`, m.short, ICONS[m.icon] ?? ClipboardList, String(m.no))}
               {m.slug === "executive-summary" && <div className="pl-4">{link("/modules/executive-summary/minutes", "Minutes of Meeting", FileText)}</div>}
               {m.slug === "invoices-payments" && <div className="pl-4">{link("/modules/final-accounts", "Final Account Status", FileText)}</div>}
+              {m.slug === "cost-report" && (
+                <div className="pl-4">
+                  {link("/modules/cost-report?tab=level1", "Level 1 – Executive", FileText)}
+                  {link("/modules/cost-report?tab=level2", "Level 2 – Detailed", FileText)}
+                  {link("/modules/cost-report?tab=setup", "Line setup", FileText)}
+                </div>
+              )}
             </div>
           ))}
           <div className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider text-blue-200/50">System</div>
