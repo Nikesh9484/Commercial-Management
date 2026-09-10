@@ -31,7 +31,8 @@ export async function GET(req: Request, ctx: unknown) {
     const name = sections.map((s) => NAMES[s] ?? s.replace(/[^A-Za-z0-9]+/g, "_")).join("_");
     const base = `${name}_${app.programme.code}_No${data.period.report_no}_${todayIso()}${data.locked ? "" : "_DRAFT"}`;
     if (format === "xlsx") {
-      const buffer = await renderSectionsExcel(data, sections);
+      const origin = url.origin;
+      const buffer = await renderSectionsExcel(data, sections, { url: `${origin}/`, label: "Open the dashboard" });
       return new Response(new Uint8Array(buffer), { headers: { "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "Content-Disposition": `attachment; filename="${base}.xlsx"` } });
     }
     const buffer = await renderSectionsPdf(data, sections);

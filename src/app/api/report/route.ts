@@ -18,7 +18,7 @@ export async function GET(req: Request, ctx: unknown) {
     const data = getReportData(app.programme.id, periodId);
     const base = `Monthly_Commercial_Report_${app.programme.code}_No${data.period.report_no}_${todayIso()}${data.locked ? "" : "_DRAFT"}`;
     if (format === "xlsx") {
-      const buffer = await renderMonthlyReportExcel(data);
+      const buffer = await renderMonthlyReportExcel(data, { url: `${url.origin}/modules/monthly-report`, label: "Open the dashboard" });
       return new Response(new Uint8Array(buffer), {
         headers: { "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "Content-Disposition": `attachment; filename="${base}.xlsx"` },
       });

@@ -5,55 +5,80 @@ import { buildClaimsReport } from "./claims-report";
 import { buildFaReport } from "./fa-report";
 import type { ReportData } from "./data";
 import { REPORT_SCHEDULES } from "./schedules";
-import { MONEY_COLUMNS, type Money } from "../cost-report/columns";
 import { formatDate, formatDateTime, formatMoney, toDate } from "../format";
 import type { FieldDef, RecordRow, RegisterDef } from "../registers/types";
 
-const NAVY = "FF0F2B4C";
+import { XL, MONEY_FMT, titleBlock, headerRow, totalRow, sectionRow, sumFormula, finishWorkbook, setWorkbookLink } from "../xlsx-style";
+import { writeLevel1, writeLevel2, type Level2Ref } from "../cost-report/excel";
 
+const NAVY = XL.navy;
+
+/** Coloured table header (registers the table for zebra rows, borders and filters). */
 function header(row: ExcelJS.Row) {
-  row.font = { bold: true, color: { argb: "FFFFFFFF" } };
-  row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: NAVY } };
-  row.alignment = { wrapText: true, vertical: "middle" };
+  return headerRow(row);
 }
-function bold(row: ExcelJS.Row, fill = "FFDCE6F2") {
-  row.font = { bold: true };
-  row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
+/** Bold total row. */
+function bold(row: ExcelJS.Row, fill = XL.totalFill) {
+  return totalRow(row, fill);
 }
-const MONEY_FMT = "#,##0.00;[Red]-#,##0.00";
+function sub(d: ReportData) {
+  return `${d.programme.code} · ${d.programme.name}${d.asset ? ` · ${d.asset.code} ${d.asset.name}` : ""} · ${d.period.label}${d.locked ? "" : " · DRAFT (period not locked)"} · generated ${formatDateTime(d.generatedAt)} · all amounts SAR`;
+}
+const SHEET_A = "Sch A - Cost Report Level 1";
+const SHEET_B = "Sch B - Cost Report Level 2";
+function costPair(wb: ExcelJS.Workbook, data: ReportData, nameA: string | null, nameB: string | null) {
+  const wsA = nameA ? wb.addWorksheet(nameA) : null;
+  const wsB = nameB ? wb.addWorksheet(nameB) : null;
+  let ref: Level2Ref | undefined;
+  if (wsB) ref = writeLevel2(wsB, data.costReport, `Schedule B – Cost Report Level 2 (Detailed) · source: ${data.sources.cost_report}`, sub(data));
+  if (wsA) writeLevel1(wsA, data.costReport, `Schedule A – Cost Report Level 1 (Executive) · source: ${data.sources.cost_report}`, sub(data), ref);
+}
 
 /** One or more sections only, used by the "Download Excel" buttons on each page. */
-export async function renderSectionsExcel(data: ReportData, keys: string[]): Promise<Buffer> {
+export async function renderSectionsExcel(data: ReportData, keys: string[], link?: { url: string; label: string }): Promise<Buffer> {
   const wb = new ExcelJS.Workbook();
   wb.creator = APP_NAME;
-  for (const raw of keys) {
-    const k = raw.trim();
+  setWorkbookLink(wb, link);
+  const norm = keys.map((k) => k.trim());
+  const wantsL1 = norm.some((k) => k === "level1" || k.toUpperCase() === "A");
+  const wantsL2 = norm.some((k) => k === "level2" || k.toUpperCase() === "B");
+  let costDone = false;
+  for (const k of norm) {
     if (k === "minutes") momSheet(wb, data);
     else if (k === "exec") execSheet(wb, data);
     else if (k === "movement") movementSheet(wb, data);
     else if (k === "claims_report") claimsReportSheet(wb, data);
     else if (k === "fa_report") faReportSheet(wb, data);
-    else if (k === "level1") costL1(wb.addWorksheet("Level 1 - Executive"), data);
-    else if (k === "level2") costL2(wb.addWorksheet("Level 2 - Detailed"), data);
-    else if (k === "cashflow") cashflowSheet(wb.addWorksheet("Cash Flow"), data);
+    else if (k === "level1" || k === "level2" || k.toUpperCase() === "A" || k.toUpperCase() === "B") {
+      if (!costDone) costPair(wb, data, wantsL1 ? "Level 1 - Executive" : null, wantsL2 ? "Level 2 - Detailed" : null);
+      costDone = true;
+    } else if (k === "cashflow") cashflowSheet(wb.addWorksheet("Cash Flow"), data);
     else {
       const sched = REPORT_SCHEDULES.find((sc) => sc.letter === k.toUpperCase());
       const reg = sched ? null : REPORT_SCHEDULES.find((sc) => (Array.isArray(sc.register) ? sc.register.includes(k) : sc.register === k));
       if (sched) addSchedule(wb, sched, data);
-      else if (reg && data.registers[k]) registerBlock(wb.addWorksheet(data.registers[k].def.title.slice(0, 31).replace(/[\\/?*[\]:]/g, " ")), data.registers[k].def, data.registers[k].rows, data.sources[k]);
+      else if (reg && data.registers[k]) {
+        const ws = wb.addWorksheet(data.registers[k].def.title.slice(0, 31).replace(/[\\/?*[\]:]/g, " "));
+        titleBlock(ws, `Schedule ${reg.letter} – ${data.registers[k].def.title}`, sub(data), 8);
+        registerBlock(ws, data.registers[k].def, data.registers[k].rows, data.sources[k]);
+      }
     }
   }
   if (!wb.worksheets.length) wb.addWorksheet("Empty").addRow(["Nothing to export for this section."]);
+  finishWorkbook(wb);
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
 function addSchedule(wb: ExcelJS.Workbook, s: (typeof REPORT_SCHEDULES)[number], data: ReportData) {
   const name = `Sch ${s.letter} - ${s.title}`.slice(0, 31).replace(/[\\/?*[\]:]/g, " ");
-  if (s.special === "cost_l1") costL1(wb.addWorksheet(name), data);
-  else if (s.special === "cost_l2") costL2(wb.addWorksheet(name), data);
-  else if (s.special === "cashflow") cashflowSheet(wb.addWorksheet(name), data);
+  if (s.special === "cost_l1") {
+    if (!wb.getWorksheet(SHEET_A)) costPair(wb, data, SHEET_A, SHEET_B);
+  } else if (s.special === "cost_l2") {
+    if (!wb.getWorksheet(SHEET_B)) costPair(wb, data, null, SHEET_B);
+  } else if (s.special === "cashflow") cashflowSheet(wb.addWorksheet(name), data);
   else {
     const ws = wb.addWorksheet(name);
+    titleBlock(ws, `Schedule ${s.letter} – ${s.title}`, sub(data), 8);
     for (const key of Array.isArray(s.register) ? s.register : [s.register!]) registerBlock(ws, data.registers[key].def, data.registers[key].rows, data.sources[key]);
   }
 }
@@ -62,7 +87,7 @@ function movementSheet(wb: ExcelJS.Workbook, d: ReportData) {
   const ws = wb.addWorksheet("Movement");
   [44, 22, 22, 22, 30, 30].forEach((w, i) => (ws.getColumn(i + 1).width = w));
   const m = d.movement;
-  ws.addRow([`Movement since the previous issued report · ${d.period.label}`]).font = { bold: true, size: 12, color: { argb: NAVY } };
+  titleBlock(ws, "Movement since the previous issued report", sub(d), 6);
   if (!m || !m.previous) {
     ws.addRow(["No earlier locked report to compare with yet."]);
     if (m) statusAndAgeing(ws, m);
@@ -156,9 +181,7 @@ function claimsReportSheet(wb: ExcelJS.Workbook, d: ReportData) {
   const r = buildClaimsReport(d);
   const ws = wb.addWorksheet("Claims Status Report");
   [12, 30, 60, 14, 16, 16, 16, 10, 10, 34, 22, 8, 8].forEach((w, i) => (ws.getColumn(i + 1).width = w));
-  ws.addRow([r.title]).font = { bold: true, size: 14, color: { argb: NAVY } };
-  ws.addRow([`${d.programme.code} · ${d.asset ? `${d.asset.code} ${d.asset.name}` : d.programme.name} · as at ${formatDate(r.asOf)}${d.locked ? "" : " · DRAFT"}`]).font = { italic: true };
-  ws.addRow([]);
+  titleBlock(ws, r.title, `${sub(d)} · as at ${formatDate(r.asOf)}`, 13);
   const h = r.headline;
   header(ws.addRow(["Headline", "Value", "Note"]));
   const kp: [string, unknown, string][] = [
@@ -220,9 +243,7 @@ function faReportSheet(wb: ExcelJS.Workbook, d: ReportData) {
   const r = buildFaReport(d);
   const ws = wb.addWorksheet("Final Account Status Report");
   [12, 40, 30, 12, 18, 18, 16, 18, 14, 8, 14, 40].forEach((w, i) => (ws.getColumn(i + 1).width = w));
-  ws.addRow([r.title]).font = { bold: true, size: 14, color: { argb: NAVY } };
-  ws.addRow([`${d.programme.code} · ${d.asset ? `${d.asset.code} ${d.asset.name}` : d.programme.name} · as at ${formatDate(r.asOf)}${d.locked ? "" : " · DRAFT"}`]).font = { italic: true };
-  ws.addRow([]);
+  titleBlock(ws, r.title, `${sub(d)} · as at ${formatDate(r.asOf)}`, 12);
   const h = r.headline;
   header(ws.addRow(["Headline", "Value", "Note"]));
   const kp: [string, unknown, string][] = [
@@ -277,34 +298,25 @@ function faReportSheet(wb: ExcelJS.Workbook, d: ReportData) {
   for (const s of r.byStatus) ws.addRow([s.status, s.count, s.afa]).getCell(3).numFmt = MONEY_FMT;
 }
 
-export async function renderMonthlyReportExcel(data: ReportData): Promise<Buffer> {
+export async function renderMonthlyReportExcel(data: ReportData, link?: { url: string; label: string }): Promise<Buffer> {
   const wb = new ExcelJS.Workbook();
   wb.creator = APP_NAME;
+  setWorkbookLink(wb, link);
   coverSheet(wb, data);
   indexSheet(wb, data);
   momSheet(wb, data);
   execSheet(wb, data);
   movementSheet(wb, data);
-  for (const s of REPORT_SCHEDULES) {
-    const name = `Sch ${s.letter} - ${s.title}`.slice(0, 31).replace(/[\\/?*[\]:]/g, " ");
-    if (s.special === "cost_l1") costL1(wb.addWorksheet(name), data);
-    else if (s.special === "cost_l2") costL2(wb.addWorksheet(name), data);
-    else if (s.special === "cashflow") cashflowSheet(wb.addWorksheet(name), data);
-    else {
-      const ws = wb.addWorksheet(name);
-      for (const key of Array.isArray(s.register) ? s.register : [s.register!]) registerBlock(ws, data.registers[key].def, data.registers[key].rows, data.sources[key]);
-    }
-  }
+  for (const s of REPORT_SCHEDULES) addSchedule(wb, s, data);
+  finishWorkbook(wb, { indexSheet: "Index", freeze: { [SHEET_A]: 3, [SHEET_B]: 3 } });
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
 function coverSheet(wb: ExcelJS.Workbook, d: ReportData) {
   const ws = wb.addWorksheet("Cover");
   ws.getColumn(1).width = 26;
-  ws.getColumn(2).width = 60;
-  ws.addRow(["Monthly Commercial Report"]).font = { bold: true, size: 18, color: { argb: NAVY } };
-  ws.addRow([d.period.label]).font = { size: 13 };
-  ws.addRow([]);
+  ws.getColumn(2).width = 70;
+  titleBlock(ws, "Monthly Commercial Report", `${d.period.label} · ${APP_NAME}`, 2);
   const p = d.period as unknown as Record<string, string | null>;
   const rows: [string, string][] = [
     ["Programme", `${d.programme.code} · ${d.programme.name}`],
@@ -324,21 +336,36 @@ function coverSheet(wb: ExcelJS.Workbook, d: ReportData) {
   ];
   for (const [k, v] of rows) {
     const r = ws.addRow([k, v]);
-    r.getCell(1).font = { bold: true, color: { argb: "FF5B6577" } };
+    r.getCell(1).font = { bold: true, color: { argb: XL.muted } };
+    if (k) r.getCell(2).font = { bold: true, color: { argb: XL.navy } };
   }
+  ws.addRow([]);
+  const go = ws.addRow(["Contents", "Go to the Index sheet"]);
+  go.getCell(2).value = { text: "▶ Index of sheets", hyperlink: "#'Index'!A1" };
+  go.getCell(2).font = { color: { argb: XL.accent }, underline: true };
 }
 
 function indexSheet(wb: ExcelJS.Workbook, d: ReportData) {
   const ws = wb.addWorksheet("Index");
-  [14, 50, 14].forEach((w, i) => (ws.getColumn(i + 1).width = w));
-  header(ws.addRow(["Section", "Title", "Checklist"]));
+  [14, 56, 14].forEach((w, i) => (ws.getColumn(i + 1).width = w));
+  titleBlock(ws, "Index", sub(d), 3);
+  header(ws.addRow(["Section", "Title (click to open the sheet)", "Checklist"]));
   const check = (n: number) => {
     const c = d.checklist.find((x) => x.module_no === n);
     return c ? (c.done ? "Done" : "Not done") : "";
   };
-  ws.addRow(["", "Minutes of Meeting", check(11)]);
-  ws.addRow(["", "Executive Summary", check(11)]);
-  for (const s of REPORT_SCHEDULES) ws.addRow([`Schedule ${s.letter}`, s.title, check(s.moduleNo)]);
+  const linkRow = (section: string, title: string, sheet: string, chk: string) => {
+    const r = ws.addRow([section, title, chk]);
+    r.getCell(2).value = { text: title, hyperlink: `#'${sheet.replace(/'/g, "''")}'!A1` };
+    r.getCell(2).font = { color: { argb: XL.accent }, underline: true };
+  };
+  linkRow("", "Minutes of Meeting", "MoM", check(11));
+  linkRow("", "Executive Summary", "Executive Summary", check(11));
+  linkRow("", "Movement since the previous report", "Movement", "");
+  for (const s of REPORT_SCHEDULES) {
+    const name = s.special === "cost_l1" ? SHEET_A : s.special === "cost_l2" ? SHEET_B : `Sch ${s.letter} - ${s.title}`.slice(0, 31).replace(/[\\/?*[\]:]/g, " ");
+    linkRow(`Schedule ${s.letter}`, s.title, name, check(s.moduleNo));
+  }
   ws.addRow([]);
   header(ws.addRow(["Role / position", "Name", "Organisation"]));
   for (const t of d.team) ws.addRow([t.role, t.name, t.organisation]);
@@ -347,10 +374,11 @@ function indexSheet(wb: ExcelJS.Workbook, d: ReportData) {
 function momSheet(wb: ExcelJS.Workbook, d: ReportData) {
   const ws = wb.addWorksheet("MoM");
   [12, 22, 40, 40, 14, 12, 12, 16].forEach((w, i) => (ws.getColumn(i + 1).width = w));
+  titleBlock(ws, "Minutes of Meeting", sub(d), 8);
   if (!d.meetings.length) ws.addRow(["No meeting recorded for this reporting period."]);
   for (const m of d.meetings) {
     const mt = m.meeting;
-    ws.addRow([`${mt.meeting_no} · ${mt.title} · ${formatDate(mt.meeting_date as string)}`]).font = { bold: true, size: 12, color: { argb: NAVY } };
+    sectionRow(ws, `${mt.meeting_no} · ${mt.title} · ${formatDate(mt.meeting_date as string)}`, 8, XL.navyLight);
     ws.addRow(["Attendees", String(mt.attendees ?? "").replace(/\n/g, ", ")]);
     if (mt.apologies) ws.addRow(["Apologies", String(mt.apologies)]);
     if (mt.notes) ws.addRow(["Notes", String(mt.notes)]);
@@ -372,6 +400,7 @@ function execSheet(wb: ExcelJS.Workbook, d: ReportData) {
   [40, 28, 50, 18, 18, 18, 12, 18, 14, 10, 12].forEach((w, i) => (ws.getColumn(i + 1).width = w));
   const g = executiveTotals(d.costReport);
   const dash = d.dashboard;
+  titleBlock(ws, "Executive Summary", sub(d), 11);
   header(ws.addRow(["Measure", "SAR", "Note"]));
   const kp: [string, number, string][] = [
     ["Approved Budget (E)", g.E, ""],
@@ -400,75 +429,54 @@ function execSheet(wb: ExcelJS.Workbook, d: ReportData) {
   for (const a of dash.actions) ws.addRow([a.item_no, a.topic, a.action, a.owner, a.due_date ? toDate(String(a.due_date)) : "", a.status]);
 }
 
-function moneyValues(m: Money) {
-  return MONEY_COLUMNS.map((c) => m[c.key]);
-}
-
-function costL1(ws: ExcelJS.Worksheet, d: ReportData) {
-  const r = d.costReport;
-  ws.addRow([`Schedule A – Cost Report Level 1 · ${d.period.label} · source: ${d.sources.cost_report}`]).font = { bold: true, size: 12, color: { argb: NAVY } };
-  header(ws.addRow(["Asset code", "Asset", "Cost category", "Lines", ...MONEY_COLUMNS.map((c) => `${c.key} ${c.label}`)]));
-  for (const l of r.level1) ws.addRow([l.asset_code, l.asset_name, l.category, l.lines, ...moneyValues(l)]);
-  bold(ws.addRow(["Total", "", "", r.lines.length, ...moneyValues(r.level1Total)]));
-  bold(ws.addRow(["Total excl. budget hold", "", "", r.lines.filter((l) => !l.is_budget_hold).length, ...moneyValues(r.totalsExclHold)]), "FFF1F5F9");
-  const chk = ws.addRow(["Check: L1 − L2 (must be zero)", "", "", "", ...moneyValues(r.check)]);
-  chk.font = { bold: true, color: { argb: r.checkOk ? "FF047857" : "FFB91C1C" } };
-  [14, 26, 22, 8].forEach((w, i) => (ws.getColumn(i + 1).width = w));
-  MONEY_COLUMNS.forEach((_, i) => {
-    ws.getColumn(4 + i).width = 18;
-    ws.getColumn(4 + i).numFmt = MONEY_FMT;
-  });
-}
-
-function costL2(ws: ExcelJS.Worksheet, d: ReportData) {
-  const r = d.costReport;
-  ws.addRow([`Schedule B – Cost Report Level 2 · ${d.period.label} · source: ${d.sources.cost_report}`]).font = { bold: true, size: 12, color: { argb: NAVY } };
-  header(ws.addRow(["A Code", "B Package", "C Name", "D Contractor", "Asset", ...MONEY_COLUMNS.map((c) => `${c.key} ${c.label}`)]));
-  for (const s of r.sections) {
-    ws.addRow([s.name]).font = { bold: true, color: { argb: NAVY } };
-    for (const l of s.lines) ws.addRow([l.code, l.package, l.name, l.contractor, l.asset_code, ...moneyValues(l)]);
-    bold(ws.addRow([`${s.name} subtotal`, "", "", "", "", ...moneyValues(s.subtotal)]), "FFF3F5F9");
-  }
-  bold(ws.addRow(["Grand total", "", "", "", "", ...moneyValues(r.grandTotal)]));
-  [14, 24, 28, 24, 14].forEach((w, i) => (ws.getColumn(i + 1).width = w));
-  MONEY_COLUMNS.forEach((_, i) => {
-    ws.getColumn(6 + i).width = 18;
-    ws.getColumn(6 + i).numFmt = MONEY_FMT;
-  });
-  ws.views = [{ state: "frozen", xSplit: 5, ySplit: 2 }];
-}
-
 function cashflowSheet(ws: ExcelJS.Worksheet, d: ReportData) {
   const cf = d.cashflow;
-  ws.addRow([`Schedule I – Cash Flow · ${d.period.label} · SAR excl. VAT · source: ${d.sources.cashflow}`]).font = { bold: true, size: 12, color: { argb: NAVY } };
   const text = ["Transaction No", "Supplier", "Line Description", "Coding", "CBS", "Programme"];
+  const nCols = text.length + (cf.months.length + 1) * 3;
+  titleBlock(ws, `Schedule I – Cash Flow · SAR excl. VAT · source: ${d.sources.cashflow}`, sub(d), Math.min(nCols, 12));
   header(ws.addRow([...text, ...cf.months.flatMap((m) => [`${m.label} Forecast`, `${m.label} Actual`, `${m.label} Diff`]), "Total Forecast", "Total Actual", "Total Diff"]));
+  const first = ws.rowCount + 1;
   for (const r of cf.rows) ws.addRow([r.transaction_no, r.supplier, r.description, r.coding, r.cbs, r.programme, ...cf.months.flatMap((m) => [r.cells[m.key].forecast ?? 0, r.cells[m.key].actual, r.cells[m.key].difference ?? 0]), r.total_forecast, r.total_actual, r.total_difference]);
-  bold(ws.addRow(["Total", "", "", "", "", "", ...cf.months.flatMap((m) => [cf.monthTotals[m.key].forecast, cf.monthTotals[m.key].actual, cf.monthTotals[m.key].difference]), cf.grand.forecast, cf.grand.actual, cf.grand.difference]));
+  const last = ws.rowCount;
+  const tot = ws.addRow(["Total"]);
+  const totals = [...cf.months.flatMap((m) => [cf.monthTotals[m.key].forecast, cf.monthTotals[m.key].actual, cf.monthTotals[m.key].difference]), cf.grand.forecast, cf.grand.actual, cf.grand.difference];
+  totals.forEach((v, i) => (tot.getCell(text.length + i + 1).value = last >= first ? sumFormula(text.length + i + 1, first, last, v) : v));
+  bold(tot);
   [16, 22, 30, 12, 12, 12].forEach((w, i) => (ws.getColumn(i + 1).width = w));
   for (let i = text.length + 1; i <= text.length + (cf.months.length + 1) * 3; i++) {
     ws.getColumn(i).width = 15;
     ws.getColumn(i).numFmt = MONEY_FMT;
   }
   ws.addRow([]);
-  ws.addRow(["Accruals – certified but not paid"]).font = { bold: true, color: { argb: NAVY } };
+  sectionRow(ws, "Accruals – certified but not paid", 5, XL.navyLight);
   header(ws.addRow(["Contract", "Supplier", "Net certified", "Net paid", "Accrued"]));
+  const af = ws.rowCount + 1;
   for (const c of cf.accruals.byContract) ws.addRow([c.contract, c.supplier, c.net_certified, c.net_paid, c.accrued]);
-  bold(ws.addRow(["Total", "", "", "", cf.accruals.totalAccrued]));
+  const al = ws.rowCount;
+  const at = ws.addRow(["Total"]);
+  [3, 4, 5].forEach((i) => (at.getCell(i).value = al >= af ? sumFormula(i, af, al, i === 5 ? cf.accruals.totalAccrued : undefined) : 0));
+  bold(at);
 }
 
 function registerBlock(ws: ExcelJS.Worksheet, def: RegisterDef, rows: RecordRow[], source: string) {
   const fields = def.fields.filter((f) => f.type !== "password");
-  ws.addRow([`${def.title} (${rows.length}) · source: ${source}`]).font = { bold: true, size: 12, color: { argb: NAVY } };
+  sectionRow(ws, `${def.title} (${rows.length}) · source: ${source}`, Math.min(fields.length, 10), XL.navyLight);
   header(ws.addRow(fields.map((f) => f.label)));
+  const first = ws.rowCount + 1;
   for (const r of rows) ws.addRow(fields.map((f) => cell(f, r)));
-  if (def.totals?.length) {
-    bold(ws.addRow(fields.map((f, i) => (i === 0 ? `Total (${rows.length})` : def.totals!.includes(f.key) ? rows.reduce((t, r) => t + (Number(r[f.key] ?? 0) || 0), 0) : ""))));
+  const last = ws.rowCount;
+  if (def.totals?.length && last >= first) {
+    const t = ws.addRow([`Total (${rows.length})`]);
+    fields.forEach((f, i) => {
+      if (def.totals!.includes(f.key)) t.getCell(i + 1).value = sumFormula(i + 1, first, last, rows.reduce((s, r) => s + (Number(r[f.key] ?? 0) || 0), 0));
+    });
+    bold(t);
   }
   fields.forEach((f, i) => {
     const col = ws.getColumn(i + 1);
     col.width = Math.max(col.width ?? 0, f.type === "textarea" ? 40 : Math.max(14, f.label.length + 2));
     if (f.type === "money") col.numFmt = MONEY_FMT;
+    if (f.type === "number") col.numFmt = "#,##0.##;[Red]-#,##0.##";
     if (f.type === "date") col.numFmt = "DD-MMM-YY";
   });
   ws.addRow([]);

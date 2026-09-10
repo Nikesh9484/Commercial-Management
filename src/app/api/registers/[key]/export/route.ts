@@ -5,11 +5,13 @@ import { todayIso } from "@/lib/format";
 
 type Ctx = { params: Promise<{ key: string }> };
 
-export const GET = withUser<Ctx>(async (user, { params }) => {
+export async function GET(req: Request, ctx: Ctx) {
+  return withUser<Ctx>(async (user, { params }) => {
   const { key } = await params;
   const def = requireDef(key);
   assertCanView(def, user);
-  const buffer = await exportRegister(def);
+  const origin = new URL(req.url).origin;
+  const buffer = await exportRegister(def, { url: `${origin}/`, label: "Open the dashboard" });
   const filename = `${def.title.replace(/[^\w]+/g, "_")}_${todayIso()}.xlsx`;
   return new Response(new Uint8Array(buffer), {
     headers: {
@@ -17,4 +19,5 @@ export const GET = withUser<Ctx>(async (user, { params }) => {
       "Content-Disposition": `attachment; filename="${filename}"`,
     },
   });
-});
+  })(req, ctx);
+}

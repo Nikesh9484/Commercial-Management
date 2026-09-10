@@ -3,34 +3,48 @@ import ExcelJS from "exceljs";
 import type { FieldDef, RegisterDef, RecordRow, UserInfo } from "./registers/types";
 import { listRecords, lookupOptions, createRecord, updateRecord, getRecord, ValidationError } from "./registers/engine";
 import { getDb } from "./db";
-import { formatDate, toDate } from "./format";
+import { formatDate, toDate, todayIso } from "./format";
+import { XL, titleBlock, headerRow, totalRow, sumFormula, finishWorkbook, setWorkbookLink, applyColumnFormat, solid } from "./xlsx-style";
 
-const HEADER_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0F2B4C" } };
+const HEADER_FILL: ExcelJS.Fill = solid(XL.navy);
 
 function exportFields(def: RegisterDef): FieldDef[] {
   return def.fields.filter((f) => f.type !== "password");
 }
 
-/** Builds an .xlsx workbook with all rows of a register (dates as DD-MMM-YY, money with 2 decimals). */
-export async function exportRegister(def: RegisterDef): Promise<Buffer> {
+/**
+ * Builds an .xlsx workbook with all rows of a register: title band, coloured header, zebra rows,
+ * dates as real dates, money with 2 decimals, SUM totals, status colouring, filter and frozen header.
+ * The file re-imports as it is (the header row is found automatically).
+ */
+export async function exportRegister(def: RegisterDef, link?: { url: string; label: string }): Promise<Buffer> {
   const wb = new ExcelJS.Workbook();
-  wb.creator = APP_NAME;
-  const ws = wb.addWorksheet(def.title.slice(0, 31));
+  setWorkbookLink(wb, link);
+  const ws = wb.addWorksheet(def.title.slice(0, 31).replace(/[\\/?*[\]:]/g, " "));
   const fields = exportFields(def);
-  ws.columns = [
-    { header: "ID", key: "id", width: 8 },
-    ...fields.map((f) => ({ header: f.label, key: f.key, width: f.type === "textarea" ? 40 : Math.max(14, f.label.length + 4) })),
-    { header: "Last updated", key: "updated_at", width: 18 },
-    { header: "Updated by", key: "updated_by", width: 18 },
-  ];
   const rows = listRecords(def);
+  const cols = [{ header: "ID", key: "id", width: 8, type: "number" }, ...fields.map((f) => ({ header: f.label, key: f.key, width: f.type === "textarea" ? 40 : Math.max(14, Math.min(34, f.label.length + 4)), type: f.type })), { header: "Last updated", key: "updated_at", width: 14, type: "date" }, { header: "Updated by", key: "updated_by", width: 18, type: "text" }];
+  titleBlock(ws, def.title, `${rows.length} row(s) · exported ${formatDate(todayIso())} · ${APP_NAME}`, Math.min(cols.length, 10));
+  headerRow(ws.addRow(cols.map((c) => c.header)));
+  const first = ws.rowCount + 1;
   for (const r of rows) {
-    const out: Record<string, unknown> = { id: r.id, updated_at: formatDate(r.updated_at as string), updated_by: r.updated_by };
-    for (const f of fields) out[f.key] = cellValue(f, r);
-    ws.addRow(out);
+    ws.addRow([r.id, ...fields.map((f) => cellValue(f, r)), toDate(String(r.updated_at ?? "")) ?? "", r.updated_by]);
   }
-  styleSheet(ws, fields);
+  const last = ws.rowCount;
+  if (def.totals?.length && last >= first) {
+    const t = ws.addRow([`Total (${rows.length})`]);
+    cols.forEach((c, i) => {
+      if (def.totals!.includes(c.key)) t.getCell(i + 1).value = sumFormula(i + 1, first, last, rows.reduce((s, r) => s + (Number(r[c.key] ?? 0) || 0), 0));
+    });
+    totalRow(t);
+  }
+  cols.forEach((c, i) => {
+    const col = ws.getColumn(i + 1);
+    col.width = c.width;
+    applyColumnFormat(col, c.type);
+  });
   await addListsSheet(wb, def);
+  finishWorkbook(wb, { freeze: { [ws.name]: 2 } });
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
@@ -107,6 +121,8 @@ async function addListsSheet(wb: ExcelJS.Workbook, def: RegisterDef) {
   });
   ws.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
   ws.getRow(1).fill = HEADER_FILL;
+  ws.getRow(1).alignment = { wrapText: true, vertical: "middle" };
+  ws.views = [{ state: "frozen", ySplit: 1 }];
 }
 
 /* ------------------------------------------------------------------ */
@@ -127,9 +143,22 @@ export async function importRegister(def: RegisterDef, file: ArrayBuffer, user: 
   const ws = wb.worksheets.find((w) => w.name !== "Lists" && w.name !== "How to use") ?? wb.worksheets[0];
   if (!ws) throw new ValidationError("The file has no worksheet.");
 
-  const headerRow = ws.getRow(1);
   const fields = exportFields(def);
   const colMap = new Map<number, FieldDef | "id">();
+  // The header row is the first row where at least two cells are column names (exports carry a title band above it).
+  let headerRowNo = 1;
+  for (let r = 1; r <= Math.min(ws.rowCount, 12); r++) {
+    let hits = 0;
+    ws.getRow(r).eachCell((cell) => {
+      const h = String(cellText(cell.value)).trim().toLowerCase();
+      if (h === "id" || fields.some((x) => x.label.toLowerCase() === h || x.key.toLowerCase() === h)) hits++;
+    });
+    if (hits >= 2) {
+      headerRowNo = r;
+      break;
+    }
+  }
+  const headerRow = ws.getRow(headerRowNo);
   headerRow.eachCell((cell, colNumber) => {
     const h = String(cellText(cell.value)).trim().toLowerCase();
     if (!h) return;
@@ -144,9 +173,10 @@ export async function importRegister(def: RegisterDef, file: ArrayBuffer, user: 
   const result: ImportResult = { created: 0, updated: 0, unchanged: 0, skipped: 0, errors: [] };
   const db = getDb();
   const tx = db.transaction(() => {
-    for (let r = 2; r <= ws.rowCount; r++) {
+    for (let r = headerRowNo + 1; r <= ws.rowCount; r++) {
       const row = ws.getRow(r);
       if (!row.hasValues) continue;
+      if (/^total\b/i.test(String(cellText(row.getCell(1).value)))) continue;
       const input: Record<string, unknown> = {};
       let id: number | null = null;
       let any = false;
