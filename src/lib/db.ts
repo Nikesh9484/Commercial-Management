@@ -256,21 +256,21 @@ function seed(db: Database.Database) {
   // Example programme / asset so the top bar has something to show on day one.
   if (count(db, "programmes") === 0) {
     const client = db
-      .prepare(`INSERT INTO clients(name, created_at, created_by, updated_at, updated_by) VALUES('Client (edit me)', ?, 'system', ?, 'system')`)
+      .prepare(`INSERT INTO clients(name, created_at, created_by, updated_at, updated_by) VALUES('The AMAALA Company', ?, 'system', ?, 'system')`)
       .run(stamp, stamp);
     const loc = db
-      .prepare(`INSERT INTO locations(name, country, created_at, created_by, updated_at, updated_by) VALUES('Location (edit me)', 'Saudi Arabia', ?, 'system', ?, 'system')`)
+      .prepare(`INSERT INTO locations(name, country, created_at, created_by, updated_at, updated_by) VALUES('Triple Bay, AMAALA', 'Saudi Arabia', ?, 'system', ?, 'system')`)
       .run(stamp, stamp);
     const prog = db
       .prepare(
         `INSERT INTO programmes(code, name, client_id, location_id, created_at, created_by, updated_at, updated_by)
-         VALUES('1TB01031', 'Programme 1TB01031 (edit me)', ?, ?, ?, 'system', ?, 'system')`,
+         VALUES('1TB01031', 'Marina Village (Programme 1 – Triple Bay)', ?, ?, ?, 'system', ?, 'system')`,
       )
       .run(client.lastInsertRowid, loc.lastInsertRowid, stamp, stamp);
     const asset = db
       .prepare(
         `INSERT INTO assets(programme_id, code, name, created_at, created_by, updated_at, updated_by)
-         VALUES(?, '1TB01031.01', 'Asset 1TB01031.01 (edit me)', ?, 'system', ?, 'system')`,
+         VALUES(?, '1TB01031.01', 'The Marina', ?, 'system', ?, 'system')`,
       )
       .run(prog.lastInsertRowid, stamp, stamp);
     setSetting(db, "current_programme_id", String(prog.lastInsertRowid));
@@ -310,4 +310,13 @@ function seed(db: Database.Database) {
       .run(start, end, label, stamp, stamp);
     setSetting(db, "current_period_id", String(r.lastInsertRowid));
   }
+
+  // Earlier versions seeded "(edit me)" placeholder names; give them their real names so no
+  // report or cover page ever prints the placeholder.
+  const rename = (table: string, from: string, to: string) => db.prepare(`UPDATE "${table}" SET name = ?, updated_at = ?, updated_by = 'system' WHERE name = ?`).run(to, stamp, from);
+  rename("clients", "Client (edit me)", "The AMAALA Company");
+  rename("locations", "Location (edit me)", "Triple Bay, AMAALA");
+  rename("programmes", "Programme 1TB01031 (edit me)", "Marina Village (Programme 1 – Triple Bay)");
+  rename("assets", "Asset 1TB01031.01 (edit me)", "The Marina");
+  for (const table of ["clients", "locations", "programmes", "assets"]) db.prepare(`UPDATE "${table}" SET name = TRIM(REPLACE(name, '(edit me)', '')) WHERE name LIKE '%(edit me)%'`).run();
 }

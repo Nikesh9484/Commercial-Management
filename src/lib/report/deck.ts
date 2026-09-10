@@ -212,7 +212,6 @@ export function buildDeck(d: ReportData): Deck {
   const push = (slide: DeckSlide | null) => {
     if (slide) slides.push(slide);
   };
-  const placeholder = (v: string) => /edit me|lorem|tbc|placeholder/i.test(v);
 
   /* 1. Title */
   slides.push({
@@ -221,7 +220,7 @@ export function buildDeck(d: ReportData): Deck {
     title: "Monthly Cost Report",
     subtitle: `${d.period.label} · cut-off ${meta.cutOff}`,
     blocks: [
-      { kind: "text", frame: { x: 0.9, y: 4.2, w: 8.5, h: 1.6 }, text: [d.programme.name, meta.asset, [d.client, d.location].filter((v) => v && !placeholder(v)).join(" · ")].filter(Boolean).join("\n") },
+      { kind: "text", frame: { x: 0.9, y: 4.2, w: 8.5, h: 1.6 }, text: [d.programme.name, meta.asset, [d.client, d.location].filter(Boolean).join(" · ")].filter(Boolean).join("\n") },
       { kind: "text", frame: { x: 0.9, y: 6.2, w: 11, h: 0.6 }, text: `${meta.status === "Issued" ? "Issued report" : "Draft – period not yet locked"} · prepared by the Commercial Management team · ${meta.generated}` },
     ],
   });

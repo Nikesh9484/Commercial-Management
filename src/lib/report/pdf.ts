@@ -197,8 +197,8 @@ function cover(ctx: Ctx) {
   };
   line("Programme", `${data.programme.code} · ${data.programme.name}`);
   line("Asset", data.asset ? `${data.asset.code} · ${data.asset.name}` : "");
-  line("Client", data.client);
-  line("Location", data.location);
+  if (data.client) line("Client", data.client);
+  if (data.location) line("Location", data.location);
   line("Report No", String(data.period.report_no));
   line("Cut-off date", formatDate(data.period.period_end));
   line("Aconex reference", String((data.period as unknown as { aconex_ref?: string }).aconex_ref ?? ""));

@@ -321,8 +321,8 @@ function coverSheet(wb: ExcelJS.Workbook, d: ReportData) {
   const rows: [string, string][] = [
     ["Programme", `${d.programme.code} · ${d.programme.name}`],
     ["Asset", d.asset ? `${d.asset.code} · ${d.asset.name}` : ""],
-    ["Client", d.client],
-    ["Location", d.location],
+    ...(d.client ? [["Client", d.client] as [string, string]] : []),
+    ...(d.location ? [["Location", d.location] as [string, string]] : []),
     ["Report No", String(d.period.report_no)],
     ["Period", `${formatDate(d.period.period_start)} – ${formatDate(d.period.period_end)}`],
     ["Aconex reference", p.aconex_ref ?? ""],
