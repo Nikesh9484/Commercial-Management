@@ -231,6 +231,16 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo): Promis
               input[f.key] = hit.id;
               continue;
             }
+            // match by code / ref when the dropdown label does not show it (e.g. an asset given as "1TB01031.01")
+            const tdef = getRegisterDef(target);
+            const codeField = tdef?.fields.find((x) => ["code", "ref", "reef_po_no", "item_no", "claim_no", "ew_no"].includes(x.key));
+            if (tdef && codeField) {
+              const byCode = db.prepare(`SELECT id FROM "${tdef.table}" WHERE lower(trim("${codeField.key}")) = ?`).get(want) as { id: number } | undefined;
+              if (byCode) {
+                input[f.key] = byCode.id;
+                continue;
+              }
+            }
             if (req.createMissingLookups && (target in AUTO_CREATE || target === "assets")) {
               const extra = target === "assets" ? { code: label, name: label, programme_id: programmeId } : AUTO_CREATE[target];
               const created = createRecord(getRegisterDef(target)!, { name: label, ...extra }, user, "import");

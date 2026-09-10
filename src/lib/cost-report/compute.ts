@@ -33,6 +33,7 @@ interface RawLine {
   section: string | null;
   sort_order: number | null;
   approved_baseline_budget: number | null;
+  opening_transfers: number | null;
 }
 
 /** Full cost report for a programme at a reporting period. */
@@ -47,7 +48,7 @@ export function computeCostReport(programmeId: number, periodId: number | null):
   const raw = db
     .prepare(
       `SELECT l.id, l.asset_id, a.code AS asset_code, a.name AS asset_name, l.code, l.package_id, p.name AS package, l.name,
-              c.name AS contractor, l.section, l.sort_order, l.approved_baseline_budget
+              c.name AS contractor, l.section, l.sort_order, l.approved_baseline_budget, l.opening_transfers
        FROM cost_lines l
        LEFT JOIN assets a ON a.id = l.asset_id
        LEFT JOIN packages p ON p.id = l.package_id
@@ -63,7 +64,7 @@ export function computeCostReport(programmeId: number, periodId: number | null):
   const lines: CostLineRow[] = raw.map((r) => {
     const g = (k: Map<number, number>) => round2(k.get(r.id) ?? 0);
     const E = round2(Number(r.approved_baseline_budget ?? 0));
-    const F = g(feeds.budgetTransfers);
+    const F = round2(g(feeds.budgetTransfers) + Number(r.opening_transfers ?? 0));
     const G = round2(E + F);
     const H = g(feeds.dvo);
     const I = round2(G + H);

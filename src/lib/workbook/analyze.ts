@@ -27,6 +27,7 @@ const SYNONYMS: Record<string, Record<string, string[]>> = {
     name: ["name", "cname", "descriptionofworks", "description", "scope", "title"],
     contractor_id: ["contractor", "dcontractor", "contractorsubcontractor", "subcontractor", "consultant", "supplier", "vendor"],
     approved_baseline_budget: ["approvedbaselinebudget", "baselinebudget", "approvedbudget", "originalbudget", "budget", "e"],
+    opening_transfers: ["budgettransfersbroughtforward", "budgettransfers", "transfers", "f"],
     section: ["section", "status", "committeduncommitted", "type"],
     asset_id: ["asset", "assetcode", "project"],
   },
@@ -295,6 +296,9 @@ function spans(header: string): Set<string> {
 
 /** Score how well a header matches a field: 3 exact label / synonym, 2 whole-word contains, 1 token overlap. */
 function matchScore(header: string, def: RegisterDef, f: FieldDef): number {
+  // A header may name the field directly in square brackets, e.g. "RFC date [rfc_date]" – used by the app's own templates.
+  const tagged = /\[([a-z0-9_]+)\]\s*$/i.exec(String(header).trim());
+  if (tagged) return tagged[1].toLowerCase() === f.key ? 4 : 0;
   const h = norm(header);
   if (!h) return 0;
   const label = norm(f.label);

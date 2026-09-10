@@ -158,7 +158,7 @@ export const contractors: RegisterDef = {
   defaultSort: { field: "name", dir: "asc" },
   fields: [
     { key: "name", label: "Name", type: "text", required: true, unique: true },
-    { key: "type", label: "Type", type: "select", required: true, options: ["Contractor", "Consultant", "Sub-contractor"], chip: true },
+    { key: "type", label: "Type", type: "select", required: true, options: ["Contractor", "Consultant", "Sub-contractor", "Supplier", "Insurer"], chip: true },
     { key: "reef_po_ref", label: "REEF PO ref", type: "text" },
     { key: "acc_ref", label: "ACC ref", type: "text" },
     { key: "package_id", label: "Package", type: "lookup", lookup: { register: "packages" } },

@@ -24,6 +24,7 @@ export const costLines: RegisterDef = {
     { key: "contractor_id", label: "Contractor / Sub-contractor", type: "lookup", lookup: { register: "contractors" } },
     { key: "section", label: "Section", type: "select", options: ["Committed", "Uncommitted"], required: true, defaultValue: "Committed", chip: true, help: "Committed = awarded contracts. Uncommitted = budgets not yet awarded." },
     { key: "approved_baseline_budget", label: "Approved Baseline Budget", type: "money", required: true, defaultValue: 0, help: "Column E. Budget transfers and change values are added automatically." },
+    { key: "opening_transfers", label: "Budget transfers brought forward", type: "money", defaultValue: 0, hideInTable: true, help: "Net budget transfers made before this app started (from your last Excel report). Added to column F together with transfers recorded in Budget Transfers." },
     { key: "sort_order", label: "Order", type: "number", defaultValue: 0, hideInTable: true },
     { key: "notes", label: "Notes", type: "textarea", hideInTable: true },
   ],
