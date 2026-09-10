@@ -102,6 +102,19 @@ function initSchema(db: Database.Database) {
       value TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS cashflow_cells (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      programme_id INTEGER NOT NULL,
+      contract_id INTEGER NOT NULL,
+      month TEXT NOT NULL,
+      forecast REAL,
+      actual_override REAL,
+      note TEXT,
+      updated_at TEXT,
+      updated_by TEXT,
+      UNIQUE(contract_id, month)
+    );
+
     CREATE TABLE IF NOT EXISTS report_checklist (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       period_id INTEGER NOT NULL,

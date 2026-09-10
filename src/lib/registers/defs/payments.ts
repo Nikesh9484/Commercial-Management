@@ -4,6 +4,7 @@ export const CONTRACT_STATUSES = ["Active", "Completed", "Suspended", "Terminate
 export const VAT_DEFAULT = 15;
 
 const SETTINGS = "Contract settings (used by the IPC log)";
+const CASHFLOW = "Cash flow coding";
 
 /** Module 8 – one row per contract. Values marked (auto) are calculated by src/lib/payments/compute.ts. */
 export const contracts: RegisterDef = {
@@ -50,6 +51,9 @@ export const contracts: RegisterDef = {
     { key: "ipc_days", label: "Days to issue IPC", type: "number", defaultValue: 28, section: SETTINGS, hideInTable: true, help: "Contractual days from the payment application to the IPC." },
     { key: "payment_days", label: "Days to pay", type: "number", defaultValue: 30, section: SETTINGS, hideInTable: true, help: "Contractual days from the IPC to payment." },
     { key: "vat_pct", label: "VAT %", type: "percent", defaultValue: VAT_DEFAULT, section: SETTINGS, hideInTable: true },
+    { key: "transaction_no", label: "Transaction No", type: "text", section: CASHFLOW, hideInTable: true, help: "Finance system transaction / commitment number." },
+    { key: "coding", label: "Coding", type: "text", section: CASHFLOW, hideInTable: true, help: "Account / cost coding." },
+    { key: "cbs", label: "CBS", type: "text", section: CASHFLOW, hideInTable: true, help: "Cost breakdown structure code." },
     { key: "notes", label: "Notes", type: "textarea", section: SETTINGS, hideInTable: true },
   ],
 };
