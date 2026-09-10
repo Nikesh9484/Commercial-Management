@@ -39,12 +39,17 @@ export interface CostLineRow extends Money {
   section: "Committed" | "Uncommitted";
   sort_order: number;
   prev_available: boolean;
+  /** Level 1 grouping, e.g. Professional Services / Construction Works. */
+  category: string;
+  /** A budget-hold line absorbs the changes, early warnings and claims of its asset + category. */
+  is_budget_hold: boolean;
 }
 
 export interface Level1Row extends Money {
   asset_id: number;
   asset_code: string;
   asset_name: string;
+  category: string;
   lines: number;
 }
 

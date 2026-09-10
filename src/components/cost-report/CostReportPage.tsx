@@ -150,6 +150,7 @@ export function CostReportPage({ canEdit, isAdmin }: { canEdit: boolean; isAdmin
                   <tr>
                     <th className="sticky left-0 z-[2] bg-[#f7f8fb]">Asset code</th>
                     <th>Asset</th>
+                    <th>Cost category</th>
                     <th className="text-right">Lines</th>
                     {MONEY_COLUMNS.map((c) => (
                       <ColHead key={c.key} col={c} />
@@ -159,22 +160,23 @@ export function CostReportPage({ canEdit, isAdmin }: { canEdit: boolean; isAdmin
                 <tbody>
                   {report.level1.length === 0 && (
                     <tr>
-                      <td colSpan={3 + MONEY_COLUMNS.length} className="py-10 text-center text-muted">
+                      <td colSpan={4 + MONEY_COLUMNS.length} className="py-10 text-center text-muted">
                         No cost lines yet. Add them on the Line setup tab.
                       </td>
                     </tr>
                   )}
                   {report.level1.map((r) => (
-                    <tr key={r.asset_id}>
+                    <tr key={`${r.asset_id}|${r.category}`}>
                       <td className="sticky left-0 z-[1] bg-white font-medium">{r.asset_code}</td>
                       <td>{r.asset_name}</td>
+                      <td>{r.category || <span className="text-muted">(no category)</span>}</td>
                       <td className="tnum text-right">{r.lines}</td>
                       <MoneyCells m={r} />
                     </tr>
                   ))}
-                  <TotalRow label="Total" m={report.level1Total} colSpan={3} strong />
+                  <TotalRow label="Total" m={report.level1Total} colSpan={4} strong />
                   <tr className={report.checkOk ? "text-emerald-700" : "bg-red-50 font-semibold text-red-700"}>
-                    <td className={`sticky left-0 z-[1] ${report.checkOk ? "bg-white" : "bg-red-50"}`} colSpan={3}>
+                    <td className={`sticky left-0 z-[1] ${report.checkOk ? "bg-white" : "bg-red-50"}`} colSpan={4}>
                       Check: Level 1 total − Level 2 total (must be zero)
                     </td>
                     {MONEY_COLUMNS.map((c) => (

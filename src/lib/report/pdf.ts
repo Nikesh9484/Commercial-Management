@@ -340,15 +340,16 @@ function costLevel1(ctx: Ctx) {
   const part = (title: string, keys: string[]) => {
     subheading(ctx, title, note);
     const cols: Col[] = [
-      { key: "asset_code", label: "Asset code", width: 1.2 },
-      { key: "asset_name", label: "Asset", width: 2 },
-      { key: "lines", label: "Lines", width: 0.6, align: "right" },
+      { key: "asset_code", label: "Asset code", width: 1.1 },
+      { key: "asset_name", label: "Asset", width: 1.5 },
+      { key: "category", label: "Cost category", width: 1.6 },
+      { key: "lines", label: "Lines", width: 0.55, align: "right" },
       ...moneyCols(keys),
     ];
     table(ctx, cols, rows as Record<string, unknown>[], { zebra: true, totals: [{ label: "Total", values: r.level1Total, labelKey: "asset_code" }, { label: "Check: L1 - L2 (must be zero)", values: r.check, labelKey: "asset_code", tone: r.checkOk ? "green" : "red" }] });
   };
-  part("By asset – columns E to I", ["E", "F", "G", "H", "I"]);
-  part("By asset – columns J to S", ["J", "K", "L", "M", "N", "O", "P", "Q", "R", "S"]);
+  part("By asset and cost category – columns E to I", ["E", "F", "G", "H", "I"]);
+  part("By asset and cost category – columns J to S", ["J", "K", "L", "M", "N", "O", "P", "Q", "R", "S"]);
 }
 
 function costLevel2(ctx: Ctx) {

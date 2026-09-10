@@ -28,6 +28,8 @@ const SYNONYMS: Record<string, Record<string, string[]>> = {
     contractor_id: ["contractor", "dcontractor", "contractorsubcontractor", "subcontractor", "consultant", "supplier", "vendor"],
     approved_baseline_budget: ["approvedbaselinebudget", "baselinebudget", "approvedbudget", "originalbudget", "budget", "e"],
     opening_transfers: ["budgettransfersbroughtforward", "budgettransfers", "transfers", "f"],
+    category_id: ["costcategory", "category", "subcategory", "level1group", "group"],
+    is_budget_hold: ["budgethold", "budgetholdline", "hold"],
     section: ["section", "status", "committeduncommitted", "type"],
     asset_id: ["asset", "assetcode", "project"],
   },

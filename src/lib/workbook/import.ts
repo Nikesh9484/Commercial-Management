@@ -100,6 +100,7 @@ const AUTO_CREATE: Record<string, Record<string, unknown>> = {
   change_categories: {},
   bond_types: {},
   ps_statuses: {},
+  cost_categories: {},
 };
 
 /** Match a workbook value to one of a dropdown's fixed options (case-insensitive, then partial). */

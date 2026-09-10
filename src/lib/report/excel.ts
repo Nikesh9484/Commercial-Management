@@ -146,12 +146,12 @@ function moneyValues(m: Money) {
 function costL1(ws: ExcelJS.Worksheet, d: ReportData) {
   const r = d.costReport;
   ws.addRow([`Schedule A – Cost Report Level 1 · ${d.period.label} · source: ${d.sources.cost_report}`]).font = { bold: true, size: 12, color: { argb: NAVY } };
-  header(ws.addRow(["Asset code", "Asset", "Lines", ...MONEY_COLUMNS.map((c) => `${c.key} ${c.label}`)]));
-  for (const l of r.level1) ws.addRow([l.asset_code, l.asset_name, l.lines, ...moneyValues(l)]);
-  bold(ws.addRow(["Total", "", r.lines.length, ...moneyValues(r.level1Total)]));
-  const chk = ws.addRow(["Check: L1 − L2 (must be zero)", "", "", ...moneyValues(r.check)]);
+  header(ws.addRow(["Asset code", "Asset", "Cost category", "Lines", ...MONEY_COLUMNS.map((c) => `${c.key} ${c.label}`)]));
+  for (const l of r.level1) ws.addRow([l.asset_code, l.asset_name, l.category, l.lines, ...moneyValues(l)]);
+  bold(ws.addRow(["Total", "", "", r.lines.length, ...moneyValues(r.level1Total)]));
+  const chk = ws.addRow(["Check: L1 − L2 (must be zero)", "", "", "", ...moneyValues(r.check)]);
   chk.font = { bold: true, color: { argb: r.checkOk ? "FF047857" : "FFB91C1C" } };
-  [14, 30, 8].forEach((w, i) => (ws.getColumn(i + 1).width = w));
+  [14, 26, 22, 8].forEach((w, i) => (ws.getColumn(i + 1).width = w));
   MONEY_COLUMNS.forEach((_, i) => {
     ws.getColumn(4 + i).width = 18;
     ws.getColumn(4 + i).numFmt = MONEY_FMT;

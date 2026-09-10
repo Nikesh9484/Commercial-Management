@@ -174,6 +174,7 @@ export const projectStages = simpleList("project_stages", "project_stages", "Pro
 export const changeCategories = simpleList("change_categories", "change_categories", "Change Categories", "Change Category", "Why the change happened.");
 export const bondTypes = simpleList("bond_types", "bond_types", "Insurance / Bond Types", "Insurance / Bond Type", "Types of bonds and insurance policies.");
 export const provisionalSumStatuses = simpleList("ps_statuses", "ps_statuses", "Provisional Sum Statuses", "Provisional Sum Status", "Statuses for provisional sums.");
+export const costCategories = simpleList("cost_categories", "cost_categories", "Cost Categories", "Cost Category", "Level 1 groups of the cost report, e.g. Professional Services, Construction Works. Order controls the Level 1 row order.");
 
 export const users: RegisterDef = {
   key: "users",
@@ -209,5 +210,6 @@ export const settingsRegisters: RegisterDef[] = [
   changeCategories,
   bondTypes,
   provisionalSumStatuses,
+  costCategories,
   users,
 ];

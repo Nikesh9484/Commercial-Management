@@ -34,6 +34,9 @@ interface RawLine {
   sort_order: number | null;
   approved_baseline_budget: number | null;
   opening_transfers: number | null;
+  category: string | null;
+  category_order: number | null;
+  is_budget_hold: number | null;
 }
 
 /** Full cost report for a programme at a reporting period. */
@@ -48,13 +51,15 @@ export function computeCostReport(programmeId: number, periodId: number | null):
   const raw = db
     .prepare(
       `SELECT l.id, l.asset_id, a.code AS asset_code, a.name AS asset_name, l.code, l.package_id, p.name AS package, l.name,
-              c.name AS contractor, l.section, l.sort_order, l.approved_baseline_budget, l.opening_transfers
+              c.name AS contractor, l.section, l.sort_order, l.approved_baseline_budget, l.opening_transfers,
+              cc.name AS category, cc.sort_order AS category_order, l.is_budget_hold
        FROM cost_lines l
        LEFT JOIN assets a ON a.id = l.asset_id
        LEFT JOIN packages p ON p.id = l.package_id
        LEFT JOIN contractors c ON c.id = l.contractor_id
+       LEFT JOIN cost_categories cc ON cc.id = l.category_id
        WHERE l.programme_id = ?
-       ORDER BY a.code, l.sort_order, l.code`,
+       ORDER BY a.code, cc.sort_order, l.sort_order, l.code`,
     )
     .all(programmeId) as RawLine[];
 
@@ -91,9 +96,12 @@ export function computeCostReport(programmeId: number, periodId: number | null):
       section: r.section === "Uncommitted" ? "Uncommitted" : "Committed",
       sort_order: r.sort_order ?? 0,
       prev_available: !!prevAfa,
+      category: r.category ?? "",
+      is_budget_hold: !!r.is_budget_hold,
       E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S,
     };
   });
+  applyBudgetHold(lines, prevAfa);
 
   return assembleReport(lines, {
     programme,
@@ -101,6 +109,30 @@ export function computeCostReport(programmeId: number, periodId: number | null):
     previousPeriod: prev ? { ...prev, snapshotAvailable: !!prevAfa } : null,
     feeds: status,
   });
+}
+
+/**
+ * Budget-hold lines (the unallocated remaining budget of an asset + category) absorb the changes,
+ * early warnings and claims of the other lines in that group, so the group's anticipated final
+ * account stays at the approved budget until the hold is used up – as in the Excel Schedule A.
+ */
+function applyBudgetHold(lines: CostLineRow[], prevAfa: Map<number, number> | null) {
+  const holds = lines.filter((l) => l.is_budget_hold);
+  for (const hold of holds) {
+    const others = lines.filter((l) => !l.is_budget_hold && l.asset_id === hold.asset_id && l.category === hold.category);
+    const sum = (k: "H" | "J" | "K" | "L" | "M") => round2(others.reduce((t, l) => t + l[k], 0));
+    hold.H = -sum("H");
+    hold.J = -sum("J");
+    hold.K = -sum("K");
+    hold.L = -sum("L");
+    hold.M = -sum("M");
+    hold.I = round2(hold.G + hold.H);
+    hold.N = round2(hold.I + hold.J + hold.K + hold.L + hold.M);
+    hold.O = round2(hold.N - hold.G);
+    hold.Q = round2(hold.N - hold.P);
+    hold.R = prevAfa ? round2(prevAfa.get(hold.id) ?? 0) : 0;
+    hold.S = round2(hold.N - hold.R);
+  }
 }
 
 /** Builds sections, totals, Level 1, the check line and the chart from a list of computed lines. */
@@ -111,14 +143,16 @@ export function assembleReport(lines: CostLineRow[], meta: Pick<CostReport, "pro
   });
   const grandTotal = sections.reduce((t, s) => addMoney(t, s.subtotal), zeroMoney());
 
-  const byAsset = new Map<number, Level1Row>();
+  // Level 1: one row per asset and cost category (lines keep the order of the categories in Settings)
+  const byGroup = new Map<string, Level1Row>();
   for (const l of lines) {
-    const row = byAsset.get(l.asset_id) ?? { asset_id: l.asset_id, asset_code: l.asset_code, asset_name: l.asset_name, lines: 0, ...zeroMoney() };
+    const key = `${l.asset_id}|${l.category}`;
+    const row = byGroup.get(key) ?? { asset_id: l.asset_id, asset_code: l.asset_code, asset_name: l.asset_name, category: l.category, lines: 0, ...zeroMoney() };
     addMoney(row, l);
     row.lines++;
-    byAsset.set(l.asset_id, row);
+    byGroup.set(key, row);
   }
-  const level1 = [...byAsset.values()].sort((a, b) => a.asset_code.localeCompare(b.asset_code));
+  const level1 = [...byGroup.values()];
   const level1Total = level1.reduce((t, r) => addMoney(t, r), zeroMoney());
   const check = zeroMoney();
   for (const c of MONEY_COLUMNS) check[c.key] = round2(level1Total[c.key] - grandTotal[c.key]);

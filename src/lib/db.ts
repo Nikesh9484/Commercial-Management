@@ -222,6 +222,7 @@ function seed(db: Database.Database) {
     stamp,
   );
   seedList(db, "ps_statuses", ["Approved", "Pending", "Expended", "Partially Expended", "Not Active"], stamp);
+  seedList(db, "cost_categories", ["Professional Services", "Management Supervision", "Commercial Management", "Early Works", "Construction Works", "Client Costs", "FF&E & OS&E"], stamp);
 
   // Example programme / asset so the top bar has something to show on day one.
   if (count(db, "programmes") === 0) {
