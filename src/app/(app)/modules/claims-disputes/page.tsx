@@ -10,6 +10,8 @@ import { formatMoney, formatNumber } from "@/lib/format";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Chip } from "@/components/ui/Chip";
 import { RegisterPage } from "@/components/register/RegisterPage";
+import { ExportButtons } from "@/components/ui/ExportButtons";
+import { FileText } from "lucide-react";
 
 export const metadata = { title: "Claims & Disputes" };
 
@@ -21,7 +23,20 @@ export default async function ClaimsPage() {
 
   return (
     <div className="space-y-5">
-      <PageHeader exportSection="claims" eyebrow={`Module ${mod.no}`} title={mod.title} subtitle="Schedule E: every claim with its notice compliance, detailed claim, assessment by each party and the determination." />
+      <PageHeader
+        exportSection="claims"
+        eyebrow={`Module ${mod.no}`}
+        title={mod.title}
+        subtitle="Schedule E: every claim with its notice compliance, detailed claim, assessment by each party and the determination."
+        actions={
+          ctx.period ? (
+            <span className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-2 py-1 shadow-sm" title="Executive claims status report for the month: headline figures, narrative, movement, open claims and actions">
+              <FileText size={14} className="text-navy" />
+              <ExportButtons section="claims_report" label="Claims status report" />
+            </span>
+          ) : undefined
+        }
+      />
 
       {summary && (
         <>

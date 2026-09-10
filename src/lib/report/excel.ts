@@ -1,5 +1,7 @@
+import { APP_NAME } from "../brand";
 import ExcelJS from "exceljs";
 import { executiveTotals } from "../cost-report/executive";
+import { buildClaimsReport } from "./claims-report";
 import type { ReportData } from "./data";
 import { REPORT_SCHEDULES } from "./schedules";
 import { MONEY_COLUMNS, type Money } from "../cost-report/columns";
@@ -22,12 +24,13 @@ const MONEY_FMT = "#,##0.00;[Red]-#,##0.00";
 /** One or more sections only, used by the "Download Excel" buttons on each page. */
 export async function renderSectionsExcel(data: ReportData, keys: string[]): Promise<Buffer> {
   const wb = new ExcelJS.Workbook();
-  wb.creator = "Commercial Dashboard";
+  wb.creator = APP_NAME;
   for (const raw of keys) {
     const k = raw.trim();
     if (k === "minutes") momSheet(wb, data);
     else if (k === "exec") execSheet(wb, data);
     else if (k === "movement") movementSheet(wb, data);
+    else if (k === "claims_report") claimsReportSheet(wb, data);
     else if (k === "level1") costL1(wb.addWorksheet("Level 1 - Executive"), data);
     else if (k === "level2") costL2(wb.addWorksheet("Level 2 - Detailed"), data);
     else if (k === "cashflow") cashflowSheet(wb.addWorksheet("Cash Flow"), data);
@@ -146,9 +149,73 @@ function paymentTrackerBlock(ws: ExcelJS.Worksheet, d: ReportData) {
   ws.addRow(["Certified = gross cumulative certified excl. VAT. Paid = net payments released. Late = after the contractual due date."]).font = { italic: true, size: 9 };
 }
 
+
+function claimsReportSheet(wb: ExcelJS.Workbook, d: ReportData) {
+  const r = buildClaimsReport(d);
+  const ws = wb.addWorksheet("Claims Status Report");
+  [12, 30, 60, 14, 16, 16, 16, 10, 10, 34, 22, 8, 8].forEach((w, i) => (ws.getColumn(i + 1).width = w));
+  ws.addRow([r.title]).font = { bold: true, size: 14, color: { argb: NAVY } };
+  ws.addRow([`${d.programme.code} · ${d.asset ? `${d.asset.code} ${d.asset.name}` : d.programme.name} · as at ${formatDate(r.asOf)}${d.locked ? "" : " · DRAFT"}`]).font = { italic: true };
+  ws.addRow([]);
+  const h = r.headline;
+  header(ws.addRow(["Headline", "Value", "Note"]));
+  const kp: [string, unknown, string][] = [
+    ["Claims recorded", h.total, `${h.pending} pending · ${h.approved} determined · ${h.rejected} rejected`],
+    ["Contractors with claims", h.contractors, ""],
+    ["Claimed (SAR)", h.claimedSar, `${h.eotClaimed} EOT days claimed`],
+    ["Determined (SAR)", h.determinedSar, `${h.eotGranted} days granted`],
+    ["Open exposure (SAR)", h.pendingSar, "gross value of pending claims"],
+    ["Carried in cost report (M)", h.costReportM, ""],
+    ["Late notices / late particulars", `${h.noticeLate} / ${h.detailLate}`, "later than 28 / 42 business days"],
+    ["Disputes", h.disputes, "Notice of Dissatisfaction / Dispute"],
+  ];
+  for (const [k, v, n] of kp) {
+    const row = ws.addRow([k, v, n]);
+    if (typeof v === "number" && /SAR|\(M\)/.test(k)) row.getCell(2).numFmt = MONEY_FMT;
+  }
+  ws.addRow([]);
+  ws.addRow(["Commercial narrative"]).font = { bold: true, size: 12, color: { argb: NAVY } };
+  for (const p of r.narrative) {
+    ws.addRow([p.heading]).font = { bold: true };
+    const row = ws.addRow([p.text]);
+    ws.mergeCells(row.number, 1, row.number, 10);
+    row.alignment = { wrapText: true, vertical: "top" };
+    row.height = Math.min(120, 15 * Math.ceil(p.text.length / 150));
+  }
+  if (r.movement) {
+    ws.addRow([]);
+    ws.addRow([r.movement.label]).font = { bold: true, size: 12, color: { argb: NAVY } };
+    if (!r.movement.items.length) ws.addRow(["No movement in the claims register."]);
+    for (const it of r.movement.items) ws.addRow([`• ${it}`]);
+  }
+  if (r.attention.length) {
+    ws.addRow([]);
+    ws.addRow(["Items requiring attention"]).font = { bold: true, size: 12, color: { argb: "FF7C2D12" } };
+    for (const it of r.attention) ws.addRow([`• ${it}`]);
+  }
+  ws.addRow([]);
+  ws.addRow(["Claims register at cut-off"]).font = { bold: true, size: 12, color: { argb: NAVY } };
+  header(ws.addRow(["Ref", "Contractor", "Claim", "Type", "Claimed SAR", "Assessed SAR", "Determined SAR", "EOT claimed", "EOT granted", "Stage / next step", "Action with", "Days", "Notice", "Status", "Package"]));
+  for (const c of r.claims) {
+    const row = ws.addRow([c.claim_no, c.contractor, c.description, c.type, c.claimedSar, c.assessedSar, c.determinedSar, c.eotClaimed, c.eotGranted, c.stage, c.actionWith, c.daysSinceReceipt, c.notice, c.status, c.package]);
+    [5, 6, 7].forEach((i) => (row.getCell(i).numFmt = MONEY_FMT));
+    if (c.status === "Pending") row.getCell(14).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEF3C7" } };
+  }
+  const t = ws.addRow(["TOTAL", "", "", "", h.claimedSar, null, h.determinedSar, h.eotClaimed, h.eotGranted]);
+  bold(t);
+  [5, 7].forEach((i) => (t.getCell(i).numFmt = MONEY_FMT));
+  ws.addRow([]);
+  ws.addRow(["By contractor"]).font = { bold: true, size: 12, color: { argb: NAVY } };
+  header(ws.addRow(["Contractor / consultant", "Claims", "Pending", "Claimed SAR", "Determined SAR", "EOT claimed", "EOT granted"]));
+  for (const c of r.byContractor) {
+    const row = ws.addRow([c.contractor, c.claims, c.pending, c.claimedSar, c.determinedSar, c.eotClaimed, c.eotGranted]);
+    [4, 5].forEach((i) => (row.getCell(i).numFmt = MONEY_FMT));
+  }
+}
+
 export async function renderMonthlyReportExcel(data: ReportData): Promise<Buffer> {
   const wb = new ExcelJS.Workbook();
-  wb.creator = "Commercial Dashboard";
+  wb.creator = APP_NAME;
   coverSheet(wb, data);
   indexSheet(wb, data);
   momSheet(wb, data);

@@ -1,6 +1,7 @@
 import type { ReportData } from "./data";
 import { executiveTotals } from "../cost-report/executive";
 import { formatDate, formatMoney } from "../format";
+import { APP_NAME } from "../brand";
 
 /**
  * "Email the Report": a short summary (table + text) of the month, ready to paste into or open as an
@@ -101,7 +102,7 @@ ${
 <h3 style="font-size:14px;margin:16px 0 4px 0;color:#0f2b4c">Open items at cut-off</h3>
 <ul style="margin:0;padding-left:18px">${openItems.map((i) => `<li>${esc(i)}</li>`).join("")}</ul>
 ${keyIssues ? `<h3 style="font-size:14px;margin:16px 0 4px 0;color:#0f2b4c">Key issues this period</h3><p style="white-space:pre-wrap">${esc(keyIssues)}</p>` : ""}
-<p>Full detail is in the attached PDFs and on the Commercial Dashboard.</p>
+<p>Full detail is in the attached PDFs and on ${esc(APP_NAME)}.</p>
 <p>Kind regards,<br><b>${esc(sender.name)}</b><br>Commercial Management – ${esc(assetName)}</p>
 </div>`;
 
@@ -121,7 +122,7 @@ ${keyIssues ? `<h3 style="font-size:14px;margin:16px 0 4px 0;color:#0f2b4c">Key 
     ...openItems.map((i) => `- ${i}`),
     "",
     ...(keyIssues ? ["Key issues this period:", keyIssues, ""] : []),
-    "Full detail is in the attached PDFs and on the Commercial Dashboard.",
+    `Full detail is in the attached PDFs and on ${APP_NAME}.`,
     "",
     "Kind regards,",
     sender.name,

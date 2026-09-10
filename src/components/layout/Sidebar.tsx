@@ -23,6 +23,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { modules } from "@/lib/modules";
+import { APP_SHORT, APP_SUBTITLE } from "@/lib/brand";
 import type { Role } from "@/lib/registers/types";
 
 const ICONS: Record<string, LucideIcon> = {
@@ -71,8 +72,11 @@ export function Sidebar({ open, onClose, role }: { open: boolean; onClose: () =>
       >
         <div className="flex h-14 items-center justify-between border-b border-white/10 px-4">
           <Link href="/" className="flex items-center gap-2" onClick={onClose}>
-            <span className="grid h-8 w-8 place-items-center rounded-lg bg-accent text-sm font-bold">CD</span>
-            <span className="text-sm font-semibold tracking-wide">Commercial Dashboard</span>
+            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-accent text-sm font-bold">TM</span>
+            <span className="leading-tight">
+              <span className="block text-sm font-semibold tracking-wide">{APP_SHORT}</span>
+              <span className="block text-[11px] text-blue-100/80">{APP_SUBTITLE}</span>
+            </span>
           </Link>
           <button className="rounded p-1 text-blue-100 hover:bg-white/10 lg:hidden" onClick={onClose} aria-label="Close menu">
             <X size={18} />

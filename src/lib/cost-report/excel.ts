@@ -1,3 +1,4 @@
+import { APP_NAME } from "../brand";
 import ExcelJS from "exceljs";
 import { MONEY_COLUMNS, type CostReport, type Money } from "./compute";
 import { formatDate, todayIso } from "../format";
@@ -6,7 +7,7 @@ const NAVY = "FF0F2B4C";
 
 export async function exportCostReport(report: CostReport): Promise<Buffer> {
   const wb = new ExcelJS.Workbook();
-  wb.creator = "Commercial Dashboard";
+  wb.creator = APP_NAME;
   level1Sheet(wb, report);
   level2Sheet(wb, report);
   return Buffer.from(await wb.xlsx.writeBuffer());

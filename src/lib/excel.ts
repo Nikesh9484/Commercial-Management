@@ -1,3 +1,4 @@
+import { APP_NAME } from "./brand";
 import ExcelJS from "exceljs";
 import type { FieldDef, RegisterDef, RecordRow, UserInfo } from "./registers/types";
 import { listRecords, lookupOptions, createRecord, updateRecord, getRecord, ValidationError } from "./registers/engine";
@@ -13,7 +14,7 @@ function exportFields(def: RegisterDef): FieldDef[] {
 /** Builds an .xlsx workbook with all rows of a register (dates as DD-MMM-YY, money with 2 decimals). */
 export async function exportRegister(def: RegisterDef): Promise<Buffer> {
   const wb = new ExcelJS.Workbook();
-  wb.creator = "Commercial Dashboard";
+  wb.creator = APP_NAME;
   const ws = wb.addWorksheet(def.title.slice(0, 31));
   const fields = exportFields(def);
   ws.columns = [

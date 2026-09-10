@@ -5,6 +5,8 @@ import { REPORT_SCHEDULES } from "./schedules";
 import { MONEY_COLUMNS, type Money } from "../cost-report/columns";
 import { formatMoney, formatDate, formatNumber, formatPercent, formatDateTime } from "../format";
 import type { FieldDef } from "../registers/types";
+import { APP_NAME } from "../brand";
+import { buildClaimsReport } from "./claims-report";
 
 type Doc = PDFKit.PDFDocument;
 
@@ -39,6 +41,7 @@ export function resolveSections(keys: string[]): { title: string; run: (ctx: Ctx
     if (k === "minutes") out.push({ title: "Minutes of Meeting", run: minutes });
     else if (k === "exec") out.push({ title: "Executive Summary", run: executiveSummary });
     else if (k === "movement") out.push({ title: "Movement since the previous report", run: movementSection });
+    else if (k === "claims_report") out.push({ title: "Claims Status Report", run: claimsStatusReport });
     else if (k === "level1") out.push({ title: "Schedule A – Cost Report Level 1 (Executive)", run: costLevel1 });
     else if (k === "level2") out.push({ title: "Schedule B – Cost Report Level 2 (Detailed)", run: costLevel2 });
     else if (k === "cashflow") out.push({ title: "Schedule I – Cash Flow", run: cashflow });
@@ -64,7 +67,7 @@ export function resolveSections(keys: string[]): { title: string; run: (ctx: Ctx
 /** One or more sections only (no cover / index): used by the "Download PDF" buttons on each page. */
 export async function renderSectionsPdf(data: ReportData, keys: string[]): Promise<Buffer> {
   const parts = resolveSections(keys);
-  const doc = new PDFDocument({ size: "A4", layout: "landscape", margin: PAGE.margin, bufferPages: true, info: { Title: `${data.period.label} – ${parts.map((p) => p.title).join(", ")}`, Author: "Commercial Dashboard" } });
+  const doc = new PDFDocument({ size: "A4", layout: "landscape", margin: PAGE.margin, bufferPages: true, info: { Title: `${data.period.label} – ${parts.map((p) => p.title).join(", ")}`, Author: APP_NAME } });
   const chunks: Buffer[] = [];
   doc.on("data", (c: Buffer) => chunks.push(c));
   const done = new Promise<Buffer>((resolve) => doc.on("end", () => resolve(Buffer.concat(chunks))));
@@ -86,7 +89,7 @@ export async function renderSectionsPdf(data: ReportData, keys: string[]): Promi
 }
 
 export async function renderMonthlyReportPdf(data: ReportData): Promise<Buffer> {
-  const doc = new PDFDocument({ size: "A4", layout: "landscape", margin: PAGE.margin, bufferPages: true, info: { Title: `${data.period.label} – ${data.programme.code}`, Author: "Commercial Dashboard" } });
+  const doc = new PDFDocument({ size: "A4", layout: "landscape", margin: PAGE.margin, bufferPages: true, info: { Title: `${data.period.label} – ${data.programme.code}`, Author: APP_NAME } });
   const chunks: Buffer[] = [];
   doc.on("data", (c: Buffer) => chunks.push(c));
   const done = new Promise<Buffer>((resolve) => doc.on("end", () => resolve(Buffer.concat(chunks))));
@@ -216,7 +219,7 @@ function cover(ctx: Ctx) {
     doc.fillColor("#cfe0f5").font("Helvetica").fontSize(9).text(date ? formatDate(date) : "Date: ____________", x + 10, y + 50);
     x += w + 16;
   }
-  doc.fillColor("#9fb8d8").font("Helvetica").fontSize(8).text(`Generated ${formatDateTime(data.generatedAt)} by Commercial Dashboard · all amounts SAR`, 70, PAGE.height - 50);
+  doc.fillColor("#9fb8d8").font("Helvetica").fontSize(8).text(`Generated ${formatDateTime(data.generatedAt)} by ${APP_NAME} · all amounts SAR`, 70, PAGE.height - 50);
 }
 
 /* ------------------------------------------------------------------ */
@@ -557,6 +560,110 @@ function paymentTrackerSection(ctx: Ctx) {
     rows as unknown as Record<string, unknown>[],
     { zebra: true },
   );
+}
+
+
+/* ------------------------------------------------------------------ */
+/* Claims Status Report (executive)                                    */
+
+function claimsStatusReport(ctx: Ctx) {
+  const { doc, data } = ctx;
+  const r = buildClaimsReport(data);
+  const h = r.headline;
+  const sar = (n: number) => formatMoney(n);
+  const kpis: [string, string, string][] = [
+    ["Claims recorded", String(h.total), `${h.pending} pending · ${h.approved} determined · ${h.rejected} rejected`],
+    ["Contractors with claims", String(h.contractors), ""],
+    ["Claimed (SAR)", sar(h.claimedSar), `${h.eotClaimed} EOT days claimed`],
+    ["Determined (SAR)", sar(h.determinedSar), `${h.claimedSar ? Math.round((h.determinedSar / h.claimedSar) * 100) : 0}% of value · ${h.eotGranted} days granted`],
+    ["Open exposure (SAR)", sar(h.pendingSar), "gross value of pending claims"],
+    ["Carried in cost report (M)", sar(h.costReportM), "determined / assessed amounts"],
+    ["Late notices / particulars", `${h.noticeLate} / ${h.detailLate}`, "later than 28 / 42 business days"],
+    ["Disputes", String(h.disputes), "Notice of Dissatisfaction / Dispute"],
+  ];
+  const cw = (PAGE.width - PAGE.margin * 2 - 3 * 10) / 4;
+  let x = PAGE.margin;
+  let y = doc.y;
+  kpis.forEach((k, i) => {
+    doc.rect(x, y, cw, 52).fillAndStroke("#ffffff", LINE);
+    doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(k[0].toUpperCase(), x + 8, y + 7, { width: cw - 16 });
+    doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(12).text(k[1], x + 8, y + 20, { width: cw - 16 });
+    doc.fillColor(MUTED).font("Helvetica").fontSize(7).text(k[2], x + 8, y + 37, { width: cw - 16 });
+    x += cw + 10;
+    if (i === 3) {
+      x = PAGE.margin;
+      y += 62;
+    }
+  });
+  doc.y = y + 62;
+  doc.x = PAGE.margin;
+
+  const width = PAGE.width - PAGE.margin * 2;
+  subheading(ctx, "Commercial narrative");
+  for (const p of r.narrative) {
+    ensureSpace(ctx, 50);
+    doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(9.5).text(p.heading, { width });
+    doc.fillColor("#172033").font("Helvetica").fontSize(9.5).text(p.text, { width, lineGap: 1.5 });
+    doc.moveDown(0.5);
+  }
+  if (r.movement) {
+    subheading(ctx, r.movement.label);
+    if (!r.movement.items.length) doc.fillColor(MUTED).font("Helvetica").fontSize(9).text("No movement in the claims register.");
+    for (const it of r.movement.items) {
+      ensureSpace(ctx, 14);
+      doc.fillColor("#172033").font("Helvetica").fontSize(9).text(`•  ${it}`, { width, indent: 0 });
+    }
+    doc.moveDown(0.4);
+  }
+  if (r.attention.length) {
+    subheading(ctx, "Items requiring attention");
+    for (const it of r.attention) {
+      ensureSpace(ctx, 14);
+      doc.fillColor("#7c2d12").font("Helvetica").fontSize(9).text(`•  ${it}`, { width });
+    }
+    doc.moveDown(0.4);
+  }
+
+  subheading(ctx, "Claims register at cut-off", "Pending claims first, largest value first. Days = days since the (detailed) claim was received, pending claims only.");
+  const money = (v: unknown) => (v === null || v === undefined ? "" : formatMoney(v as number));
+  table(
+    ctx,
+    [
+      { key: "claim_no", label: "Ref", width: 0.8 },
+      { key: "contractor", label: "Contractor", width: 1.6 },
+      { key: "description", label: "Claim", width: 3.2 },
+      { key: "type", label: "Type", width: 0.9 },
+      { key: "claimedSar", label: "Claimed SAR", width: 1.2, align: "right", format: money },
+      { key: "assessedSar", label: "Assessed SAR", width: 1.2, align: "right", format: money },
+      { key: "determinedSar", label: "Determined SAR", width: 1.2, align: "right", format: money },
+      { key: "eot", label: "EOT days cl./gr.", width: 0.9, align: "right" },
+      { key: "status", label: "Status", width: 0.8 },
+      { key: "stage", label: "Stage / next step", width: 2 },
+      { key: "actionWith", label: "Action with", width: 1.1 },
+      { key: "daysSinceReceipt", label: "Days", width: 0.5, align: "right" },
+      { key: "notice", label: "Notice", width: 0.5 },
+    ],
+    r.claims.map((c) => ({ ...c, eot: c.eotClaimed === null && c.eotGranted === null ? "" : `${c.eotClaimed ?? "–"} / ${c.eotGranted ?? "–"}` })) as unknown as Record<string, unknown>[],
+    { zebra: true, totalRow: { claim_no: "TOTAL", claimedSar: formatMoney(h.claimedSar), determinedSar: formatMoney(h.determinedSar), eot: `${h.eotClaimed} / ${h.eotGranted}` } },
+  );
+
+  subheading(ctx, "By contractor");
+  table(
+    ctx,
+    [
+      { key: "contractor", label: "Contractor / consultant", width: 3 },
+      { key: "claims", label: "Claims", width: 0.8, align: "right" },
+      { key: "pending", label: "Pending", width: 0.8, align: "right" },
+      { key: "claimedSar", label: "Claimed SAR", width: 1.5, align: "right", format: money },
+      { key: "determinedSar", label: "Determined SAR", width: 1.5, align: "right", format: money },
+      { key: "eotClaimed", label: "EOT claimed (days)", width: 1.2, align: "right" },
+      { key: "eotGranted", label: "EOT granted (days)", width: 1.2, align: "right" },
+    ],
+    r.byContractor as unknown as Record<string, unknown>[],
+    { zebra: true },
+  );
+  doc.moveDown(0.5);
+  doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(`Prepared from the Claims & Disputes register of ${APP_NAME} as at ${formatDate(r.asOf)}${data.locked ? "" : " (draft – period not locked)"}. Claimed = contractor's claim; assessed = Employer's assessment, else Engineer's recommendation; determined = determination or agreement.`, { width });
 }
 
 /* ------------------------------------------------------------------ */
