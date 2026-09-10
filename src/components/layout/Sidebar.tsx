@@ -15,8 +15,8 @@ import {
   ArrowLeftRight,
   LayoutDashboard,
   FileDown,
+  FileText,
   Settings,
-  Home,
   History,
   X,
   type LucideIcon,
@@ -41,7 +41,7 @@ const ICONS: Record<string, LucideIcon> = {
 
 export function Sidebar({ open, onClose, role }: { open: boolean; onClose: () => void; role: Role }) {
   const pathname = usePathname();
-  const isActive = (href: string) => (href === "/" ? pathname === "/" : pathname.startsWith(href));
+  const isActive = (href: string) => (href === "/" ? pathname === "/" || pathname === "/modules/executive-summary" : pathname.startsWith(href));
 
   const link = (href: string, label: string, Icon: LucideIcon, badge?: string) => (
     <Link
@@ -76,9 +76,13 @@ export function Sidebar({ open, onClose, role }: { open: boolean; onClose: () =>
           </button>
         </div>
         <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 py-3">
-          {link("/", "Home", Home)}
-          <div className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider text-blue-200/50">Modules</div>
-          {modules.map((m) => link(`/modules/${m.slug}`, m.short, ICONS[m.icon] ?? ClipboardList, String(m.no)))}
+          <div className="px-3 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-wider text-blue-200/50">Modules</div>
+          {modules.map((m) => (
+            <div key={m.slug}>
+              {link(m.slug === "executive-summary" ? "/" : `/modules/${m.slug}`, m.short, ICONS[m.icon] ?? ClipboardList, String(m.no))}
+              {m.slug === "executive-summary" && <div className="pl-4">{link("/modules/executive-summary/minutes", "Minutes of Meeting", FileText)}</div>}
+            </div>
+          ))}
           <div className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider text-blue-200/50">System</div>
           {link("/activity", "Change history", History)}
           {link("/settings", role === "viewer" ? "Reference data" : "Settings", Settings)}

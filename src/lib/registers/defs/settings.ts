@@ -121,6 +121,7 @@ export const reportingPeriods: RegisterDef = {
     { key: "reviewed_date", label: "Reviewed date", type: "date", hideInTable: true },
     { key: "approved_by", label: "Approved by", type: "text", hideInTable: true },
     { key: "approved_date", label: "Approved date", type: "date", hideInTable: true },
+    { key: "key_issues", label: "Key issues this period", type: "textarea", hideInTable: true, help: "Shown on the Executive Summary." },
     { key: "notes", label: "Notes", type: "textarea", hideInTable: true },
   ],
 };

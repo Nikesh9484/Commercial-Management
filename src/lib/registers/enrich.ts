@@ -42,6 +42,22 @@ export function enrichRows(def: RegisterDef, rows: RecordRow[]) {
       }
     }
   }
+  if (def.key === "actions") {
+    const today = todayIso();
+    for (const r of rows) {
+      const due = r.due_date as string | null;
+      if (due && r.status !== "Closed") {
+        const d = daysBetween(today, due);
+        r.days_to_due = d;
+        r.days_to_due__tone = d < 0 ? "red" : d <= 7 ? "amber" : null;
+        r.__row_tone = d < 0 ? "red" : null;
+      } else {
+        r.days_to_due = null;
+        r.days_to_due__tone = null;
+        r.__row_tone = null;
+      }
+    }
+  }
   if (def.key === "budget_transfers" && rows.length) {
     const resolved = new Map(resolveTransfers(getDb(), Number(rows[0].programme_id)).map((t) => [t.id, t]));
     for (const r of rows) {

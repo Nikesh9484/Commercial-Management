@@ -6,7 +6,7 @@ import { AuthError } from "@/lib/auth";
 type Ctx = { params: Promise<{ id: string }> };
 
 /** Report-control fields that Editors may fill in (the rest of the period stays Admin-only). */
-const CONTROL_FIELDS = ["aconex_ref", "prepared_by", "prepared_date", "reviewed_by", "reviewed_date", "approved_by", "approved_date", "notes"];
+const CONTROL_FIELDS = ["aconex_ref", "prepared_by", "prepared_date", "reviewed_by", "reviewed_date", "approved_by", "approved_date", "notes", "key_issues"];
 
 export async function PUT(req: Request, ctx: Ctx) {
   return withUser<Ctx>(async (user, { params }) => {

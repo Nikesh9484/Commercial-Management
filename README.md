@@ -136,7 +136,7 @@ Every register has **Export** (all rows, formatted) and **Import**:
 | 8 | Invoice & Payment Tracking | **built** – contract summary with auto VOs/claims/revised value, IPC log with due dates & days late, chart, feeds cost report P |
 | 9 | Cash Flow | **built** – monthly forecast grid per contract, actuals from payments with override, cumulative chart, accruals, Excel export |
 | 10 | Budget Transfers | **built** – from/to package transfers, approved ones feed cost report column F, net movement by package |
-| 11 | Executive Summary & Minutes of Meeting | placeholder |
+| 11 | Executive Summary & Minutes of Meeting | **built** – dashboard home page with KPI cards, counts, charts, key issues, actions; meetings with carried-forward items |
 | 12 | Monthly Report Export (PDF / Excel) | placeholder |
 
 Built so far: login and roles, left menu and top bar (Programme / Asset / Reporting Period), Settings

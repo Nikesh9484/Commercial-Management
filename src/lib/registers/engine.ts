@@ -282,6 +282,20 @@ function applyRules(def: RegisterDef, prepared: Prepared, mode: "create" | "upda
       }
     }
   }
+  if (def.key === "actions" && mode === "create" && (prepared.values.item_no === null || prepared.values.item_no === undefined || prepared.values.item_no === "")) {
+    const db = getDb();
+    const meetingId = prepared.values.meeting_id as number | null | undefined;
+    const meeting = meetingId ? (db.prepare("SELECT meeting_no FROM meetings WHERE id = ?").get(meetingId) as { meeting_no: string } | undefined) : undefined;
+    const prefix = meeting?.meeting_no ?? "A";
+    let n = 1;
+    let candidate = `${prefix}-${String(n).padStart(2, "0")}`;
+    while (db.prepare("SELECT 1 FROM actions WHERE item_no = ? COLLATE NOCASE").get(candidate)) {
+      n++;
+      candidate = `${prefix}-${String(n).padStart(2, "0")}`;
+    }
+    prepared.values.item_no = candidate;
+    prepared.display.item_no = candidate;
+  }
   if (def.key === "budget_transfers") {
     const v = (k: string) => (k in prepared.values ? prepared.values[k] : existing?.[k]);
     if (v("from_package_id") && v("to_package_id") && Number(v("from_package_id")) === Number(v("to_package_id"))) {

@@ -21,7 +21,7 @@ export const modules: ModuleInfo[] = [
   { no: 8, slug: "invoices-payments", title: "Invoice & Payment Tracking", short: "Invoices & Payments", icon: "Receipt", description: "Payment applications, certified amounts, retention and payment status per contractor." },
   { no: 9, slug: "cash-flow", title: "Cash Flow", short: "Cash Flow", icon: "TrendingUp", description: "Planned vs actual monthly cash flow and forecast to completion." },
   { no: 10, slug: "budget-transfers", title: "Budget Transfers", short: "Budget Transfers", icon: "ArrowLeftRight", description: "Movements of budget between packages / cost codes with approval trail." },
-  { no: 11, slug: "executive-summary", title: "Executive Summary & Minutes of Meeting", short: "Executive Summary", icon: "LayoutDashboard", description: "Headline KPIs, commentary for directors and minutes of commercial meetings." },
+  { no: 11, slug: "executive-summary", title: "Executive Summary & Minutes of Meeting", short: "Executive Summary", icon: "LayoutDashboard", description: "Headline KPIs, key issues, open actions and charts for directors, plus minutes of commercial meetings." },
   { no: 12, slug: "monthly-report", title: "Monthly Report Export", short: "Monthly Report", icon: "FileDown", description: "Generate the monthly commercial report as PDF / Excel from the locked period." },
 ];
 

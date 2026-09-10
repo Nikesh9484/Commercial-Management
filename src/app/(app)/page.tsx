@@ -1,82 +1,155 @@
 import Link from "next/link";
-import { ArrowRight, Lock, Unlock } from "lucide-react";
+import { Lock, Unlock, AlertTriangle } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth";
 import { getAppContext } from "@/lib/context";
-import { modules } from "@/lib/modules";
-import { formatDate } from "@/lib/format";
+import { getDb } from "@/lib/db";
+import { getDashboard } from "@/lib/dashboard/summary";
+import { formatMoney, formatDate } from "@/lib/format";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Chip } from "@/components/ui/Chip";
-import { getDb } from "@/lib/db";
-import { getChecklist } from "@/lib/checklist";
+import { CostChart } from "@/components/cost-report/CostChart";
+import { PaymentChart } from "@/components/payments/PaymentChart";
+import { ExpiringSoonCard } from "@/components/bonds/ExpiringSoonCard";
+import { KeyIssues } from "@/components/dashboard/KeyIssues";
+import { ActionsList } from "@/components/dashboard/ActionsList";
+
+export const metadata = { title: "Executive Summary" };
 
 export default async function HomePage() {
   const user = (await getCurrentUser())!;
   const ctx = getAppContext();
-  const db = getDb();
-  const checklist = ctx.period ? getChecklist(ctx.period.id) : [];
-  const done = checklist.filter((c) => c.done).length;
-  const users = (db.prepare("SELECT COUNT(*) AS n FROM users WHERE active = 1").get() as { n: number }).n;
+  if (!ctx.programme) {
+    return (
+      <div>
+        <PageHeader title="Executive Summary" />
+        <div className="card flex items-center gap-2 p-5 text-sm text-muted">
+          <AlertTriangle size={16} /> Add a programme under Settings and select it in the top bar.
+        </div>
+      </div>
+    );
+  }
+  const d = getDashboard(getDb(), ctx.programme.id, ctx.period?.id ?? null);
+  const g = d.report.grandTotal;
+  const canEdit = user.role !== "viewer";
+
+  const money: { label: string; value: number; sub?: string; signed?: boolean; col: string }[] = [
+    { label: "Approved Budget", value: g.E, col: "E" },
+    { label: "Latest Budget", value: g.G, col: "G", sub: `incl. transfers ${formatMoney(g.F)}` },
+    { label: "Committed", value: g.I, col: "I", sub: `incl. DVOs ${formatMoney(g.H)}` },
+    { label: "Anticipated Final Account", value: g.N, col: "N", sub: `PVO/RFC/EW/claims ${formatMoney(g.J + g.K + g.L + g.M)}` },
+    { label: "Variance to Latest Budget", value: g.O, col: "O", signed: true, sub: g.O > 0 ? "over budget" : g.O < 0 ? "under budget" : "on budget" },
+    { label: "Certified to Date", value: g.P, col: "P", sub: g.N ? `${Math.round((g.P / g.N) * 100)}% of anticipated final account` : undefined },
+    { label: "Works to Complete", value: g.Q, col: "Q" },
+    { label: "Period Movement", value: g.S, col: "S", signed: true, sub: d.report.previousPeriod ? (d.report.previousPeriod.snapshotAvailable ? `vs ${d.report.previousPeriod.label}` : "previous period not locked") : "no previous period" },
+  ];
 
   return (
-    <div>
+    <div className="space-y-5">
       <PageHeader
-        eyebrow={ctx.programme ? `${ctx.programme.code} · ${ctx.asset?.code ?? ""}` : undefined}
-        title={`Welcome, ${user.name.split(" ")[0]}`}
-        subtitle="Your monthly commercial report, one module at a time."
-      />
-
-      <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Stat label="Programme" value={ctx.programme?.name ?? "Not set"} sub={ctx.programme?.code} />
-        <Stat label="Asset" value={ctx.asset?.name ?? "Not set"} sub={ctx.asset?.code} />
-        <Stat
-          label="Reporting period"
-          value={ctx.period?.label ?? "Not set"}
-          sub={ctx.period ? `Cut-off ${formatDate(ctx.period.period_end)}` : undefined}
-          chip={
-            ctx.period ? (
+        eyebrow={`${ctx.programme.code} · ${ctx.asset?.code ?? ""} · Module 11`}
+        title="Executive Summary"
+        subtitle={`${ctx.period?.label ?? "No reporting period"}${ctx.period ? ` · cut-off ${formatDate(ctx.period.period_end)}` : ""} · all amounts SAR`}
+        actions={
+          <>
+            {ctx.period && (
               <Chip tone={ctx.period.status === "Locked" ? "green" : "amber"}>
                 {ctx.period.status === "Locked" ? <Lock size={11} className="mr-1" /> : <Unlock size={11} className="mr-1" />}
                 {ctx.period.status}
               </Chip>
-            ) : undefined
-          }
-        />
-        <Stat
-          label="Report checklist"
-          value={checklist.length ? `${done} of ${checklist.length} modules done` : "No period yet"}
-          sub={`${users} active user(s)`}
-          chip={checklist.length ? <Chip tone={done === checklist.length ? "green" : done > 0 ? "amber" : "red"}>{Math.round((done / checklist.length) * 100)}%</Chip> : undefined}
-        />
-      </div>
+            )}
+            {d.checklist.total > 0 && (
+              <Link href="/modules/project-setup">
+                <Chip tone={d.checklist.done === d.checklist.total ? "green" : d.checklist.done > 0 ? "amber" : "red"}>
+                  Checklist {d.checklist.done}/{d.checklist.total}
+                </Chip>
+              </Link>
+            )}
+            <Chip tone={d.report.checkOk ? "green" : "red"}>L1 − L2 check {d.report.checkOk ? "OK" : "FAILED"}</Chip>
+          </>
+        }
+      />
 
-      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Modules</h2>
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        {modules.map((m) => (
-          <Link key={m.slug} href={`/modules/${m.slug}`} className="card group flex items-start gap-3 p-4 transition hover:border-accent">
-            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-navy/5 text-sm font-semibold text-navy">{m.no}</span>
-            <span className="min-w-0 flex-1">
-              <span className="block font-medium text-ink">{m.title}</span>
-              <span className="mt-0.5 block text-xs text-muted">{m.description}</span>
-            </span>
-            <ArrowRight size={16} className="mt-1 shrink-0 text-muted transition group-hover:text-accent" />
+      {/* Money cards */}
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {money.map((m) => (
+          <Link key={m.col} href="/modules/cost-report" className="card min-w-0 p-4 transition hover:border-accent">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium uppercase tracking-wide text-muted">{m.label}</span>
+              <span className="rounded bg-navy/10 px-1 text-[10px] font-bold text-navy">{m.col}</span>
+            </div>
+            <div className={`mt-1 truncate text-lg font-semibold tnum ${m.signed ? (m.value > 0.004 ? "text-red-700" : m.value < -0.004 ? "text-emerald-700" : "text-ink") : "text-ink"}`} title={formatMoney(m.value)}>
+              {formatMoney(m.value)}
+            </div>
+            {m.sub && (
+              <div className="truncate text-xs text-muted" title={m.sub}>
+                {m.sub}
+              </div>
+            )}
           </Link>
         ))}
       </div>
+
+      {/* Count cards */}
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <Link href="/modules/change-management" className="card min-w-0 p-4 transition hover:border-accent">
+          <div className="text-xs font-medium uppercase tracking-wide text-muted">Open changes by stage</div>
+          <div className="mt-2 grid grid-cols-4 gap-1 text-center">
+            {d.openStages.map((s) => (
+              <div key={s.stage}>
+                <div className={`text-lg font-semibold tnum ${s.open ? "text-ink" : "text-muted/60"}`}>{s.open}</div>
+                <div className="text-[11px] text-muted">{s.stage}</div>
+              </div>
+            ))}
+          </div>
+          <div className="mt-1 text-xs text-muted">{d.openChanges} change(s) open in total</div>
+        </Link>
+        <Count href="/modules/claims-disputes" label="Open claims" value={d.openClaims} sub={`${formatMoney(d.claimsPendingValue)} claimed and pending`} tone={d.openClaims ? "amber" : "green"} />
+        <Count href="/modules/early-warnings" label="Open early warnings" value={d.openEarlyWarnings} sub={`${formatMoney(d.ewOpenValue)} potential cost · ${d.openRisks} open risk(s)`} tone={d.openEarlyWarnings ? "amber" : "green"} />
+        <Count
+          href="/modules/bonds-insurance"
+          label="Bonds & insurance expiring"
+          value={d.bonds.expiring.length}
+          sub={`${d.bonds.expired} expired · ${d.bonds.red} within 30 days · ${d.bonds.amber} within 60 days`}
+          tone={d.bonds.expired + d.bonds.red ? "red" : d.bonds.amber ? "amber" : "green"}
+        />
+      </div>
+
+      {/* Commentary + actions */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <KeyIssues periodId={ctx.period?.id ?? null} periodLabel={ctx.period?.label ?? ""} initial={d.keyIssues} canEdit={canEdit} />
+        <ActionsList actions={d.actions} canEdit={canEdit} />
+      </div>
+
+      {/* Charts */}
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <div className="card min-w-0 p-5">
+          <h2 className="text-sm font-semibold text-ink">Cost report by package</h2>
+          <p className="mb-3 text-xs text-muted">Approved Baseline Budget vs Anticipated Final Account, SAR.</p>
+          <CostChart data={d.report.chart} />
+        </div>
+        <div className="card min-w-0 p-5">
+          <h2 className="text-sm font-semibold text-ink">Cumulative payments</h2>
+          <p className="mb-3 text-xs text-muted">Claimed vs certified vs paid across all contracts, SAR excl. VAT.</p>
+          <PaymentChart points={d.payments} />
+        </div>
+      </div>
+
+      {(d.bonds.expiring.length > 0 || d.bonds.expired > 0) && <ExpiringSoonCard items={d.bonds.expiring} expired={d.bonds.expired} />}
     </div>
   );
 }
 
-function Stat({ label, value, sub, chip }: { label: string; value: string; sub?: string; chip?: React.ReactNode }) {
+function Count({ href, label, value, sub, tone }: { href: string; label: string; value: number; sub?: string; tone?: "red" | "amber" | "green" }) {
+  const cls = tone === "red" ? "text-red-700" : tone === "amber" ? "text-amber-700" : tone === "green" ? "text-emerald-700" : "text-ink";
   return (
-    <div className="card p-4">
-      <div className="flex items-center justify-between">
-        <div className="text-xs font-medium uppercase tracking-wide text-muted">{label}</div>
-        {chip}
-      </div>
-      <div className="mt-1 truncate text-base font-semibold text-ink" title={value}>
-        {value}
-      </div>
-      {sub && <div className="text-xs text-muted">{sub}</div>}
-    </div>
+    <Link href={href} className="card min-w-0 p-4 transition hover:border-accent">
+      <div className="text-xs font-medium uppercase tracking-wide text-muted">{label}</div>
+      <div className={`mt-1 text-lg font-semibold tnum ${cls}`}>{value}</div>
+      {sub && (
+        <div className="truncate text-xs text-muted" title={sub}>
+          {sub}
+        </div>
+      )}
+    </Link>
   );
 }

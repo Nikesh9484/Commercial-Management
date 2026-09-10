@@ -38,8 +38,8 @@ export function RegisterPage({
 }: {
   registerKey: string;
   isAdmin?: boolean;
-  /** Only show rows where these fields have these values; new records get them by default. */
-  fixedFilter?: Record<string, number | string>;
+  /** Only show rows matching these values (scalar = equals, and new records get it by default; { in } / { notIn } = set filters). */
+  fixedFilter?: Record<string, number | string | { in?: (number | string)[]; notIn?: (number | string)[] }>;
   /** Fields to leave out of the table (e.g. the one fixed by fixedFilter). */
   hideFields?: string[];
 }) {
@@ -92,7 +92,19 @@ export function RegisterPage({
     if (!data) return [];
     const q = search.trim().toLowerCase();
     let rows = data.rows;
-    if (fixedFilter) rows = rows.filter((r) => Object.entries(fixedFilter).every(([k, v]) => String(r[k] ?? "") === String(v)));
+    if (fixedFilter) {
+      rows = rows.filter((r) =>
+        Object.entries(fixedFilter).every(([k, v]) => {
+          const cell = String(r[k] ?? "");
+          if (typeof v === "object" && v !== null) {
+            if (v.in && !v.in.map(String).includes(cell)) return false;
+            if (v.notIn && v.notIn.map(String).includes(cell)) return false;
+            return true;
+          }
+          return cell === String(v);
+        }),
+      );
+    }
     if (q) {
       rows = rows.filter((r) => data.def.fields.some((f) => String(displayValue(f, r) ?? "").toLowerCase().includes(q)) || String(r.id) === q);
     }
@@ -142,7 +154,7 @@ export function RegisterPage({
     const values: FormValues = {};
     for (const f of def.fields) if (f.defaultValue !== undefined) values[f.key] = f.defaultValue as FormValues[string];
     for (const [k, v] of Object.entries(data?.scopeDefaults ?? {})) values[k] = v;
-    for (const [k, v] of Object.entries(fixedFilter ?? {})) values[k] = v;
+    for (const [k, v] of Object.entries(fixedFilter ?? {})) if (typeof v !== "object") values[k] = v;
     setFormErrors({});
     setFormError(null);
     setEditing({ row: null, values });
