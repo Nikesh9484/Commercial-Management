@@ -1,4 +1,6 @@
-import ExcelJS from "exceljs";
+import fs from "node:fs";
+import path from "node:path";
+import { execFile } from "node:child_process";
 
 /** One worksheet reduced to its cell values only (no formatting), read row by row to keep memory low. */
 export interface SheetValues {
@@ -13,25 +15,35 @@ export interface SheetValues {
 
 export const MAX_ROWS_PER_SHEET = 20000;
 
-/** Streams an .xlsx from disk; only values are kept, so even big formatted reports fit in a small memory budget. */
+/**
+ * Reads an .xlsx in a separate Node process (scripts/read-workbook.cjs) that streams the file
+ * row by row and keeps only cell values. A workbook that is too big for the memory limit then
+ * fails with a clear message instead of crashing the web server.
+ */
 export async function readWorkbookValues(filePath: string): Promise<SheetValues[]> {
-  const reader = new ExcelJS.stream.xlsx.WorkbookReader(filePath, { worksheets: "emit", sharedStrings: "cache", styles: "cache", hyperlinks: "ignore", entries: "ignore" });
-  const sheets: SheetValues[] = [];
-  for await (const ws of reader) {
-    const sheet: SheetValues = { name: (ws as unknown as { name?: string }).name ?? `Sheet${sheets.length + 1}`, rows: new Map(), rowCount: 0, truncated: false };
-    for await (const row of ws) {
-      if (sheet.rows.size >= MAX_ROWS_PER_SHEET) {
-        sheet.truncated = true;
-        break;
-      }
-      const values = row.values as unknown[];
-      if (!Array.isArray(values) || !values.some((v) => v !== null && v !== undefined && v !== "")) continue;
-      sheet.rows.set(row.number, values);
-      sheet.rowCount = row.number;
+  const script = path.join(process.cwd(), "scripts", "read-workbook.cjs");
+  const outFile = `${filePath}.values.json`;
+  const heapMb = Number(process.env.WORKBOOK_READER_HEAP_MB || 200);
+  const result = await new Promise<{ code: number | null; signal: NodeJS.Signals | null; stderr: string }>((resolve, reject) => {
+    execFile(process.execPath, [`--max-old-space-size=${heapMb}`, script, filePath, outFile], { timeout: 120_000, maxBuffer: 1 << 20 }, (error, _stdout, stderr) => {
+      const err = error as (Error & { code?: number | string; signal?: NodeJS.Signals; killed?: boolean }) | null;
+      if (err && typeof err.code !== "number" && !err.signal && !err.killed) return reject(err); // could not start node at all
+      resolve({ code: err ? (typeof err.code === "number" ? err.code : null) : 0, signal: err?.signal ?? null, stderr: String(stderr ?? "") });
+    });
+  });
+  try {
+    if (result.code !== 0) {
+      const oom = result.signal === "SIGABRT" || /heap|memory/i.test(result.stderr);
+      if (oom) throw new Error("This workbook is too large to read within the hosting plan's memory. Save a copy that contains only the schedule sheets (remove cover pages, pictures and unused sheets), then try again.");
+      if (result.signal === "SIGTERM") throw new Error("Reading the workbook took too long (over 2 minutes). Save a copy with only the schedule sheets and try again.");
+      const msg = result.stderr.trim().split("\n").filter(Boolean).pop() || `exit code ${result.code}`;
+      throw new Error(`The workbook could not be read: ${msg}`);
     }
-    sheets.push(sheet);
+    const raw = JSON.parse(fs.readFileSync(outFile, "utf8")) as { name: string; rowCount: number; truncated: boolean; rows: [number, unknown[]][] }[];
+    return raw.map((s) => ({ name: s.name, rowCount: s.rowCount, truncated: s.truncated, rows: new Map(s.rows) }));
+  } finally {
+    fs.rmSync(outFile, { force: true });
   }
-  return sheets;
 }
 
 export function getSheet(sheets: SheetValues[], name: string): SheetValues | undefined {
