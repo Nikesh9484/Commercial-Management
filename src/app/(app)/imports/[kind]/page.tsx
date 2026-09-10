@@ -10,10 +10,11 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { WorkbookImporter, type StandaloneMode } from "@/components/workbook/WorkbookImporter";
 
 /** The stand-alone import pages (left menu "Stand-alone imports"). "monthly" is the full monthly workbook. */
-export const IMPORT_KINDS: Record<string, { title: string; subtitle: string; only?: string[]; intro?: string; fileHint?: string; doneHref?: string; doneLabel?: string }> = {
+export const IMPORT_KINDS: Record<string, { title: string; subtitle: string; only?: string[]; exclude?: string[]; intro?: string; fileHint?: string; doneHref?: string; doneLabel?: string }> = {
   monthly: {
     title: "Import monthly workbook",
-    subtitle: "Upload one of your Excel monthly reports and the app records it against a reporting period. Import past months in date order, locking each one, to build the history; then each new month shows its movement against the last.",
+    subtitle: "Upload one of your Excel monthly reports and the app records it against a reporting period. Import past months in date order, locking each one, to build the history; then each new month shows its movement against the last. Claims & Disputes are not taken from the workbook: use Stand-alone imports → Claims Tracker.",
+    exclude: ["claims"],
   },
   bonds: {
     title: "Import Bonds & Insurance",
@@ -65,7 +66,7 @@ export default async function ImportPage({ params }: { params: Promise<{ kind: s
   const user = (await getCurrentUser())!;
   const ctx = getAppContext();
   const periods = listPeriods().map((p) => ({ id: p.id, label: p.label, status: p.status, report_no: p.report_no }));
-  const registers = IMPORTABLE.filter((i) => !spec.only || spec.only.includes(i.key)).map((i) => {
+  const registers = IMPORTABLE.filter((i) => (!spec.only || spec.only.includes(i.key)) && !spec.exclude?.includes(i.key)).map((i) => {
     const def = getRegisterDef(i.key)!;
     return {
       key: i.key,
@@ -113,7 +114,7 @@ export default async function ImportPage({ params }: { params: Promise<{ kind: s
               </Link>
             </div>
           )}
-          <WorkbookImporter registers={registers} periods={periods} isAdmin={user.role === "admin"} defaultReportNo={nextNo} standalone={standalone} />
+          <WorkbookImporter registers={registers} periods={periods} isAdmin={user.role === "admin"} defaultReportNo={nextNo} standalone={standalone} excludeRegisters={spec.exclude} />
         </>
       )}
     </div>

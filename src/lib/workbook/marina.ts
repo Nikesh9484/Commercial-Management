@@ -18,6 +18,8 @@ import { cellText } from "./read";
 
 type Row = unknown[];
 type Sheet = SheetValues;
+/** Schedule E of the monthly workbook is read but not imported; the Claims Tracker is the source of claims. */
+const INCLUDE_WORKBOOK_CLAIMS = false;
 
 export interface ConvertedSheet {
   name: string;
@@ -539,7 +541,10 @@ export function convertMarinaReport(sheets: Sheet[]): ConversionResult {
       ]);
     }
   }
-  out.push({
+  // Claims & Disputes are maintained from the AMAALA Claims Tracker (Stand-alone imports -> Claims Tracker),
+  // not from Schedule E of the monthly workbook, so the schedule is read but not imported.
+  if (claimRows.length) notes.push(`Claims (Schedule E, ${claimRows.length} rows) were not imported: Claims & Disputes come from the Claims Tracker import.`);
+  if (INCLUDE_WORKBOOK_CLAIMS) out.push({
     name: "Claims",
     register: "claims",
     columns: cols([

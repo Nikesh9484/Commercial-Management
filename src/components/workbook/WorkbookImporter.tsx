@@ -31,7 +31,7 @@ export interface StandaloneMode {
   doneLabel: string;
 }
 
-export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo, standalone }: { registers: RegisterMeta[]; periods: PeriodOption[]; isAdmin: boolean; defaultReportNo: number; standalone?: StandaloneMode }) {
+export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo, standalone, excludeRegisters = [] }: { registers: RegisterMeta[]; periods: PeriodOption[]; isAdmin: boolean; defaultReportNo: number; standalone?: StandaloneMode; excludeRegisters?: string[] }) {
   const toast = useToast();
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
@@ -106,8 +106,9 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo,
     }
     const m: typeof mapping = {};
     for (const s of a.sheets) {
-      // a stand-alone page only writes its own registers: sheets read as anything else are skipped
-      const reg = standalone && s.register && !standalone.only.includes(s.register) ? null : s.register;
+      // a stand-alone page only writes its own registers: sheets read as anything else are skipped;
+      // excluded registers (claims on the monthly import) are skipped too
+      const reg = (standalone && s.register && !standalone.only.includes(s.register)) || (s.register && excludeRegisters.includes(s.register)) ? null : s.register;
       m[s.name] = { register: reg, columns: Object.fromEntries(s.columns.map((c) => [String(c.index), c.field])) };
     }
     setMapping(m);
@@ -123,7 +124,7 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo,
       sheets: analysis.sheets.map((s) => ({ sheet: s.name, headerRow: s.headerRow, register: mapping[s.name]?.register ?? null, columns: mapping[s.name]?.columns ?? {} })),
       lock: standalone ? false : lock,
       createMissingLookups: createLookups,
-      allowedRegisters: standalone?.only,
+      allowedRegisters: standalone?.only ?? (excludeRegisters.length ? registers.map((r) => r.key) : undefined),
     };
     const res = await fetch("/api/workbook/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const j = await res.json().catch(() => ({}));
