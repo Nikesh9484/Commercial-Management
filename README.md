@@ -116,6 +116,14 @@ If you find a mistake after locking, an Admin can *Unlock*, fix it, and *Lock* a
 
 ## 6. Excel import / export
 
+**Whole monthly workbook**: *Monthly Report → Import monthly workbook*. Upload your existing monthly report
+(.xlsx), choose the reporting period (existing or new), check how each sheet and column was read (the app
+guesses from the headings and remembers your corrections), and import. Import past months in date order and
+tick *Lock the period after importing* so each month keeps its snapshot; the next month then shows its
+movement automatically.
+
+**Single register**:
+
 Every register has **Export** (all rows, formatted) and **Import**:
 
 1. Download the blank template (link inside the Import window) or an Export of the register.

@@ -8,6 +8,7 @@ import { REPORT_SCHEDULES } from "@/lib/report/schedules";
 import { formatDate } from "@/lib/format";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { ReportGenerator } from "@/components/report/ReportGenerator";
+import { FileUp } from "lucide-react";
 
 export const metadata = { title: "Monthly Report" };
 
@@ -24,6 +25,15 @@ export default async function MonthlyReportPage() {
       {ctx.programme ? (
         <>
           <ReportGenerator periods={periods} currentId={ctx.period?.id ?? null} />
+          <div className="card flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-sm font-semibold text-ink">Have the month in Excel already?</h2>
+              <p className="text-xs text-muted">Upload your existing monthly report workbook and the app records it against a period. Import past months in order to build the history, then each new month shows its movement.</p>
+            </div>
+            <Link href="/modules/monthly-report/import" className="btn btn-primary shrink-0">
+              <FileUp size={16} /> Import monthly workbook
+            </Link>
+          </div>
           <div className="grid gap-4 lg:grid-cols-2">
             <div className="card p-5">
               <h2 className="mb-2 text-sm font-semibold text-ink">Contents</h2>
