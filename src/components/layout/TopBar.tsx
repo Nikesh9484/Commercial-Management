@@ -13,7 +13,7 @@ export function TopBar({ context, user, onMenu }: { context: AppContext; user: U
   const toast = useToast();
   const [pending, start] = useTransition();
   const [menuOpen, setMenuOpen] = useState(false);
-  const canChange = user.role !== "viewer";
+  const canChange = user.role !== "viewer" && user.role !== "reporter";
 
   async function change(patch: Record<string, number>) {
     const res = await fetch("/api/context", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });

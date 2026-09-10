@@ -45,7 +45,7 @@ export function getAppContext(): AppContext {
 }
 
 export function setAppContext(input: { programme_id?: number; asset_id?: number; period_id?: number }, user: UserInfo) {
-  if (user.role === "viewer") throw new AuthError("Viewers cannot change the current programme / asset / period.");
+  if (user.role === "viewer" || user.role === "reporter") throw new AuthError("Your role cannot change the current programme / asset / period.");
   const db = getDb();
   const before = getAppContext();
   if (input.asset_id) {

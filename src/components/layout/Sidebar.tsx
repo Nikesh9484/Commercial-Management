@@ -19,6 +19,7 @@ import {
   Settings,
   History,
   Upload,
+  FolderDown,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -83,6 +84,17 @@ export function Sidebar({ open, onClose, role }: { open: boolean; onClose: () =>
           </button>
         </div>
         <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 py-3">
+          {role === "reporter" ? (
+            <>
+              <div className="px-3 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-wider text-blue-200/50">Reports</div>
+              {link("/reports", "Reports & downloads", FolderDown)}
+              <a href="/user-guide.pdf" target="_blank" rel="noopener" className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-blue-100/80 hover:bg-white/10 hover:text-white">
+                <FileText size={18} className="shrink-0" />
+                <span className="truncate">User guide (PDF)</span>
+              </a>
+            </>
+          ) : (
+          <>
           <div className="px-3 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-wider text-blue-200/50">Modules</div>
           {modules.map((m) => (
             <div key={m.slug}>
@@ -109,12 +121,15 @@ export function Sidebar({ open, onClose, role }: { open: boolean; onClose: () =>
             </>
           )}
           <div className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider text-blue-200/50">System</div>
+          {link("/reports", "Reports & downloads", FolderDown)}
           <a href="/user-guide.pdf" target="_blank" rel="noopener" className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-blue-100/80 hover:bg-white/10 hover:text-white">
             <FileText size={18} className="shrink-0" />
             <span className="truncate">User guide (PDF)</span>
           </a>
           {link("/activity", "Change history", History)}
           {link("/settings", role === "viewer" ? "Reference data" : "Settings", Settings)}
+          </>
+          )}
         </nav>
         <div className="border-t border-white/10 px-4 py-3 text-[11px] text-blue-200/50">All amounts in SAR · Dates DD-MMM-YY</div>
       </aside>

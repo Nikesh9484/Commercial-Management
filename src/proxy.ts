@@ -6,6 +6,8 @@ import { jwtVerify } from "jose";
  * (Full user checks happen again server-side; this is the front door.)
  */
 const PUBLIC_PATHS = ["/login", "/api/auth/login", "/api/health"];
+/** What a "Reports only" account may open (mirrors REPORTER_PATHS in registers/types). */
+const REPORTER_PATHS = ["/reports", "/api/export", "/api/report", "/api/auth", "/api/health", "/user-guide.pdf"];
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -14,16 +16,29 @@ export async function proxy(request: NextRequest) {
   }
   const token = request.cookies.get("cd_session")?.value;
   let ok = false;
+  let role = "";
   if (token) {
     try {
       const secret = process.env.SESSION_SECRET || "commercial-dashboard-dev-secret-change-me";
-      await jwtVerify(token, new TextEncoder().encode(secret));
+      const { payload } = await jwtVerify(token, new TextEncoder().encode(secret));
       ok = true;
+      role = String(payload.role ?? "");
     } catch {
       ok = false;
     }
   }
-  if (ok) return NextResponse.next();
+  if (ok) {
+    if (role === "reporter" && !REPORTER_PATHS.some((p) => pathname === p || pathname.startsWith(p + "/"))) {
+      if (pathname.startsWith("/api/")) return NextResponse.json({ error: "Your account can only download reports." }, { status: 403 });
+      const url = request.nextUrl.clone();
+      url.pathname = "/reports";
+      url.search = "";
+      return NextResponse.redirect(url);
+    }
+    const headers = new Headers(request.headers);
+    headers.set("x-pathname", pathname);
+    return NextResponse.next({ request: { headers } });
+  }
 
   if (pathname.startsWith("/api/")) {
     return NextResponse.json({ error: "Please log in." }, { status: 401 });

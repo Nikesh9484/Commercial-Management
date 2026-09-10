@@ -6,7 +6,7 @@
  * This file must stay free of server-only imports: it is shared with the browser.
  */
 
-export type Role = "admin" | "editor" | "contributor" | "viewer";
+export type Role = "admin" | "editor" | "contributor" | "viewer" | "reporter";
 
 export type FieldType =
   | "text"
@@ -123,7 +123,14 @@ export const ROLE_LABELS: Record<Role, string> = {
   editor: "Editor",
   contributor: "Data entry (add only)",
   viewer: "Viewer",
+  reporter: "Reports only (download)",
 };
+
+/** Paths a "Reports only" user may use: the reports page, the report downloads, login / logout and the guide. */
+export const REPORTER_PATHS = ["/reports", "/api/export", "/api/report", "/api/auth", "/api/health", "/user-guide.pdf", "/login"];
+export function reporterAllowed(pathname: string): boolean {
+  return REPORTER_PATHS.some((p) => pathname === p || pathname.startsWith(p + "/") || pathname.startsWith(p + "?"));
+}
 
 export function canEditRegister(def: RegisterDef, role: Role): boolean {
   const roles = def.editRoles ?? ["admin", "editor"];

@@ -1,13 +1,14 @@
 import { NextResponse } from "next/server";
 import { AuthError, requireUser } from "./auth";
 import { ValidationError } from "./registers/engine";
-import type { UserInfo } from "./registers/types";
+import { reporterAllowed, type UserInfo } from "./registers/types";
 
 /** Wraps a route handler: checks login, turns known errors into tidy JSON responses. */
 export function withUser<T>(handler: (user: UserInfo, ctx: T) => Promise<Response> | Response) {
   return async (_req: Request, ctx: T) => {
     try {
       const user = await requireUser();
+      if (user.role === "reporter" && !reporterAllowed(new URL(_req.url).pathname)) throw new AuthError("Your account can only download reports.");
       return await handler(user, ctx);
     } catch (e) {
       return errorResponse(e);

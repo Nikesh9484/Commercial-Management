@@ -214,6 +214,11 @@ function seed(db: Database.Database) {
     }
     setSetting(db, "seeded_data_entry_users", "1");
   }
+  // User-1 / User-2 are limited to downloading reports (done once; the Admin can change roles under Settings -> Users).
+  if (getSetting(db, "data_entry_users_reports_only") !== "1") {
+    db.prepare("UPDATE users SET role = 'reporter', updated_at = ?, updated_by = 'system' WHERE lower(email) IN ('user1@commercial.local', 'user2@commercial.local')").run(stamp);
+    setSetting(db, "data_entry_users_reports_only", "1");
+  }
 
   seedList(db, "approval_statuses", ["Approved", "Rejected", "Pending", "Revised & Re-submit", "Superseded", "Cancelled", "Transferred", "Review Complete"], stamp);
   seedList(db, "change_initiators", ["Contract", "Consultant", "Contractor", "Employer", "Authority"], stamp);
