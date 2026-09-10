@@ -8,7 +8,7 @@ import { REPORT_SCHEDULES } from "@/lib/report/schedules";
 import { formatDate } from "@/lib/format";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { ReportGenerator } from "@/components/report/ReportGenerator";
-import { FileUp } from "lucide-react";
+import { FileUp, CalendarPlus } from "lucide-react";
 
 export const metadata = { title: "Monthly Report" };
 
@@ -32,6 +32,15 @@ export default async function MonthlyReportPage() {
             </div>
             <Link href="/imports/monthly" className="btn btn-primary shrink-0">
               <FileUp size={16} /> Import monthly workbook
+            </Link>
+          </div>
+          <div className="card flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-sm font-semibold text-ink">Or enter the month by hand</h2>
+              <p className="text-xs text-muted">Start the next report number, type the month&apos;s changes, IPCs, claims and so on into the modules, then lock and issue. Same reports, no Excel needed.</p>
+            </div>
+            <Link href="/modules/monthly-report/new" className="btn btn-secondary shrink-0">
+              <CalendarPlus size={16} /> New month (manual entry)
             </Link>
           </div>
           <div className="grid gap-4 lg:grid-cols-2">
