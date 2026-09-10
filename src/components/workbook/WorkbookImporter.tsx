@@ -37,10 +37,26 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo 
   async function analyze() {
     if (!file) return;
     setBusy(true);
-    const fd = new FormData();
-    fd.append("file", file);
-    const res = await fetch("/api/workbook/analyze", { method: "POST", body: fd });
-    const j = await res.json().catch(() => ({}));
+    // Raw bytes rather than a multipart form: some browsers / proxies produce forms the server cannot parse.
+    let res: Response;
+    try {
+      res = await fetch("/api/workbook/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/octet-stream", "X-File-Name": encodeURIComponent(file.name) },
+        body: await file.arrayBuffer(),
+      });
+    } catch (e) {
+      setBusy(false);
+      return toast(`Upload failed: ${e instanceof Error ? e.message : String(e)}`, "error");
+    }
+    const text = await res.text();
+    let j: { error?: string } = {};
+    try {
+      j = JSON.parse(text);
+    } catch {
+      setBusy(false);
+      return toast(`The server replied with an unexpected answer (${res.status}). ${text.slice(0, 120)}`, "error");
+    }
     setBusy(false);
     if (!res.ok) return toast(j.error ?? "Could not read the file.", "error");
     const a = j as WorkbookAnalysis;
