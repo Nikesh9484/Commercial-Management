@@ -207,6 +207,13 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo): Promis
               if (opt) input[f.key] = opt;
               continue;
             }
+            if ((f.type === "number" || f.type === "money" || f.type === "percent") && typeof v === "string") {
+              const cleaned = v.replace(/sar|%/gi, "").replace(/[,\s]/g, "");
+              const neg = /^\(.*\)$/.test(cleaned);
+              const n = Number(cleaned.replace(/[()]/g, ""));
+              if (!Number.isNaN(n) && cleaned !== "") input[f.key] = neg ? -n : n;
+              continue;
+            }
             if (f.type === "boolean") {
               input[f.key] = /^(y|yes|true|1|closed|done)$/i.test(String(v).trim());
               continue;
@@ -234,6 +241,10 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo): Promis
             }
           }
           if (hasPeriodField && !("period_id" in input)) input.period_id = periodId;
+          if (def.key === "bonds" && typeof input.requirement_value === "number" && !colMap.some((c) => c.field.key === "requirement_type")) {
+            // "Contract requirement" in a workbook is usually the SAR amount; a value up to 100 is treated as a percentage
+            input.requirement_type = input.requirement_value > 100 ? "Fixed SAR amount" : "% of contract value";
+          }
           // link to the cost report line automatically when the package (and contractor) point to exactly one line
           if (hasCostLine && !input.cost_line_id && (input.package_id || input.contractor_id)) {
             const candidates = costLines.filter(
