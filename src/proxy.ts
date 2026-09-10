@@ -5,7 +5,7 @@ import { jwtVerify } from "jose";
  * Runs before every page/API request: sends people who are not logged in to /login.
  * (Full user checks happen again server-side; this is the front door.)
  */
-const PUBLIC_PATHS = ["/login", "/api/auth/login"];
+const PUBLIC_PATHS = ["/login", "/api/auth/login", "/api/health"];
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;

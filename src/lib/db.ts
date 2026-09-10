@@ -22,8 +22,36 @@ export function getDb(): Database.Database {
   db.pragma("foreign_keys = ON");
   initSchema(db);
   seed(db);
+  applyAdminReset(db);
   g.__cdDb = db;
   return db;
+}
+
+/**
+ * Emergency reset of the admin login from the hosting settings.
+ * Set ADMIN_RESET to any new value (e.g. "1", then "2" next time) together with ADMIN_EMAIL and
+ * ADMIN_PASSWORD; on the next start the user with that email is created or updated as an active
+ * Admin with that password. Each ADMIN_RESET value is applied only once.
+ */
+function applyAdminReset(db: Database.Database) {
+  const token = process.env.ADMIN_RESET;
+  const email = (process.env.ADMIN_EMAIL || "").trim().toLowerCase();
+  const password = process.env.ADMIN_PASSWORD || "";
+  if (!token || !email || password.length < 8) return;
+  if (getSetting(db, "admin_reset_applied") === token) return;
+  const stamp = nowIso();
+  const hash = bcrypt.hashSync(password, 10);
+  const existing = db.prepare("SELECT id FROM users WHERE lower(email) = ?").get(email) as { id: number } | undefined;
+  if (existing) {
+    db.prepare("UPDATE users SET password_hash = ?, role = 'admin', active = 1, updated_at = ?, updated_by = 'system (reset)' WHERE id = ?").run(hash, stamp, existing.id);
+  } else {
+    db.prepare(
+      `INSERT INTO users(name, email, role, active, password_hash, created_at, created_by, updated_at, updated_by)
+       VALUES(?, ?, 'admin', 1, ?, ?, 'system (reset)', ?, 'system (reset)')`,
+    ).run(process.env.ADMIN_NAME || "Commercial Manager", email, hash, stamp, stamp);
+  }
+  setSetting(db, "admin_reset_applied", token);
+  console.log(`[admin] login reset applied for ${email.replace(/^(.).*(@.*)$/, "$1***$2")}`);
 }
 
 /* ------------------------------------------------------------------ */
