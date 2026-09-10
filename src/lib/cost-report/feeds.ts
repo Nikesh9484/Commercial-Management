@@ -89,7 +89,7 @@ export function claimFeeds(db: Database.Database, programmeId: number): Map<numb
   const out = new Map<number, number>();
   if (!tableExists(db, "claims")) return out;
   const rows = db
-    .prepare("SELECT cost_line_id, status, determination_cost, employer_cost, engineer_cost, contractor_cost FROM claims WHERE programme_id = ? AND cost_line_id IS NOT NULL")
+    .prepare("SELECT cost_line_id, status, in_cost_report, determination_cost, employer_cost, engineer_cost, contractor_cost FROM claims WHERE programme_id = ? AND cost_line_id IS NOT NULL")
     .all(programmeId) as Record<string, unknown>[];
   for (const r of rows) {
     const id = Number(r.cost_line_id);

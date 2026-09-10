@@ -740,7 +740,7 @@ function cols(pairs: [string, string][]) {
 }
 
 /** Turns converted sheets into the value-sheets the analyser and importer read (headings tagged with [key]). */
-export function toSheetValues(conv: ConversionResult): Sheet[] {
+export function toSheetValues(conv: Pick<ConversionResult, "sheets">): Sheet[] {
   return conv.sheets.map((s) => {
     const rowsMap = new Map<number, unknown[]>();
     rowsMap.set(1, [null, ...s.columns.map((c) => `${c.label} [${c.key}]`)]);

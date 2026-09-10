@@ -86,6 +86,8 @@ export interface ImportRequest {
   sheets: SheetMapping[];
   lock: boolean;
   createMissingLookups: boolean;
+  /** Stand-alone imports: only these registers may be written (other sheets are ignored). */
+  allowedRegisters?: string[];
 }
 
 export interface SheetResult {
@@ -162,6 +164,7 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo): Promis
 
   for (const m of req.sheets) {
     if (!m.register) continue;
+    if (req.allowedRegisters && !req.allowedRegisters.includes(m.register)) continue;
     const def = getRegisterDef(m.register);
     const ws = getSheet(worksheets, m.sheet);
     if (!def || !ws) continue;

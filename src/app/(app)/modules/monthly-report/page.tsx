@@ -30,7 +30,7 @@ export default async function MonthlyReportPage() {
               <h2 className="text-sm font-semibold text-ink">Have the month in Excel already?</h2>
               <p className="text-xs text-muted">Upload your existing monthly report workbook and the app records it against a period. Import past months in order to build the history, then each new month shows its movement.</p>
             </div>
-            <Link href="/modules/monthly-report/import" className="btn btn-primary shrink-0">
+            <Link href="/imports/monthly" className="btn btn-primary shrink-0">
               <FileUp size={16} /> Import monthly workbook
             </Link>
           </div>

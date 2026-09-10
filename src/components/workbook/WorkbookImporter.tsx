@@ -20,7 +20,18 @@ interface PeriodOption {
   report_no: number;
 }
 
-export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo }: { registers: RegisterMeta[]; periods: PeriodOption[]; isAdmin: boolean; defaultReportNo: number }) {
+export interface StandaloneMode {
+  /** Registers this page may write; sheets read as anything else are ignored. */
+  only: string[];
+  /** The report (period) being updated – always the one selected in the top bar. */
+  period: { id: number; label: string };
+  intro: string;
+  fileHint: string;
+  doneHref: string;
+  doneLabel: string;
+}
+
+export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo, standalone }: { registers: RegisterMeta[]; periods: PeriodOption[]; isAdmin: boolean; defaultReportNo: number; standalone?: StandaloneMode }) {
   const toast = useToast();
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
@@ -94,7 +105,11 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo 
       }
     }
     const m: typeof mapping = {};
-    for (const s of a.sheets) m[s.name] = { register: s.register, columns: Object.fromEntries(s.columns.map((c) => [String(c.index), c.field])) };
+    for (const s of a.sheets) {
+      // a stand-alone page only writes its own registers: sheets read as anything else are skipped
+      const reg = standalone && s.register && !standalone.only.includes(s.register) ? null : s.register;
+      m[s.name] = { register: reg, columns: Object.fromEntries(s.columns.map((c) => [String(c.index), c.field])) };
+    }
     setMapping(m);
     setResult(null);
   }
@@ -104,10 +119,11 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo 
     setBusy(true);
     const body = {
       fileId: analysis.fileId,
-      period: periodMode === "existing" ? { id: periodId } : { report_no: Number(reportNo.replace(/\D/g, "")) || undefined, period_end: periodEnd },
+      period: standalone ? { id: standalone.period.id } : periodMode === "existing" ? { id: periodId } : { report_no: Number(reportNo.replace(/\D/g, "")) || undefined, period_end: periodEnd },
       sheets: analysis.sheets.map((s) => ({ sheet: s.name, headerRow: s.headerRow, register: mapping[s.name]?.register ?? null, columns: mapping[s.name]?.columns ?? {} })),
-      lock,
+      lock: standalone ? false : lock,
       createMissingLookups: createLookups,
+      allowedRegisters: standalone?.only,
     };
     const res = await fetch("/api/workbook/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const j = await res.json().catch(() => ({}));
@@ -124,14 +140,23 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo 
       {/* Step 1 */}
       <div className="card p-5">
         <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold text-ink">
-          <span className="grid h-6 w-6 place-items-center rounded-full bg-navy text-xs text-white">1</span> Choose the workbook and the month it belongs to
+          <span className="grid h-6 w-6 place-items-center rounded-full bg-navy text-xs text-white">1</span> {standalone ? "Choose the Excel file" : "Choose the workbook and the month it belongs to"}
         </h2>
-        <p className="mb-3 text-xs text-muted">Your monthly report workbook (.xlsx). The app reads every sheet it recognises: cost report lines, change tracker, claims, early warnings, risks, provisional sums, bonds, contracts, IPC log, budget transfers, project team.</p>
+        <p className="mb-3 text-xs text-muted">{standalone ? standalone.intro : "Your monthly report workbook (.xlsx). The app reads every sheet it recognises: cost report lines, change tracker, claims, early warnings, risks, provisional sums, bonds, contracts, IPC log, budget transfers, project team."}</p>
         <div className="grid gap-4 lg:grid-cols-2">
           <label className="flex flex-col gap-1 text-xs text-muted">
-            Excel file
+            Excel file{standalone ? ` – ${standalone.fileHint}` : ""}
             <input type="file" accept=".xlsx" className="input" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
           </label>
+          {standalone ? (
+            <div className="rounded-lg border border-line bg-slate-50 p-3 text-xs text-ink">
+              <div className="font-semibold text-muted">Updates this report only</div>
+              <div className="mt-1 flex items-center gap-2 text-sm font-semibold">
+                <Lock size={14} className="text-navy" /> {standalone.period.label}
+              </div>
+              <div className="mt-1 text-muted">The report selected in the top bar. Rows are matched by their reference number: existing rows are updated, new ones added. Nothing else in the dashboard changes.</div>
+            </div>
+          ) : (
           <div className="space-y-2">
             <div className="flex gap-3 text-xs">
               <label className="inline-flex items-center gap-1">
@@ -162,6 +187,7 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo 
               </div>
             )}
           </div>
+          )}
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <button className="btn btn-primary" onClick={analyze} disabled={!file || busy}>
@@ -179,7 +205,7 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo 
           </h2>
           {analysis.conversion && (
             <div className="mb-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
-              <div className="font-semibold">Your monthly report layout was recognised and cleaned automatically.</div>
+              <div className="font-semibold">The file layout was recognised and converted automatically.</div>
               <ul className="mt-1 list-disc pl-5 text-xs">
                 {analysis.conversion.notes.map((n, i) => (
                   <li key={i}>{n}</li>
@@ -199,7 +225,7 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo 
             <label className="inline-flex items-center gap-2">
               <input type="checkbox" className="h-4 w-4 accent-navy" checked={createLookups} onChange={(e) => setCreateLookups(e.target.checked)} /> Create missing packages, contractors and dropdown values automatically
             </label>
-            {isAdmin && (
+            {isAdmin && !standalone && (
               <label className="inline-flex items-center gap-2">
                 <input type="checkbox" className="h-4 w-4 accent-navy" checked={lock} onChange={(e) => setLock(e.target.checked)} /> <Lock size={14} /> Lock the period after importing (if there are no errors)
               </label>
@@ -218,7 +244,7 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo 
             <span className="grid h-6 w-6 place-items-center rounded-full bg-emerald-600 text-xs text-white">3</span> Result for {result.period.label}
           </h2>
           <div className="mb-3 flex flex-wrap gap-2">
-            <Chip tone={result.period.locked ? "green" : "amber"}>{result.period.locked ? "Period locked – snapshot stored" : "Period left open"}</Chip>
+            {!standalone && <Chip tone={result.period.locked ? "green" : "amber"}>{result.period.locked ? "Period locked – snapshot stored" : "Period left open"}</Chip>}
             {result.lookupsCreated.length > 0 && <Chip tone="blue">{result.lookupsCreated.length} dropdown value(s) created</Chip>}
           </div>
           <table className="data w-full">
@@ -264,15 +290,23 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo 
           )}
           {result.lookupsCreated.length > 0 && <p className="mt-2 text-xs text-muted">Created: {result.lookupsCreated.join(", ")}.</p>}
           <div className="mt-4 flex flex-wrap gap-2">
-            <Link href="/modules/cost-report" className="btn btn-secondary btn-sm">
-              Check the cost report <ArrowRight size={14} />
-            </Link>
-            <Link href="/" className="btn btn-secondary btn-sm">
-              Executive summary <ArrowRight size={14} />
-            </Link>
-            <Link href="/modules/monthly-report" className="btn btn-primary btn-sm">
-              <CheckCircle2 size={14} /> Generate the monthly report
-            </Link>
+            {standalone ? (
+              <Link href={standalone.doneHref} className="btn btn-primary btn-sm">
+                <CheckCircle2 size={14} /> {standalone.doneLabel} <ArrowRight size={14} />
+              </Link>
+            ) : (
+              <>
+                <Link href="/modules/cost-report" className="btn btn-secondary btn-sm">
+                  Check the cost report <ArrowRight size={14} />
+                </Link>
+                <Link href="/" className="btn btn-secondary btn-sm">
+                  Executive summary <ArrowRight size={14} />
+                </Link>
+                <Link href="/modules/monthly-report" className="btn btn-primary btn-sm">
+                  <CheckCircle2 size={14} /> Generate the monthly report
+                </Link>
+              </>
+            )}
             <button
               className="btn btn-ghost btn-sm"
               onClick={() => {
@@ -281,7 +315,7 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo 
                 setFile(null);
               }}
             >
-              Import another month
+              {standalone ? "Import another file" : "Import another month"}
             </button>
           </div>
         </div>

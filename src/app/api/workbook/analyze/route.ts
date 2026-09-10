@@ -5,6 +5,11 @@ import { analyzeWorkbook } from "@/lib/workbook/analyze";
 import { storeUpload, uploadPath, appendUploadPart, finishUploadParts, saveConverted } from "@/lib/workbook/import";
 import { readWorkbookValues } from "@/lib/workbook/read";
 import { looksLikeMarinaReport, convertMarinaReport, toSheetValues } from "@/lib/workbook/marina";
+import { looksLikeClaimsTracker, convertClaimsTracker, codeFrag, type KnownLine } from "@/lib/workbook/claims-tracker";
+import { getAppContext } from "@/lib/context";
+import { getDb } from "@/lib/db";
+import { getRegisterDef } from "@/lib/registers";
+import { listRecords } from "@/lib/registers/engine";
 
 export async function POST(req: Request, ctx: unknown) {
   return withUser(async (user) => {
@@ -60,6 +65,31 @@ export async function POST(req: Request, ctx: unknown) {
       worksheets = toSheetValues(conv);
       saveConverted(fileId, worksheets);
       conversion = { notes: conv.notes, reportNo: conv.reportNo, periodEnd: conv.periodEnd };
+    } else if (looksLikeClaimsTracker(worksheets)) {
+      // The AMAALA Claims Tracker: keep our programme's claims and link them to our cost lines
+      // (the main contract line – the one with the largest budget – when a contract has several lines).
+      const app = getAppContext();
+      if (!app.programme) return NextResponse.json({ error: "Select a programme in the top bar first." }, { status: 400 });
+      const db = getDb();
+      const linesByFrag = new Map<string, KnownLine>();
+      const lines = db
+        .prepare("SELECT l.code, p.name AS package, c.name AS contractor FROM cost_lines l LEFT JOIN packages p ON p.id = l.package_id LEFT JOIN contractors c ON c.id = l.contractor_id WHERE l.programme_id = ? AND l.is_budget_hold IS NOT 1 ORDER BY COALESCE(l.approved_baseline_budget, 0) + COALESCE(l.opening_transfers, 0) DESC, l.sort_order, l.code")
+        .all(app.programme.id) as { code: string; package: string | null; contractor: string | null }[];
+      for (const l of lines) {
+        const frag = codeFrag(l.code);
+        if (frag && !linesByFrag.has(frag)) linesByFrag.set(frag, { code: l.code, package: l.package ?? "", contractor: l.contractor ?? "" });
+      }
+      const existingClaims = listRecords(getRegisterDef("claims")!).map((c) => ({ claim_no: String(c.claim_no), detail_letter_ref: c.detail_letter_ref as string | null, notice_letter_ref: c.notice_letter_ref as string | null, description: c.description as string | null }));
+      const conv = convertClaimsTracker(worksheets, {
+        programmeCode: app.programme.code,
+        assetCode: app.asset?.code ?? app.programme.code,
+        assetLabel: app.asset?.code ?? app.programme.code,
+        linesByFrag,
+        existingClaims,
+      });
+      worksheets = toSheetValues(conv);
+      saveConverted(fileId, worksheets);
+      conversion = { notes: conv.notes, reportNo: null, periodEnd: null };
     }
     const analysis = { ...analyzeWorkbook(worksheets, name || "workbook.xlsx", fileId), conversion };
     return NextResponse.json(analysis);

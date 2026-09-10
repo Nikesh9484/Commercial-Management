@@ -61,6 +61,7 @@ export const claims: RegisterDef = {
     { key: "scope", label: "Scope", type: "textarea", section: HEADER, hideInTable: true },
     { key: "package_id", label: "Package", type: "lookup", lookup: { register: "packages" }, section: HEADER, hideInTable: true, filter: true },
     { key: "cost_line_id", label: "Cost report line", type: "lookup", lookup: { register: "cost_lines" }, section: HEADER, hideInTable: true, help: "Which Level 2 line this claim feeds (column M of the cost report)." },
+    { key: "in_cost_report", label: "Carry in cost report (column M)", type: "boolean", defaultValue: true, section: HEADER, hideInTable: true, filter: true, help: "Untick to keep the claim out of the cost report, e.g. when its cost is already carried as an early warning. Claims imported from the Claims Tracker are ticked only once approved." },
     ...CLAIM_TYPES.map<FieldDef>((t) => ({ key: t.key, label: `Claim type: ${t.label}`, type: "boolean", defaultValue: false, section: HEADER, hideInTable: true })),
     { key: "type_other_text", label: "Other – describe", type: "text", section: HEADER, hideInTable: true },
 
@@ -98,6 +99,7 @@ export const claimRegisters: RegisterDef[] = [claims];
 export function claimCostReportAmount(row: Record<string, unknown>): number {
   const status = String(row.status ?? "");
   if (status === "Rejected" || status === "Approved incl. in Lump Sum") return 0;
+  if (row.in_cost_report === false || row.in_cost_report === 0) return 0;
   for (const k of ["determination_cost", "employer_cost", "engineer_cost", "contractor_cost"]) {
     const v = row[k];
     if (v !== null && v !== undefined && v !== "") return Number(v);

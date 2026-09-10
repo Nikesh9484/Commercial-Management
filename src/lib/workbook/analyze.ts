@@ -360,6 +360,7 @@ export function analyzeWorkbook(worksheets: SheetValues[], fileName: string, fil
   const sheets: SheetAnalysis[] = [];
   for (const ws of worksheets) {
     if (ws.rowCount < 2) continue;
+    if (/^lists?$/i.test(ws.name.trim())) continue; // the dropdown-values sheet of our own exports
     const headerRow = findHeaderRow(ws);
     const headers: { index: number; header: string }[] = [];
     (ws.rows.get(headerRow) ?? []).forEach((v, col) => {
