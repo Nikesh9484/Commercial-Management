@@ -7,7 +7,7 @@ import { getDashboard } from "@/lib/dashboard/summary";
 import { formatMoney, formatDate } from "@/lib/format";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Chip } from "@/components/ui/Chip";
-import { CostChart } from "@/components/cost-report/CostChart";
+import { PackageBreakdown } from "@/components/cost-report/PackageBreakdown";
 import { PaymentChart } from "@/components/payments/PaymentChart";
 import { ExpiringSoonCard } from "@/components/bonds/ExpiringSoonCard";
 import { KeyIssues } from "@/components/dashboard/KeyIssues";
@@ -139,8 +139,8 @@ export default async function HomePage() {
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <div className="card min-w-0 p-5">
           <h2 className="text-sm font-semibold text-ink">Cost report by package</h2>
-          <p className="mb-3 text-xs text-muted">Approved Baseline Budget vs Anticipated Final Account, SAR.</p>
-          <CostChart data={d.report.chart} />
+          <p className="mb-3 text-xs text-muted">Largest packages first: Anticipated Final Account over the Approved Baseline Budget, with the variance. SAR.</p>
+          <PackageBreakdown data={d.report.chart} compact />
         </div>
         <div className="card min-w-0 p-5">
           <h2 className="text-sm font-semibold text-ink">Cumulative payments</h2>

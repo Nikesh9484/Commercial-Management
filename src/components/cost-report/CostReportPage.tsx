@@ -12,7 +12,7 @@ import { Modal } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/Toast";
 import { RegisterPage } from "@/components/register/RegisterPage";
 import { RecordForm, type FormValues } from "@/components/register/RecordForm";
-import { CostChart } from "./CostChart";
+import { PackageBreakdown } from "./PackageBreakdown";
 
 type Tab = "level1" | "level2" | "setup";
 const SIGNED: MoneyKey[] = ["O", "S"]; // positive = adverse (over budget / increase)
@@ -394,9 +394,9 @@ function SectionRows({ name, rows, subtotal, showAsset, canEdit, onEdit }: { nam
 function ChartCard({ data }: { data: CostReport["chart"] }) {
   return (
     <div className="card p-5">
-      <h2 className="text-sm font-semibold text-ink">Approved Baseline Budget vs Anticipated Final Account by package</h2>
-      <p className="mb-3 text-xs text-muted">SAR. Hover a package for the exact values; the Level 2 table holds the same figures.</p>
-      <CostChart data={data} />
+      <h2 className="text-sm font-semibold text-ink">Packages: Anticipated Final Account against the Approved Baseline Budget</h2>
+      <p className="mb-3 text-xs text-muted">SAR. Largest packages first; the orange bar is the anticipated final account over the blue baseline, and the chip is the variance. The Level 2 table holds the same figures.</p>
+      <PackageBreakdown data={data} initial={12} />
     </div>
   );
 }

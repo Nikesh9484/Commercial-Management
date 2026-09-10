@@ -21,9 +21,11 @@ export function PaymentChart({ points }: { points: TimelinePoint[] }) {
   const [hover, setHover] = useState<number | null>(null);
   if (points.length === 0) return <p className="py-8 text-center text-sm text-muted">Add payment applications to see the chart.</p>;
 
-  const width = Math.max(640, points.length * 70 + 120);
-  const height = 280;
-  const pad = { top: 16, right: 56, bottom: 44, left: 72 };
+  const width = 760;
+  const height = 260;
+  const pad = { top: 16, right: 24, bottom: 40, left: 64 };
+  // at most ~8 date labels so the chart never needs to scroll
+  const labelEvery = Math.max(1, Math.ceil(points.length / 8));
   const plotW = width - pad.left - pad.right;
   const plotH = height - pad.top - pad.bottom;
   const max = Math.max(1, ...points.flatMap((p) => [p.claimed, p.certified, p.paid]));
@@ -42,8 +44,8 @@ export function PaymentChart({ points }: { points: TimelinePoint[] }) {
           </span>
         ))}
       </div>
-      <div className="overflow-x-auto">
-        <svg viewBox={`0 0 ${width} ${height}`} width={width} height={height} role="img" aria-label="Cumulative claimed, certified and paid over time" onMouseLeave={() => setHover(null)}>
+      <div>
+        <svg viewBox={`0 0 ${width} ${height}`} style={{ width: "100%", height: "auto" }} role="img" aria-label="Cumulative claimed, certified and paid over time" onMouseLeave={() => setHover(null)}>
           {ticks.map((t) => (
             <g key={t}>
               <line x1={pad.left} x2={width - pad.right} y1={y(t)} y2={y(t)} stroke="#e2e6ee" strokeWidth={1} />
@@ -60,11 +62,13 @@ export function PaymentChart({ points }: { points: TimelinePoint[] }) {
               <rect x={x(i) - (points.length > 1 ? plotW / (points.length - 1) / 2 : plotW / 2)} y={pad.top} width={points.length > 1 ? plotW / (points.length - 1) : plotW} height={plotH} fill="transparent" onMouseEnter={() => setHover(i)} />
               {hover === i && <line x1={x(i)} x2={x(i)} y1={pad.top} y2={pad.top + plotH} stroke="#c9cfda" strokeWidth={1} />}
               {SERIES.map((s) => (
-                <circle key={s.key} cx={x(i)} cy={y(p[s.key])} r={hover === i ? 5 : 4} fill={s.color} stroke="#fff" strokeWidth={2} style={{ pointerEvents: "none" }} />
+                <circle key={s.key} cx={x(i)} cy={y(p[s.key])} r={hover === i ? 5 : points.length > 24 ? 2 : 3.5} fill={s.color} stroke="#fff" strokeWidth={hover === i ? 2 : 1} style={{ pointerEvents: "none" }} />
               ))}
-              <text x={x(i)} y={height - pad.bottom + 18} textAnchor="middle" fontSize={11} fill="#172033">
-                {formatDate(p.date)}
-              </text>
+              {(i % labelEvery === 0 || i === points.length - 1) && (
+                <text x={x(i)} y={height - pad.bottom + 18} textAnchor="middle" fontSize={11} fill="#172033">
+                  {formatDate(p.date)}
+                </text>
+              )}
             </g>
           ))}
           <line x1={pad.left} x2={width - pad.right} y1={y(0)} y2={y(0)} stroke="#c9cfda" strokeWidth={1} />
