@@ -28,7 +28,7 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo 
   const [mapping, setMapping] = useState<Record<string, { register: string | null; columns: Record<string, string | null> }>>({});
   const [periodMode, setPeriodMode] = useState<"existing" | "new">(periods.some((p) => p.status === "Open") ? "existing" : "new");
   const [periodId, setPeriodId] = useState<number | null>(periods.find((p) => p.status === "Open")?.id ?? null);
-  const [reportNo, setReportNo] = useState<number>(defaultReportNo);
+  const [reportNo, setReportNo] = useState<string>(String(defaultReportNo));
   const [periodEnd, setPeriodEnd] = useState("");
   const [lock, setLock] = useState(isAdmin);
   const [createLookups, setCreateLookups] = useState(true);
@@ -92,7 +92,7 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo 
     setBusy(true);
     const body = {
       fileId: analysis.fileId,
-      period: periodMode === "existing" ? { id: periodId } : { report_no: reportNo, period_end: periodEnd },
+      period: periodMode === "existing" ? { id: periodId } : { report_no: Number(reportNo.replace(/\D/g, "")) || undefined, period_end: periodEnd },
       sheets: analysis.sheets.map((s) => ({ sheet: s.name, headerRow: s.headerRow, register: mapping[s.name]?.register ?? null, columns: mapping[s.name]?.columns ?? {} })),
       lock,
       createMissingLookups: createLookups,
@@ -141,7 +141,7 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo 
               <div className="grid grid-cols-2 gap-2">
                 <label className="flex flex-col gap-1 text-xs text-muted">
                   Report No
-                  <input type="number" className="input" value={reportNo} onChange={(e) => setReportNo(Number(e.target.value))} />
+                  <input type="text" inputMode="numeric" className="input" value={reportNo} onChange={(e) => setReportNo(e.target.value.replace(/\D/g, ""))} placeholder="e.g. 1" />
                 </label>
                 <label className="flex flex-col gap-1 text-xs text-muted">
                   Cut-off date (month end)
