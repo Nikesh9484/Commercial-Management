@@ -132,7 +132,7 @@ Every register has **Export** (all rows, formatted) and **Import**:
 | 4 | Claims & Disputes | **built** – notice / detailed claim compliance (auto), 4-party assessment, summary cards, feeds cost report M |
 | 5 | Early Warnings & Risks / Opportunities | **built** – EW register feeds cost report L; risk register with expected value, heat map, totals |
 | 6 | Provisional Sums | **built** – budget vs contract value, (saving)/extra auto, totals row and cards |
-| 7 | Bonds & Insurance | placeholder |
+| 7 | Bonds & Insurance | **built** – requirement vs provided, variance, days to expiry with amber/red rows, expiring-soon alert |
 | 8 | Invoice & Payment Tracking | placeholder |
 | 9 | Cash Flow | placeholder |
 | 10 | Budget Transfers | placeholder |

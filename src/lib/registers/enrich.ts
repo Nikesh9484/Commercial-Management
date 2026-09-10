@@ -4,6 +4,9 @@ import { CHANGE_STAGES, CLOSED_STATUSES } from "./defs/changes";
 import { CLAIM_TYPES, NOTICE_LIMIT_DAYS, DETAIL_LIMIT_DAYS, claimCostReportAmount } from "./defs/claims";
 import { businessDaysBetween } from "../workdays";
 import { PROBABILITY_BANDS, IMPACT_BANDS, bandIndex, severity } from "./defs/risks";
+import { EXPIRY_AMBER_DAYS, EXPIRY_RED_DAYS } from "./defs/bonds";
+import { revisedContractValues } from "../bonds/revised";
+import { getDb } from "../db";
 
 /**
  * Fills in the calculated ("virtual") columns of a register after its rows are read.
@@ -14,6 +17,11 @@ export function enrichRows(def: RegisterDef, rows: RecordRow[]) {
   if (def.key === "claims") rows.forEach(enrichClaim);
   if (def.key === "risks") rows.forEach(enrichRisk);
   if (def.key === "provisional_sums") rows.forEach(enrichProvisionalSum);
+  if (def.key === "bonds" && rows.length) {
+    const programmeId = Number(rows[0].programme_id);
+    const revised = revisedContractValues(getDb(), programmeId);
+    rows.forEach((r) => enrichBond(r, revised.values));
+  }
 }
 
 export function daysBetween(fromIso: string, toIso: string): number {
@@ -122,4 +130,40 @@ function enrichProvisionalSum(row: RecordRow) {
   const diff = Math.round((value - budget) * 100) / 100;
   row.saving_extra = diff;
   row.saving_extra__tone = diff > 0.004 ? "red" : diff < -0.004 ? "green" : null;
+}
+
+function enrichBond(row: RecordRow, revised: Map<number, number>) {
+  const lineId = row.cost_line_id === null || row.cost_line_id === undefined ? null : Number(row.cost_line_id);
+  const rev = lineId !== null ? (revised.get(lineId) ?? null) : null;
+  row.revised_contract_value = rev;
+  const original = row.original_contract_sum === null || row.original_contract_sum === undefined ? null : Number(row.original_contract_sum);
+  const base = rev ?? original;
+  const reqValue = row.requirement_value === null || row.requirement_value === undefined ? null : Number(row.requirement_value);
+  let required: number | null = null;
+  if (reqValue !== null) {
+    if (row.requirement_type === "Fixed SAR amount") required = reqValue;
+    else if (base !== null) required = Math.round((reqValue / 100) * base * 100) / 100;
+  }
+  row.required_amount = required;
+  const provided = row.amount_provided === null || row.amount_provided === undefined ? null : Number(row.amount_provided);
+  if (required !== null && provided !== null) {
+    const v = Math.round((provided - required) * 100) / 100;
+    row.variance = v;
+    row.variance__tone = v < -0.004 ? "red" : null;
+  } else {
+    row.variance = null;
+    row.variance__tone = null;
+  }
+  const expiry = row.expiry_date as string | null;
+  if (expiry) {
+    const days = daysBetween(todayIso(), expiry);
+    row.days_to_expiry = days;
+    const tone = days <= EXPIRY_RED_DAYS ? "red" : days <= EXPIRY_AMBER_DAYS ? "amber" : null;
+    row.days_to_expiry__tone = tone;
+    row.__row_tone = tone;
+  } else {
+    row.days_to_expiry = null;
+    row.days_to_expiry__tone = null;
+    row.__row_tone = null;
+  }
 }

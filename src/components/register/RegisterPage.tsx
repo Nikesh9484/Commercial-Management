@@ -300,7 +300,7 @@ export function RegisterPage({ registerKey, isAdmin = false }: { registerKey: st
                 </tr>
               )}
               {pageRows.map((r) => (
-                <tr key={r.id} onDoubleClick={() => data.canEdit && openEdit(r)}>
+                <tr key={r.id} onDoubleClick={() => data.canEdit && openEdit(r)} className={ROW_TONE[String(r.__row_tone ?? "")] ?? ""}>
                   {tableFields.map((f) => (
                     <td key={f.key} className={isNumeric(f) ? "tnum text-right" : ""} title={f.type === "textarea" ? String(r[f.key] ?? "") : undefined}>
                       <Cell field={f} row={r} />
@@ -463,6 +463,11 @@ function sortValue(f: FieldDef, r: RecordRow): unknown {
   if (f.type === "boolean") return r[f.key] === true ? 1 : 0;
   return r[f.key];
 }
+
+const ROW_TONE: Record<string, string> = {
+  red: "bg-red-50/70",
+  amber: "bg-amber-50/70",
+};
 
 const TONE_CLASS: Record<string, string> = {
   red: "rounded bg-red-50 px-1.5 py-0.5 font-semibold text-red-700",
