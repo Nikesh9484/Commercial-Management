@@ -39,6 +39,9 @@ export default async function MonthlyReportPage() {
               <h2 className="text-sm font-semibold text-ink">Or enter the month by hand</h2>
               <p className="text-xs text-muted">Start the next report number, type the month&apos;s changes, IPCs, claims and so on into the modules, then lock and issue. Same reports, no Excel needed.</p>
             </div>
+            <Link href="/modules/monthly-report/library" className="btn btn-secondary shrink-0">
+              <FileUp size={16} /> All reports (library)
+            </Link>
             <Link href="/modules/monthly-report/new" className="btn btn-secondary shrink-0">
               <CalendarPlus size={16} /> New month (manual entry)
             </Link>

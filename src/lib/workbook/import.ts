@@ -7,7 +7,7 @@ import { createRecord, updateRecord, listRecords, lookupOptions, ValidationError
 import type { UserInfo, RecordRow } from "../registers/types";
 import { lockPeriod, getPeriod } from "../snapshots";
 import { logAudit } from "../audit";
-import { formatMonthYear, parseDateInput } from "../format";
+import { nowIso, formatMonthYear, parseDateInput } from "../format";
 import { importKeyFields, norm } from "./analyze";
 import { cellText, getSheet, readWorkbookValues, type SheetValues } from "./read";
 
@@ -98,6 +98,8 @@ export interface ImportRequest {
   allowedRegisters?: string[];
   /** The user confirmed importing a month older than the latest report (the live figures become that older month's). */
   allowOlder?: boolean;
+  /** Name of the uploaded workbook, kept on the period for the report library. */
+  fileName?: string;
 }
 
 export interface SheetResult {
@@ -335,6 +337,7 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo): Promis
     summary: `Imported workbook for ${period.label}: ${results.map((r) => `${r.sheet} → ${r.register} (${r.created} added, ${r.updated} updated, ${r.errors.length} errors)`).join("; ")}`,
   });
 
+  db.prepare("UPDATE reporting_periods SET source_file = ?, imported_at = ?, imported_by = ? WHERE id = ?").run(String(req.fileName ?? "").slice(0, 200) || null, nowIso(), user.name, periodId);
   let locked = false;
   if (req.lock && user.role === "admin") {
     const totalErrors = results.reduce((t, r) => t + r.errors.length, 0);

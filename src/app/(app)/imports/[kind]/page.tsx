@@ -59,8 +59,10 @@ export async function generateMetadata({ params }: { params: Promise<{ kind: str
   return { title: IMPORT_KINDS[kind]?.title ?? "Import" };
 }
 
-export default async function ImportPage({ params }: { params: Promise<{ kind: string }> }) {
+export default async function ImportPage({ params, searchParams }: { params: Promise<{ kind: string }>; searchParams: Promise<{ period?: string }> }) {
   const { kind } = await params;
+  const { period: periodParam } = await searchParams;
+  const initialPeriodId = Number(periodParam) || null;
   const spec = IMPORT_KINDS[kind];
   if (!spec) notFound();
   const user = (await getCurrentUser())!;
@@ -114,7 +116,17 @@ export default async function ImportPage({ params }: { params: Promise<{ kind: s
               </Link>
             </div>
           )}
-          <WorkbookImporter registers={registers} periods={periods} isAdmin={user.role === "admin"} defaultReportNo={nextNo} standalone={standalone} excludeRegisters={spec.exclude} />
+          {initialPeriodId && periods.find((p) => p.id === initialPeriodId) && (
+            <div className="card flex flex-wrap items-center justify-between gap-3 border-l-4 border-l-navy p-4 text-sm">
+              <div>
+                Re-uploading <b>{periods.find((p) => p.id === initialPeriodId)!.label}</b> from the report library: the period is pre-selected below. Rows are matched by their references, so the report is refreshed, not duplicated.
+              </div>
+              <Link href="/modules/monthly-report/library" className="text-xs text-accent hover:underline">
+                Back to the report library
+              </Link>
+            </div>
+          )}
+          <WorkbookImporter registers={registers} periods={periods} isAdmin={user.role === "admin"} defaultReportNo={nextNo} standalone={standalone} excludeRegisters={spec.exclude} initialPeriodId={initialPeriodId} />
         </>
       )}
     </div>

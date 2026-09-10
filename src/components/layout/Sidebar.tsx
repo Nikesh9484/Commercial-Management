@@ -21,6 +21,7 @@ import {
   Upload,
   FolderDown,
   CalendarPlus,
+  Library,
   Wand2,
   X,
   type LucideIcon,
@@ -103,7 +104,12 @@ export function Sidebar({ open, onClose, role }: { open: boolean; onClose: () =>
               {link(m.slug === "executive-summary" ? "/" : `/modules/${m.slug}`, m.short, ICONS[m.icon] ?? ClipboardList, String(m.no))}
               {m.slug === "executive-summary" && <div className="pl-4">{link("/modules/executive-summary/minutes", "Minutes of Meeting", FileText)}</div>}
               {m.slug === "invoices-payments" && <div className="pl-4">{link("/modules/final-accounts", "Final Account Status", FileText)}</div>}
-              {m.slug === "monthly-report" && <div className="pl-4">{link("/modules/monthly-report/new", "New month (manual entry)", CalendarPlus)}</div>}
+              {m.slug === "monthly-report" && (
+                <div className="pl-4">
+                  {link("/modules/monthly-report/library", "All reports (library)", Library)}
+                  {link("/modules/monthly-report/new", "New month (manual entry)", CalendarPlus)}
+                </div>
+              )}
               {m.slug === "cost-report" && (
                 <div className="pl-4">
                   {link("/modules/cost-report?tab=level1", "Level 1 – Executive", FileText)}

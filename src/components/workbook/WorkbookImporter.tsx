@@ -31,14 +31,15 @@ export interface StandaloneMode {
   doneLabel: string;
 }
 
-export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo, standalone, excludeRegisters = [] }: { registers: RegisterMeta[]; periods: PeriodOption[]; isAdmin: boolean; defaultReportNo: number; standalone?: StandaloneMode; excludeRegisters?: string[] }) {
+export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo, standalone, excludeRegisters = [], initialPeriodId }: { registers: RegisterMeta[]; periods: PeriodOption[]; isAdmin: boolean; defaultReportNo: number; standalone?: StandaloneMode; excludeRegisters?: string[]; initialPeriodId?: number | null }) {
   const toast = useToast();
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [analysis, setAnalysis] = useState<WorkbookAnalysis | null>(null);
   const [mapping, setMapping] = useState<Record<string, { register: string | null; columns: Record<string, string | null> }>>({});
-  const [periodMode, setPeriodMode] = useState<"existing" | "new">(periods.some((p) => p.status === "Open") ? "existing" : "new");
-  const [periodId, setPeriodId] = useState<number | null>(periods.find((p) => p.status === "Open")?.id ?? null);
+  const preset = initialPeriodId ? periods.find((p) => p.id === initialPeriodId) ?? null : null;
+  const [periodMode, setPeriodMode] = useState<"existing" | "new">(preset || periods.some((p) => p.status === "Open") ? "existing" : "new");
+  const [periodId, setPeriodId] = useState<number | null>(preset?.id ?? periods.find((p) => p.status === "Open")?.id ?? null);
   const [reportNo, setReportNo] = useState<string>(String(defaultReportNo));
   const [periodEnd, setPeriodEnd] = useState("");
   const [lock, setLock] = useState(isAdmin);
@@ -96,7 +97,9 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo,
     if (a.conversion) {
       // A known report layout was converted: suggest the period the report is for.
       const existing = a.conversion.reportNo ? periods.find((p) => p.report_no === a.conversion!.reportNo) : undefined;
-      if (existing && existing.status === "Open") {
+      if (preset) {
+        // re-upload into the report chosen in the library: keep it
+      } else if (existing && existing.status === "Open") {
         setPeriodMode("existing");
         setPeriodId(existing.id);
       } else if (!existing) {
@@ -127,6 +130,7 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo,
       createMissingLookups: createLookups,
       allowedRegisters: standalone?.only ?? (excludeRegisters.length ? registers.map((r) => r.key) : undefined),
       allowOlder,
+      fileName: analysis.fileName,
     };
     const res = await fetch("/api/workbook/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const j = await res.json().catch(() => ({}));
