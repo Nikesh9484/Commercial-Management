@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { AlertTriangle, FileDown, FileSpreadsheet, BookOpen, Lock, Unlock } from "lucide-react";
+import { AlertTriangle, FileDown, FileSpreadsheet, BookOpen, Lock, Unlock, Presentation } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth";
 import { getAppContext } from "@/lib/context";
 import { listPeriods } from "@/lib/snapshots";
@@ -23,6 +23,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
     {
       heading: "Summaries",
       items: [
+        item("deck", "Cost Report Presentation", "14 slides: executive dashboard, Level 1, packages, movement, changes, early warnings, claims, payments, cash flow, bonds, provisional sums, key issues – editable PowerPoint or PDF"),
         item("exec", "Executive Summary", "Headline figures, open items, payment tracker, key issues and actions"),
         item("movement", "Movement since the previous report", "Cost report movement, key period movements, status counts, register changes"),
         item("claims_report", "Claims Status Report", "Executive claims report with narrative"),
@@ -89,12 +90,25 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
                       <div className="text-xs text-muted">{it.note}</div>
                     </div>
                     <span className="inline-flex gap-1.5">
-                      <a className="btn btn-sm btn-pdf" href={`/api/export?section=${encodeURIComponent(it.section)}&format=pdf${pid}`}>
-                        <FileDown size={14} /> PDF
-                      </a>
-                      <a className="btn btn-sm btn-excel" href={`/api/export?section=${encodeURIComponent(it.section)}&format=xlsx${pid}`}>
-                        <FileSpreadsheet size={14} /> Excel
-                      </a>
+                      {it.section === "deck" ? (
+                        <>
+                          <a className="btn btn-sm btn-ppt" href={`/api/export?section=deck&format=pptx${pid}`}>
+                            <Presentation size={14} /> PowerPoint
+                          </a>
+                          <a className="btn btn-sm btn-pdf" href={`/api/export?section=deck&format=pdf${pid}`}>
+                            <FileDown size={14} /> PDF slides
+                          </a>
+                        </>
+                      ) : (
+                        <>
+                          <a className="btn btn-sm btn-pdf" href={`/api/export?section=${encodeURIComponent(it.section)}&format=pdf${pid}`}>
+                            <FileDown size={14} /> PDF
+                          </a>
+                          <a className="btn btn-sm btn-excel" href={`/api/export?section=${encodeURIComponent(it.section)}&format=xlsx${pid}`}>
+                            <FileSpreadsheet size={14} /> Excel
+                          </a>
+                        </>
+                      )}
                     </span>
                   </li>
                 ))}

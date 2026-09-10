@@ -29,7 +29,7 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   // better-sqlite3 is a native Node module; it must not be bundled.
-  serverExternalPackages: ["better-sqlite3", "pdf-parse", "mammoth"],
+  serverExternalPackages: ["better-sqlite3", "pdf-parse", "mammoth", "pptxgenjs"],
   poweredByHeader: false,
   async headers() {
     return [{ source: "/(.*)", headers: securityHeaders }];

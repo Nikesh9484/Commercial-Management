@@ -15,6 +15,7 @@ import { ActionsList } from "@/components/dashboard/ActionsList";
 import { MovementPanel } from "@/components/dashboard/MovementPanel";
 import { PaymentTracker } from "@/components/dashboard/PaymentTracker";
 import { EmailReportButton } from "@/components/dashboard/EmailReportButton";
+import { DeckButtons } from "@/components/ui/DeckButtons";
 import { getMovement } from "@/lib/dashboard/movement";
 import { executiveTotals } from "@/lib/cost-report/executive";
 
@@ -71,6 +72,7 @@ export default async function HomePage() {
               </Link>
             )}
             <Chip tone={d.report.checkOk ? "green" : "red"}>L1 − L2 check {d.report.checkOk ? "OK" : "FAILED"}</Chip>
+            {ctx.period && <DeckButtons />}
             {ctx.period && <EmailReportButton />}
           </>
         }

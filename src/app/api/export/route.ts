@@ -5,6 +5,9 @@ import { getReportData } from "@/lib/report/data";
 import { renderSectionsPdf } from "@/lib/report/pdf";
 import { renderSectionsExcel } from "@/lib/report/excel";
 import { todayIso } from "@/lib/format";
+import { buildDeck } from "@/lib/report/deck";
+import { renderDeckPptx } from "@/lib/report/deck-pptx";
+import { renderDeckPdf } from "@/lib/report/deck-pdf";
 
 const NAMES: Record<string, string> = {
   exec: "Executive_Summary",
@@ -15,6 +18,7 @@ const NAMES: Record<string, string> = {
   cashflow: "Cash_Flow",
   claims_report: "Claims_Status_Report",
   fa_report: "Final_Account_Status_Report",
+  deck: "Cost_Report_Presentation",
 };
 
 /** GET /api/export?section=exec|movement|level1|level2|cashflow|<schedule letter>|<register>&format=pdf|xlsx[&period=ID] */
@@ -26,10 +30,21 @@ export async function GET(req: Request, ctx: unknown) {
     const periodId = Number(url.searchParams.get("period") || app.period?.id || 0);
     if (!periodId) return NextResponse.json({ error: "Choose a reporting period." }, { status: 400 });
     const sections = (url.searchParams.get("section") ?? "exec").split(",").map((s) => s.trim()).filter(Boolean);
-    const format = url.searchParams.get("format") === "xlsx" ? "xlsx" : "pdf";
+    const fmtParam = url.searchParams.get("format");
+    const format = fmtParam === "xlsx" ? "xlsx" : fmtParam === "pptx" ? "pptx" : "pdf";
     const data = getReportData(app.programme.id, periodId);
     const name = sections.map((s) => NAMES[s] ?? s.replace(/[^A-Za-z0-9]+/g, "_")).join("_");
     const base = `${name}_${app.programme.code}_No${data.period.report_no}_${todayIso()}${data.locked ? "" : "_DRAFT"}`;
+    if (sections.includes("deck")) {
+      // the presentation: editable PowerPoint, or the same slides as a PDF
+      const deck = buildDeck(data);
+      if (format === "pptx") {
+        const buffer = await renderDeckPptx(deck);
+        return new Response(new Uint8Array(buffer), { headers: { "Content-Type": "application/vnd.openxmlformats-officedocument.presentationml.presentation", "Content-Disposition": `attachment; filename="${base}.pptx"` } });
+      }
+      const buffer = await renderDeckPdf(deck);
+      return new Response(new Uint8Array(buffer), { headers: { "Content-Type": "application/pdf", "Content-Disposition": `attachment; filename="${base}_slides.pdf"` } });
+    }
     if (format === "xlsx") {
       const origin = url.origin;
       const buffer = await renderSectionsExcel(data, sections, { url: `${origin}/`, label: "Open the dashboard" });
