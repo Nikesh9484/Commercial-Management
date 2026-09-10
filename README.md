@@ -151,29 +151,30 @@ module will reuse.
 
 ## 8. Putting it online (free hosting)
 
-The app runs on **Render** (free web service) and keeps its database safe in **Backblaze B2** (free 10 GB storage),
-because free hosting wipes its disk whenever the app restarts. The file `render.yaml` describes the service,
-so Render can create it in one go ("Blueprint").
+The app runs on **Render** (free web service). Free hosting wipes its disk whenever the app restarts, so the
+app keeps its database safe by copying it to the **private GitHub repository**
+`Nikesh9484/Commercial-Management-data` within 20 seconds of any change, and restores it when it starts.
 
-**What you need**: a GitHub account that can see this repository, a Render account (sign in with GitHub)
-and a Backblaze account (email + password, no card). Step-by-step instructions are in the chat where this app
-was built; the short version:
+**Your part (about 10 minutes)**
 
-1. **Backblaze**: create a private bucket, note its *Endpoint* (e.g. `s3.us-west-004.backblazeb2.com`) and
-   create an Application Key with read/write access to that bucket. Copy the `keyID` and `applicationKey`.
-2. **Render**: New + → Blueprint → connect this repository → choose the branch → when asked, fill in:
-   - `ADMIN_EMAIL` and `ADMIN_PASSWORD` – your first login (choose a strong password),
-   - `BACKUP_S3_ENDPOINT` = `https://` + the endpoint from step 1,
-   - `BACKUP_S3_REGION` = the middle part of the endpoint (e.g. `us-west-004`),
-   - `BACKUP_S3_BUCKET` = your bucket name, `BACKUP_S3_KEY_ID` and `BACKUP_S3_SECRET` = the key from step 1.
-3. Wait for the first deploy (5–10 minutes). Your app is at `https://<name>.onrender.com`.
+0. **Create the private backup repository**: open <https://github.com/new?name=Commercial-Management-data&visibility=private>,
+   make sure *Private* is selected, tick *Add a README file*, click *Create repository*.
+1. **Create a GitHub token** the app will use to write backups: open
+   <https://github.com/settings/personal-access-tokens/new>, Token name `commercial-dashboard-backup`,
+   Expiration → *No expiration* (or 1 year), Repository access → *Only select repositories* →
+   `Commercial-Management-data`, Permissions → Repository permissions → *Contents* → *Read and write*,
+   then *Generate token*. Copy the token (it starts with `github_pat_`).
+2. **Click the Deploy to Render button** at the top of this file. Sign in with GitHub, then fill in
+   `ADMIN_EMAIL` (your login), `ADMIN_PASSWORD` (choose a strong one) and `BACKUP_GITHUB_TOKEN` (the token
+   from step 1). Click *Apply* and wait for *Live* (5–10 minutes).
+3. Open the address shown on the service (ends in `.onrender.com`), log in, and check Settings →
+   *Database backup* shows a green chip.
 
-Settings → *Database backup* shows whether the cloud backup is working and lets an Admin download the
-database at any time.
-
-**Free plan limits**: the Render free service goes to sleep after 15 minutes without visitors, so the first
-page after a pause takes 30–60 seconds. Data is kept in Backblaze. If you want it always on, upgrade the
-service to Render's *Starter* plan (about US$7/month); nothing else changes.
+**Free plan limits**: the free service sleeps after 15 minutes without visitors, so the first page after a
+pause takes 30–60 seconds; data is safe in GitHub. Render gives 750 free hours a month, enough for one
+service. For an always-on service, upgrade the instance to *Starter* (about US$7/month); nothing else changes.
+An S3-compatible bucket (Backblaze B2, Cloudflare R2 …) can be used instead of GitHub via the `BACKUP_S3_*`
+settings.
 
 ## 9. For developers
 

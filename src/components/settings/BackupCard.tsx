@@ -41,17 +41,17 @@ export function BackupCard({ status }: { status: BackupStatus }) {
       {status.enabled ? (
         <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
           <Chip tone={status.lastError ? "red" : status.lastUploadAt ? "green" : "amber"}>{status.lastError ? "Error" : status.lastUploadAt ? "Cloud backup on" : "Cloud backup on – nothing uploaded yet"}</Chip>
-          <span>Bucket: {status.bucket}</span>
+          <span>Storage: {status.bucket}</span>
           {status.lastUploadAt && <span>· last upload {formatDateTime(status.lastUploadAt)} ({status.uploads} this session)</span>}
           {status.restoredFrom && <span>· started from {status.restoredFrom === "cloud" ? "the cloud backup" : status.restoredFrom === "local" ? "the local file" : "a fresh database"}</span>}
           {status.lastError && <span className="text-red-700">· {status.lastError}</span>}
         </div>
       ) : (
         <p className="text-xs text-muted">
-          Cloud backup is off (no BACKUP_S3_* settings). The database is the file <code>data/commercial.db</code>; use <em>Download database</em> to keep a copy. On a hosting service, set the BACKUP_S3_* settings so the database survives restarts.
+          Cloud backup is off (no BACKUP_GITHUB_* or BACKUP_S3_* settings). The database is the file <code>data/commercial.db</code>; use <em>Download database</em> to keep a copy. On a hosting service, set the backup settings so the database survives restarts.
         </p>
       )}
-      <p className="mt-2 text-xs text-muted">Changes are uploaded within about 20 seconds, plus one dated copy per day. To restore, place the downloaded file at data/commercial.db (or upload it to the bucket as commercial.db) and restart the app.</p>
+      <p className="mt-2 text-xs text-muted">Changes are uploaded within about 20 seconds, plus one dated copy per day. To restore, place the downloaded file at data/commercial.db (or upload it to the backup storage as backups/commercial.db) and restart the app.</p>
     </div>
   );
 }

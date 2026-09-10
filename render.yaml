@@ -1,4 +1,4 @@
-# Render.com Blueprint – creates the web service with one click ("New + → Blueprint").
+# Render.com Blueprint – creates the web service in one go ("Deploy to Render" button in README).
 services:
   - type: web
     name: commercial-dashboard
@@ -13,19 +13,14 @@ services:
         value: "22"
       - key: SESSION_SECRET
         generateValue: true
+      - key: ADMIN_NAME
+        value: Commercial Manager
       - key: ADMIN_EMAIL
         sync: false
       - key: ADMIN_PASSWORD
         sync: false
-      - key: ADMIN_NAME
-        value: Commercial Manager
-      - key: BACKUP_S3_ENDPOINT
-        sync: false
-      - key: BACKUP_S3_REGION
-        sync: false
-      - key: BACKUP_S3_BUCKET
-        sync: false
-      - key: BACKUP_S3_KEY_ID
-        sync: false
-      - key: BACKUP_S3_SECRET
+      # Database backups go to this private GitHub repository (created for you).
+      - key: BACKUP_GITHUB_REPO
+        value: Nikesh9484/Commercial-Management-data
+      - key: BACKUP_GITHUB_TOKEN
         sync: false
