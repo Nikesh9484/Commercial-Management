@@ -314,7 +314,7 @@ function executiveSummary(ctx: Ctx) {
     ["Variance to Latest Budget (O)", formatMoney(g.O), g.O > 0 ? "over budget" : g.O < 0 ? "under budget" : "on budget"],
     ["Certified to Date (P)", formatMoney(g.P), g.N ? `${Math.round((g.P / g.N) * 100)}% of AFA` : ""],
     ["Works to Complete (Q)", formatMoney(g.Q), ""],
-    ["Period Movement (S)", formatMoney(g.S), data.previousPeriod ? `vs ${data.previousPeriod.label}` : "no previous period"],
+    ["Period Movement (S)", formatMoney(g.S), data.costReport.previousPeriod ? (data.costReport.previousPeriod.snapshotAvailable ? `vs ${data.costReport.previousPeriod.label}` : (data.costReport.previousPeriod.note ?? "previous period not locked")) : "no previous period"],
   ];
   // KPI grid 4 x 2
   const cw = (PAGE.width - PAGE.margin * 2 - 3 * 10) / 4;
@@ -403,6 +403,10 @@ function movementSection(ctx: Ctx) {
     return Math.abs(n) < 0.005 ? "–" : `${n > 0 ? "+" : ""}${formatMoney(n)}`;
   };
   subheading(ctx, `Cost report: ${m.previous.label} -> ${m.current.label}`, "Executive view (budget columns include the budget hold; change and forecast columns exclude it).");
+  if (m.warning) {
+    doc.fillColor("#92400e").font("Helvetica-Bold").fontSize(8.5).text(m.warning, { width: PAGE.width - PAGE.margin * 2 });
+    doc.moveDown(0.4);
+  }
   table(
     ctx,
     [
@@ -564,7 +568,7 @@ const moneyCols = (keys: readonly string[]): Col[] =>
 function costLevel1(ctx: Ctx) {
   const { data } = ctx;
   const r = data.costReport;
-  const note = `${r.period?.label ?? ""} · previous period: ${r.previousPeriod ? r.previousPeriod.label + (r.previousPeriod.snapshotAvailable ? "" : " (not locked)") : "none"} · source: ${data.sources.cost_report}`;
+  const note = `${r.period?.label ?? ""} · previous period: ${r.previousPeriod ? r.previousPeriod.label + (r.previousPeriod.snapshotAvailable ? "" : ` (${r.previousPeriod.note ?? "not locked"})`) : "none"} · source: ${data.sources.cost_report}`;
   const rows = r.level1.map((l) => ({ ...l }));
   const part = (title: string, keys: string[]) => {
     subheading(ctx, title, note);

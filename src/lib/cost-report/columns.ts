@@ -56,7 +56,7 @@ export interface Level1Row extends Money {
 export interface CostReport {
   programme: { id: number; code: string; name: string } | null;
   period: { id: number; label: string; status: string } | null;
-  previousPeriod: { id: number; label: string; status: string; snapshotAvailable: boolean } | null;
+  previousPeriod: { id: number; label: string; status: string; snapshotAvailable: boolean; note?: string } | null;
   feeds: FeedStatus[];
   lines: CostLineRow[];
   sections: { name: "Committed" | "Uncommitted"; lines: CostLineRow[]; subtotal: Money }[];

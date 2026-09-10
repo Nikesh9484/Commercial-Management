@@ -64,6 +64,7 @@ function movementSheet(wb: ExcelJS.Workbook, d: ReportData) {
     return;
   }
   ws.addRow([`${m.previous.label}  →  ${m.current.label}`]).font = { italic: true };
+  if (m.warning) ws.addRow([m.warning]).font = { bold: true, color: { argb: "FF92400E" } };
   ws.addRow([]);
   header(ws.addRow(["Cost report column", `Previous (${m.previous.label})`, "This report", "Movement"]));
   for (const k of m.kpis) {
@@ -249,7 +250,7 @@ function execSheet(wb: ExcelJS.Workbook, d: ReportData) {
     ["Variance to Latest Budget (O)", g.O, ""],
     ["Certified to Date (P)", g.P, ""],
     ["Works to Complete (Q)", g.Q, ""],
-    ["Period Movement (S)", g.S, d.previousPeriod ? `vs ${d.previousPeriod.label}` : "no previous period"],
+    ["Period Movement (S)", g.S, d.costReport.previousPeriod ? (d.costReport.previousPeriod.snapshotAvailable ? `vs ${d.costReport.previousPeriod.label}` : (d.costReport.previousPeriod.note ?? "previous period not locked")) : "no previous period"],
   ];
   for (const [k, v, n] of kp) ws.addRow([k, v, n]).getCell(2).numFmt = MONEY_FMT;
   ws.addRow([]);

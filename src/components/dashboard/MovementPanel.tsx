@@ -81,6 +81,7 @@ export function MovementPanel({ m }: { m: Movement }) {
             <ExportButtons section="movement" />
           </span>
         </div>
+        {m.warning && <div className="border-b border-amber-200 bg-amber-50 px-5 py-2 text-xs text-amber-900">{m.warning}</div>}
         <div className="overflow-x-auto">
           <table className="data w-full">
             <thead>

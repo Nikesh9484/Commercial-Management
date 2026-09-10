@@ -105,6 +105,8 @@ export interface Movement {
   kpis: { key: string; label: string; prev: number; now: number; delta: number }[];
   stages: StageMove[];
   groups: MoveGroup[];
+  /** Set when the comparison is not meaningful, e.g. the previous report was locked with no cost lines. */
+  warning?: string;
   keyMovements: KeyMovement[];
   statusCounts: StatusCount[];
   dvoAgeing: AgeBucket[];
@@ -118,7 +120,7 @@ const r2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 export function previousLockedPeriod(db: Database.Database, period: PeriodRow): PeriodRow | null {
   return (
     (db
-      .prepare("SELECT p.* FROM reporting_periods p WHERE p.report_no < ? AND EXISTS (SELECT 1 FROM snapshots s WHERE s.period_id = p.id) ORDER BY p.report_no DESC LIMIT 1")
+      .prepare("SELECT p.* FROM reporting_periods p WHERE p.report_no < ? AND EXISTS (SELECT 1 FROM snapshots s WHERE s.period_id = p.id AND s.register_key = 'cost_report') ORDER BY p.report_no DESC LIMIT 1")
       .get(period.report_no) as PeriodRow | undefined) ?? null
   );
 }
@@ -342,6 +344,9 @@ export function getMovement(db: Database.Database, programmeId: number, periodId
   const pg = prevReport ? executiveTotals(prevReport) : zero;
   const g = executiveTotals(nowReport);
   const kpis = MONEY_COLUMNS.filter((c) => !["R", "S"].includes(c.key)).map((c) => ({ key: c.key, label: c.label, prev: pg[c.key], now: g[c.key], delta: r2(g[c.key] - pg[c.key]) }));
+  let warning: string | undefined;
+  if (prev && prevReport && prevReport.lines.length === 0) warning = `${prev.label} is locked but its cost report has no lines, so every "previous" figure below is 0. Unlock ${prev.label}, import or enter that month's data, and lock it again – or delete it if it was created by mistake.`;
+  else if (prev && nowReport.previousPeriod && nowReport.previousPeriod.id === prev.id && !nowReport.previousPeriod.snapshotAvailable) warning = `${prev.label} has a cost report, but none of its lines match this report's lines (different codes). The cost report movement below compares totals only.`;
 
   const nowChanges = rowsFor(db, programmeId, current, "changes");
   const prevChanges = prev ? rowsFor(db, programmeId, prev, "changes") : [];
@@ -400,6 +405,7 @@ export function getMovement(db: Database.Database, programmeId: number, periodId
   return {
     current: { id: current.id, label: current.label, status: current.status },
     previous: prev ? { id: prev.id, label: prev.label } : null,
+    warning,
     kpis,
     stages,
     groups,

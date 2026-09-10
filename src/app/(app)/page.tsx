@@ -46,7 +46,7 @@ export default async function HomePage() {
     { label: "Variance to Latest Budget", value: g.O, col: "O", signed: true, sub: g.O > 0 ? "over budget" : g.O < 0 ? "under budget" : "on budget" },
     { label: "Certified to Date", value: g.P, col: "P", sub: g.N ? `${Math.round((g.P / g.N) * 100)}% of anticipated final account` : undefined },
     { label: "Works to Complete", value: g.Q, col: "Q" },
-    { label: "Period Movement", value: g.S, col: "S", signed: true, sub: d.report.previousPeriod ? (d.report.previousPeriod.snapshotAvailable ? `vs ${d.report.previousPeriod.label}` : "previous period not locked") : "no previous period" },
+    { label: "Period Movement", value: g.S, col: "S", signed: true, sub: d.report.previousPeriod ? (d.report.previousPeriod.snapshotAvailable ? `vs ${d.report.previousPeriod.label}` : (d.report.previousPeriod.note ?? "previous period not locked")) : "no previous period" },
   ];
 
   return (

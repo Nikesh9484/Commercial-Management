@@ -55,10 +55,12 @@ export function computeCostReport(programmeId: number, periodId: number | null):
     if (snap) {
       const assetIds = new Set((db.prepare("SELECT id FROM assets WHERE programme_id = ?").all(programmeId) as { id: number }[]).map((a) => a.id));
       const { status } = getCostFeeds(db, programmeId, period.id);
-      return assembleReport(
-        snap.filter((l) => assetIds.has(l.asset_id)).map((l) => ({ ...l, category: l.category ?? "", is_budget_hold: !!l.is_budget_hold })),
-        { programme, period: { id: period.id, label: period.label, status: period.status }, previousPeriod: prev ? { ...prev, snapshotAvailable: true } : null, feeds: status },
-      );
+      const lines = snap.filter((l) => assetIds.has(l.asset_id)).map((l) => ({ ...l, category: l.category ?? "", is_budget_hold: !!l.is_budget_hold }));
+      // Column R/S (previous AFA, period movement) are re-read from the previous issued report so a
+      // previous period that was locked empty, or re-imported since, cannot leave S equal to N.
+      const prevAfa = prev ? previousAfa(db, prev.id) : null;
+      const previousPeriod = applyPrevious(lines, prev, prevAfa);
+      return assembleReport(lines, { programme, period: { id: period.id, label: period.label, status: period.status }, previousPeriod, feeds: status });
     }
   }
 
@@ -95,8 +97,8 @@ export function computeCostReport(programmeId: number, periodId: number | null):
     const O = round2(N - G);
     const P = g(feeds.certified);
     const Q = round2(N - P);
-    const R = prevAfa ? round2(prevAfa.get(r.id) ?? 0) : 0;
-    const S = round2(N - R);
+    const R = 0;
+    const S = 0;
     return {
       id: r.id,
       asset_id: r.asset_id,
@@ -115,14 +117,50 @@ export function computeCostReport(programmeId: number, periodId: number | null):
       E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S,
     };
   });
-  applyBudgetHold(lines, prevAfa);
+  applyBudgetHold(lines);
+  const previousPeriod = applyPrevious(lines, prev, prevAfa);
 
   return assembleReport(lines, {
     programme,
     period: period ? { id: period.id, label: period.label, status: period.status } : null,
-    previousPeriod: prev ? { ...prev, snapshotAvailable: !!prevAfa } : null,
+    previousPeriod,
     feeds: status,
   });
+}
+
+/**
+ * Fills columns R (previous AFA) and S (period movement = N − R) from the previous issued report.
+ * Lines are matched by id, then by asset + code (so a re-import with new ids still compares).
+ * When the previous report exists but none of its lines match, R and S stay 0 and the note says why,
+ * instead of reporting the whole AFA as "movement".
+ */
+function applyPrevious(lines: CostLineRow[], prev: { id: number; label: string; status: string } | null, prevAfa: PreviousAfa | null): CostReport["previousPeriod"] {
+  if (!prev) return null;
+  if (!prevAfa) {
+    for (const l of lines) {
+      l.R = 0;
+      l.S = 0;
+      l.prev_available = false;
+    }
+    return { ...prev, snapshotAvailable: false, note: prev.status === "Locked" ? `${prev.label} is locked but has no cost report stored – column R shows 0` : "previous period not locked – column R shows 0" };
+  }
+  let matched = 0;
+  for (const l of lines) {
+    const v = prevAfa.byId.get(l.id) ?? prevAfa.byCode.get(`${l.asset_code}|${l.code}`);
+    if (v !== undefined) matched++;
+    l.R = round2(v ?? 0);
+    l.S = round2(l.N - l.R);
+    l.prev_available = true;
+  }
+  if (matched === 0 && lines.length > 0) {
+    for (const l of lines) {
+      l.R = 0;
+      l.S = 0;
+      l.prev_available = false;
+    }
+    return { ...prev, snapshotAvailable: false, note: `${prev.label} is locked but its cost report has no lines in common with this one (empty or different line codes) – column R shows 0` };
+  }
+  return { ...prev, snapshotAvailable: true };
 }
 
 /**
@@ -130,7 +168,7 @@ export function computeCostReport(programmeId: number, periodId: number | null):
  * early warnings and claims of the other lines in that group, so the group's anticipated final
  * account stays at the approved budget until the hold is used up – as in the Excel Schedule A.
  */
-function applyBudgetHold(lines: CostLineRow[], prevAfa: Map<number, number> | null) {
+function applyBudgetHold(lines: CostLineRow[]) {
   const holds = lines.filter((l) => l.is_budget_hold);
   for (const hold of holds) {
     const others = lines.filter((l) => !l.is_budget_hold && l.asset_id === hold.asset_id && l.category === hold.category);
@@ -144,8 +182,6 @@ function applyBudgetHold(lines: CostLineRow[], prevAfa: Map<number, number> | nu
     hold.N = round2(hold.I + hold.J + hold.K + hold.L + hold.M);
     hold.O = round2(hold.N - hold.G);
     hold.Q = round2(hold.N - hold.P);
-    hold.R = prevAfa ? round2(prevAfa.get(hold.id) ?? 0) : 0;
-    hold.S = round2(hold.N - hold.R);
   }
 }
 
@@ -184,16 +220,23 @@ export function assembleReport(lines: CostLineRow[], meta: Pick<CostReport, "pro
   return { ...meta, lines, sections, grandTotal, totalsExclHold, level1, level1Total, check, checkOk, chart: [...byPackage.values()] };
 }
 
-/** Anticipated Final Account per cost line stored when the previous period was locked. */
-function previousAfa(db: Database.Database, periodId: number): Map<number, number> | null {
+interface PreviousAfa {
+  byId: Map<number, number>;
+  byCode: Map<string, number>;
+}
+
+/** Anticipated Final Account per cost line stored when the previous period was locked (by id and by asset + code). */
+function previousAfa(db: Database.Database, periodId: number): PreviousAfa | null {
   const rows = db.prepare("SELECT record_id, data FROM snapshots WHERE period_id = ? AND register_key = 'cost_report'").all(periodId) as { record_id: number; data: string }[];
   if (!rows.length) return null;
-  const out = new Map<number, number>();
+  const byId = new Map<number, number>();
+  const byCode = new Map<string, number>();
   for (const r of rows) {
-    const d = JSON.parse(r.data) as { N?: number };
-    out.set(r.record_id, Number(d.N ?? 0));
+    const d = JSON.parse(r.data) as { N?: number; asset_code?: string; code?: string };
+    byId.set(r.record_id, Number(d.N ?? 0));
+    if (d.code) byCode.set(`${d.asset_code ?? ""}|${d.code}`, Number(d.N ?? 0));
   }
-  return out;
+  return { byId, byCode };
 }
 
 /** Stores the computed report for every programme (called when a period is locked). Returns rows stored. */

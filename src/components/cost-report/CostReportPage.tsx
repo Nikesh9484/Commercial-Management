@@ -93,7 +93,7 @@ export function CostReportPage({ canEdit, isAdmin, initialTab }: { canEdit: bool
         {report.previousPeriod ? (
           <Chip tone={report.previousPeriod.snapshotAvailable ? "green" : "amber"}>
             Previous: {report.previousPeriod.label}
-            {report.previousPeriod.snapshotAvailable ? "" : " (not locked – column R shows 0)"}
+            {report.previousPeriod.snapshotAvailable ? "" : ` (${report.previousPeriod.note ?? "not locked – column R shows 0"})`}
           </Chip>
         ) : (
           <Chip tone="grey">No previous period yet</Chip>
