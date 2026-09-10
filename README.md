@@ -147,7 +147,33 @@ module will reuse.
 
 ---
 
-## 8. For developers
+## 8. Putting it online (free hosting)
+
+The app runs on **Render** (free web service) and keeps its database safe in **Backblaze B2** (free 10 GB storage),
+because free hosting wipes its disk whenever the app restarts. The file `render.yaml` describes the service,
+so Render can create it in one go ("Blueprint").
+
+**What you need**: a GitHub account that can see this repository, a Render account (sign in with GitHub)
+and a Backblaze account (email + password, no card). Step-by-step instructions are in the chat where this app
+was built; the short version:
+
+1. **Backblaze**: create a private bucket, note its *Endpoint* (e.g. `s3.us-west-004.backblazeb2.com`) and
+   create an Application Key with read/write access to that bucket. Copy the `keyID` and `applicationKey`.
+2. **Render**: New + → Blueprint → connect this repository → choose the branch → when asked, fill in:
+   - `ADMIN_EMAIL` and `ADMIN_PASSWORD` – your first login (choose a strong password),
+   - `BACKUP_S3_ENDPOINT` = `https://` + the endpoint from step 1,
+   - `BACKUP_S3_REGION` = the middle part of the endpoint (e.g. `us-west-004`),
+   - `BACKUP_S3_BUCKET` = your bucket name, `BACKUP_S3_KEY_ID` and `BACKUP_S3_SECRET` = the key from step 1.
+3. Wait for the first deploy (5–10 minutes). Your app is at `https://<name>.onrender.com`.
+
+Settings → *Database backup* shows whether the cloud backup is working and lets an Admin download the
+database at any time.
+
+**Free plan limits**: the Render free service goes to sleep after 15 minutes without visitors, so the first
+page after a pause takes 30–60 seconds. Data is kept in Backblaze. If you want it always on, upgrade the
+service to Render's *Starter* plan (about US$7/month); nothing else changes.
+
+## 9. For developers
 
 - Next.js 16 (App Router, TypeScript, Tailwind v4), SQLite via `better-sqlite3`, `exceljs` for Excel, `jose` sessions, `bcryptjs` passwords.
 - A register is declared once as a `RegisterDef` in `src/lib/registers/defs/*.ts`; tables are created / extended automatically on start-up.

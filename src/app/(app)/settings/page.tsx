@@ -6,6 +6,8 @@ import { canViewRegister, canEditRegister } from "@/lib/registers/types";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Chip } from "@/components/ui/Chip";
 import { getDb } from "@/lib/db";
+import { backupStatus } from "@/lib/cloud-backup";
+import { BackupCard } from "@/components/settings/BackupCard";
 
 export const metadata = { title: "Settings" };
 
@@ -29,6 +31,7 @@ export default async function SettingsPage() {
         }
       />
       <div className="space-y-6">
+        {user.role === "admin" && <BackupCard status={backupStatus()} />}
         {[...groups.entries()].map(([group, defs]) => (
           <section key={group}>
             <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">{group}</h2>
