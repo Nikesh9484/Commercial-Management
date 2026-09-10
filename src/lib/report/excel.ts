@@ -258,7 +258,7 @@ function execSheet(wb: ExcelJS.Workbook, d: ReportData) {
   ws.addRow(["Open changes by stage", dash.openStages.map((s) => `${s.stage} ${s.open}`).join("  "), `${dash.openChanges} open in total`]);
   ws.addRow(["Open claims", dash.openClaims, `${formatMoney(dash.claimsPendingValue)} claimed and pending`]);
   ws.addRow(["Open early warnings", dash.openEarlyWarnings, `${formatMoney(dash.ewOpenValue)} potential cost`]);
-  ws.addRow(["Bonds & insurance expiring within 60 days", dash.bonds.expiring.length, `${dash.bonds.expired} expired`]);
+  ws.addRow(["Bonds & insurance expiring within 60 days", dash.bonds.expiring.length, `${dash.bonds.expired} expired${dash.bonds.released ? ` · ${dash.bonds.released} released (contract closed)` : ""}`]);
   paymentTrackerBlock(ws, d);
   ws.addRow([]);
   ws.addRow(["Key issues this period"]).font = { bold: true, color: { argb: NAVY } };

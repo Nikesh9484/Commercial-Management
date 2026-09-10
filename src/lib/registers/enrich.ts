@@ -9,6 +9,7 @@ import { businessDaysBetween } from "../workdays";
 import { PROBABILITY_BANDS, IMPACT_BANDS, bandIndex, severity } from "./defs/risks";
 import { EXPIRY_AMBER_DAYS, EXPIRY_RED_DAYS } from "./defs/bonds";
 import { revisedContractValues } from "../bonds/revised";
+import { closedContracts, type ClosedContracts } from "../bonds/closed";
 import { getDb, getSetting } from "../db";
 import { computeCostReport } from "../cost-report/compute";
 import { FA_AMBER_DAYS } from "./defs/final-accounts";
@@ -72,7 +73,16 @@ export function enrichRows(def: RegisterDef, rows: RecordRow[]) {
   if (def.key === "bonds" && rows.length) {
     const programmeId = Number(rows[0].programme_id);
     const revised = revisedContractValues(getDb(), programmeId);
-    rows.forEach((r) => enrichBond(r, revised.values));
+    const closed = closedContracts(getDb(), programmeId);
+    // A bond / policy is superseded when a newer one of the same type exists for the same contractor and contract.
+    const latest = new Map<string, string>();
+    const groupKey = (r: RecordRow) => `${r.contractor_id}|${r.cost_line_id ?? r.package_id ?? ""}|${r.type_id}`;
+    for (const r of rows) {
+      const k = groupKey(r);
+      const e = String(r.expiry_date ?? "");
+      if (e && e > (latest.get(k) ?? "")) latest.set(k, e);
+    }
+    rows.forEach((r) => enrichBond(r, revised.values, closed, !!r.expiry_date && String(r.expiry_date) < (latest.get(groupKey(r)) ?? "")));
   }
   if (def.key === "final_accounts" && rows.length) {
     const db = getDb();
@@ -198,7 +208,11 @@ function enrichProvisionalSum(row: RecordRow) {
   row.saving_extra__tone = diff > 0.004 ? "red" : diff < -0.004 ? "green" : null;
 }
 
-function enrichBond(row: RecordRow, revised: Map<number, number>) {
+function enrichBond(row: RecordRow, revised: Map<number, number>, closed: ClosedContracts, superseded: boolean) {
+  const lineIdRaw = row.cost_line_id === null || row.cost_line_id === undefined ? null : Number(row.cost_line_id);
+  const released = row.contract_closed === true || (lineIdRaw !== null ? closed.lines.has(lineIdRaw) : closed.contractors.has(Number(row.contractor_id)));
+  row.released = released || superseded;
+  row.superseded = superseded && !released;
   const lineId = row.cost_line_id === null || row.cost_line_id === undefined ? null : Number(row.cost_line_id);
   const rev = lineId !== null ? (revised.get(lineId) ?? null) : null;
   row.revised_contract_value = rev;
@@ -224,12 +238,16 @@ function enrichBond(row: RecordRow, revised: Map<number, number>) {
   if (expiry) {
     const days = daysBetween(todayIso(), expiry);
     row.days_to_expiry = days;
-    const tone = days <= EXPIRY_RED_DAYS ? "red" : days <= EXPIRY_AMBER_DAYS ? "amber" : null;
+    const tone = released || superseded ? null : days <= EXPIRY_RED_DAYS ? "red" : days <= EXPIRY_AMBER_DAYS ? "amber" : null;
     row.days_to_expiry__tone = tone;
     row.__row_tone = tone;
+    row.status = released ? "Released (contract closed)" : superseded ? "Superseded (newer policy held)" : days < 0 ? "Expired" : days <= EXPIRY_AMBER_DAYS ? "Expiring" : "Active";
+    row.status__tone = released || superseded ? "grey" : days < 0 ? "red" : days <= EXPIRY_AMBER_DAYS ? "amber" : "green";
   } else {
     row.days_to_expiry = null;
     row.days_to_expiry__tone = null;
     row.__row_tone = null;
+    row.status = released ? "Released (contract closed)" : "Active";
+    row.status__tone = released ? "grey" : "green";
   }
 }

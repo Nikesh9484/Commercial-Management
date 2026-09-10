@@ -116,7 +116,7 @@ export default async function HomePage() {
           href="/modules/bonds-insurance"
           label="Bonds & insurance expiring"
           value={d.bonds.expiring.length}
-          sub={`${d.bonds.expired} expired · ${d.bonds.red} within 30 days · ${d.bonds.amber} within 60 days`}
+          sub={`${d.bonds.expired} expired · ${d.bonds.red} within 30 days · ${d.bonds.amber} within 60 days${d.bonds.released + d.bonds.superseded ? ` · ${d.bonds.released + d.bonds.superseded} released / superseded` : ""}`}
           tone={d.bonds.expired + d.bonds.red ? "red" : d.bonds.amber ? "amber" : "green"}
         />
       </div>
@@ -147,7 +147,7 @@ export default async function HomePage() {
         </div>
       </div>
 
-      {(d.bonds.expiring.length > 0 || d.bonds.expired > 0) && <ExpiringSoonCard items={d.bonds.expiring} expired={d.bonds.expired} />}
+      {(d.bonds.expiring.length > 0 || d.bonds.expired > 0) && <ExpiringSoonCard items={d.bonds.expiring} expired={d.bonds.expired} released={d.bonds.released} superseded={d.bonds.superseded} />}
     </div>
   );
 }

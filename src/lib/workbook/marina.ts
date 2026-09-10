@@ -616,8 +616,27 @@ export function convertMarinaReport(sheets: Sheet[]): ConversionResult {
   });
 
   // ---- 8. Bonds & insurance (Schedule G)
+  // A bond whose contract is closed (FA Status sheet "Closed" / "Not required", or Schedule H "CLOSED") is
+  // imported as released so its expiry is not flagged.
+  const closedLines = new Set<string>();
+  for (const c of contracts) if (c.status === "Closed" && c.line) closedLines.add(c.line);
+  {
+    const FA0 = findSheet(sheets, "FA Status", "Final Account Status", "FA");
+    if (FA0) {
+      const hdr = findHeaderRow(FA0, "acc code", "status") ?? 12;
+      for (const [r, v] of rows(FA0)) {
+        if (r <= hdr || !isNum(cell(v, 1)) || !txt(v, 2)) continue;
+        const st = txt(v, 12).toLowerCase();
+        if (!(st.startsWith("closed") || st.startsWith("not req") || st.startsWith("no fa"))) continue;
+        const frag = txt(v, 2).replace(/\s+/g, "").replace(/^(PS|CN|MS|CM)\./, "").split(".")[0];
+        const line = lineForFrag(frag);
+        if (line) closedLines.add(line);
+      }
+    }
+  }
   const G = findSheet(sheets, "Schedule G");
   const bondRows: unknown[][] = [];
+  let releasedBonds = 0;
   if (G) {
     const hdr = findHeaderRow(G, "ref", "type of bond") ?? 12;
     const seen = new Map<string, number>();
@@ -631,13 +650,17 @@ export function convertMarinaReport(sheets: Sheet[]): ConversionResult {
       const t = BOND_TYPES[txt(v, 7).toLowerCase().trim()] ?? txt(v, 7).trim();
       let comments = txt(v, 16);
       if (req === null && reqTxt) comments = `Contract requirement: ${reqTxt}. ${comments}`.trim();
-      bondRows.push([`${base}${dup === 1 ? "" : String.fromCharCode(96 + dup)}`, contractor(txt(v, 3)), pkg(txt(v, 4)), lineForPkg(txt(v, 4)), t, txt(v, 8), money(v, 5), req !== null ? "Fixed SAR amount" : "% of contract value", req, money(v, 10), date(v, 12), yes(v, 14), yes(v, 15), comments]);
+      const line = lineForPkg(txt(v, 4));
+      const released = !!line && closedLines.has(line);
+      if (released) releasedBonds++;
+      bondRows.push([`${base}${dup === 1 ? "" : String.fromCharCode(96 + dup)}`, contractor(txt(v, 3)), pkg(txt(v, 4)), line, t, txt(v, 8), money(v, 5), req !== null ? "Fixed SAR amount" : "% of contract value", req, money(v, 10), date(v, 12), yes(v, 14), yes(v, 15), released, comments]);
     }
+    if (releasedBonds) notes.push(`Bonds & insurance: ${releasedBonds} marked as released because the contract is closed in FA Status / Schedule H.`);
   }
   out.push({
     name: "Bonds & Insurance",
     register: "bonds",
-    columns: cols([["Ref", "ref"], ["Contractor / Consultant", "contractor_id"], ["Package", "package_id"], ["Cost report line (contract)", "cost_line_id"], ["Type of bond / insurance", "type_id"], ["Policy / bond no", "policy_no"], ["Original contract sum", "original_contract_sum"], ["Contract requirement – type", "requirement_type"], ["Contract requirement – value", "requirement_value"], ["Amount provided", "amount_provided"], ["Expiry date", "expiry_date"], ["Approved", "approved"], ["Bank verification", "bank_verification"], ["Comments", "comments"]]),
+    columns: cols([["Ref", "ref"], ["Contractor / Consultant", "contractor_id"], ["Package", "package_id"], ["Cost report line (contract)", "cost_line_id"], ["Type of bond / insurance", "type_id"], ["Policy / bond no", "policy_no"], ["Original contract sum", "original_contract_sum"], ["Contract requirement – type", "requirement_type"], ["Contract requirement – value", "requirement_value"], ["Amount provided", "amount_provided"], ["Expiry date", "expiry_date"], ["Approved", "approved"], ["Bank verification", "bank_verification"], ["Contract closed – bond released", "contract_closed"], ["Comments", "comments"]]),
     rows: bondRows,
   });
 

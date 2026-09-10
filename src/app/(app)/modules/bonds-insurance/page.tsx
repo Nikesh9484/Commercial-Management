@@ -25,7 +25,7 @@ export default async function BondsPage() {
       {summary ? (
         <>
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <Stat label="Bonds & policies" value={String(summary.total)} sub={`${summary.expired} expired · ${summary.red} within 30 days · ${summary.amber} within 60 days`} tone={summary.expired + summary.red > 0 ? "red" : summary.amber > 0 ? "amber" : undefined} />
+            <Stat label="Bonds & policies" value={String(summary.total)} sub={`${summary.expired} expired · ${summary.red} within 30 days · ${summary.amber} within 60 days${summary.released ? ` · ${summary.released} released (contract closed)` : ""}${summary.superseded ? ` · ${summary.superseded} superseded` : ""}`} tone={summary.expired + summary.red > 0 ? "red" : summary.amber > 0 ? "amber" : undefined} />
             <Stat label="Provided vs required" value={`${formatMoney(summary.provided)} / ${formatMoney(summary.required)}`} sub="total face value held vs total contract requirement" small />
             <Stat label="Shortfalls" value={String(summary.shortfall)} sub={summary.shortfall ? `${formatMoney(summary.shortfallValue)} below requirement in total` : "every item meets its requirement"} tone={summary.shortfall ? "red" : "green"} />
             <div className="card min-w-0 p-4">
@@ -36,9 +36,9 @@ export default async function BondsPage() {
               </div>
             </div>
           </div>
-          <ExpiringSoonCard items={summary.expiring} expired={summary.expired} />
+          <ExpiringSoonCard items={summary.expiring} expired={summary.expired} released={summary.released} superseded={summary.superseded} />
           <p className="text-xs text-muted">
-            Rows turn amber within 60 days of expiry and red within 30 days or once expired. Contract requirement = the % entered × revised contract value (or the original sum if no cost line is linked), or the fixed SAR amount. Types are managed under Settings → Insurance / Bond Types.
+            Rows turn amber within 60 days of expiry and red within 30 days or once expired. A bond whose contract is closed (Final Account Status closed / not required, contract Closed or Completed, or &quot;Contract closed&quot; ticked on the row) shows as Released and is not flagged. An older policy replaced by a newer one of the same type on the same contract shows as Superseded. Contract requirement = the % entered × revised contract value (or the original sum if no cost line is linked), or the fixed SAR amount. Types are managed under Settings → Insurance / Bond Types.
           </p>
           <RegisterPage registerKey="bonds" isAdmin={user.role === "admin"} />
         </>

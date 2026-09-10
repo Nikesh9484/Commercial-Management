@@ -347,7 +347,7 @@ function executiveSummary(ctx: Ctx) {
       { k: "Open changes (RFC / PVO / VO / DVO)", v: d.openStages.map((s) => `${s.stage} ${s.open}`).join("  "), n: `${d.openChanges} change(s) open in total` },
       { k: "Open claims", v: String(d.openClaims), n: `${formatMoney(d.claimsPendingValue)} claimed and pending` },
       { k: "Open early warnings", v: String(d.openEarlyWarnings), n: `${formatMoney(d.ewOpenValue)} potential cost · ${d.openRisks} open risk(s)` },
-      { k: "Bonds & insurance expiring within 60 days", v: String(d.bonds.expiring.length), n: `${d.bonds.expired} expired · ${d.bonds.red} within 30 days` },
+      { k: "Bonds & insurance expiring within 60 days", v: String(d.bonds.expiring.length), n: `${d.bonds.expired} expired · ${d.bonds.red} within 30 days${d.bonds.released ? ` · ${d.bonds.released} released (contract closed)` : ""}` },
     ],
     { zebra: true },
   );

@@ -14,6 +14,10 @@ export interface ExpiringItem {
 export interface BondsSummary {
   total: number;
   expired: number;
+  /** Bonds / policies whose contract is closed – expiry no longer matters. */
+  released: number;
+  /** Older policies replaced by a newer one of the same type on the same contract. */
+  superseded: number;
   red: number; // within 30 days
   amber: number; // 31–60 days
   shortfall: number;
@@ -31,7 +35,17 @@ export function getBondsSummary(rows: RecordRow[]): BondsSummary {
   let expired = 0;
   let red = 0;
   let amber = 0;
+  let released = 0;
+  let superseded = 0;
   for (const r of rows) {
+    if (r.superseded === true) {
+      superseded++;
+      continue;
+    }
+    if (r.released === true) {
+      released++;
+      continue;
+    }
     const d = r.days_to_expiry as number | null;
     if (d === null || d === undefined) continue;
     if (d < 0) expired++;
@@ -54,6 +68,8 @@ export function getBondsSummary(rows: RecordRow[]): BondsSummary {
   return {
     total: rows.length,
     expired,
+    released,
+    superseded,
     red,
     amber,
     shortfall: short.length,
