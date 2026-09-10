@@ -15,6 +15,8 @@ import { cellText, getSheet, readWorkbookValues, type SheetValues } from "./read
 /* Temporary storage of the uploaded workbook (30 minutes)             */
 
 const TMP = path.join(os.tmpdir(), "commercial-dashboard-uploads");
+/** Largest workbook accepted (your monthly report is ~11 MB). */
+export const MAX_UPLOAD_BYTES = 40 * 1024 * 1024;
 
 export function storeUpload(buffer: Buffer): string {
   fs.mkdirSync(TMP, { recursive: true });
@@ -33,7 +35,13 @@ export function appendUploadPart(id: string | null, part: Buffer): string {
   fs.mkdirSync(TMP, { recursive: true });
   if (id && !/^[a-z0-9]+$/.test(id)) throw new ValidationError("Bad upload id.");
   const useId = id || `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
-  fs.appendFileSync(path.join(TMP, `${useId}.part`), part);
+  const file = path.join(TMP, `${useId}.part`);
+  const size = fs.existsSync(file) ? fs.statSync(file).size : 0;
+  if (size + part.length > MAX_UPLOAD_BYTES) {
+    fs.rmSync(file, { force: true });
+    throw new ValidationError(`The file is larger than ${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)} MB. Remove old sheets or pictures and try again.`);
+  }
+  fs.appendFileSync(file, part);
   return useId;
 }
 

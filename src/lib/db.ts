@@ -214,6 +214,13 @@ function seed(db: Database.Database) {
     }
     setSetting(db, "seeded_data_entry_users", "1");
   }
+  // Starting passwords must be replaced at the first login (seeded accounts, and the admin while it still uses the default).
+  if (getSetting(db, "seeded_password_change") !== "1") {
+    db.prepare("UPDATE users SET must_change_password = 1 WHERE lower(email) IN ('user1@commercial.local', 'user2@commercial.local')").run();
+    const admin = db.prepare("SELECT id, password_hash FROM users WHERE role = 'admin' ORDER BY id LIMIT 1").get() as { id: number; password_hash: string } | undefined;
+    if (admin && !process.env.ADMIN_PASSWORD && bcrypt.compareSync("Admin@123", admin.password_hash)) db.prepare("UPDATE users SET must_change_password = 1 WHERE id = ?").run(admin.id);
+    setSetting(db, "seeded_password_change", "1");
+  }
   // User-1 / User-2 are limited to downloading reports (done once; the Admin can change roles under Settings -> Users).
   if (getSetting(db, "data_entry_users_reports_only") !== "1") {
     db.prepare("UPDATE users SET role = 'reporter', updated_at = ?, updated_by = 'system' WHERE lower(email) IN ('user1@commercial.local', 'user2@commercial.local')").run(stamp);

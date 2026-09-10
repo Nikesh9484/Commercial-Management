@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Menu, LogOut, Lock, Unlock, ChevronDown } from "lucide-react";
+import { Menu, LogOut, Lock, Unlock, ChevronDown, KeyRound } from "lucide-react";
 import type { AppContext } from "@/lib/context";
 import type { UserInfo } from "@/lib/registers/types";
 import { ROLE_LABELS } from "@/lib/registers/types";
@@ -104,6 +104,9 @@ export function TopBar({ context, user, onMenu }: { context: AppContext; user: U
                 <div className="truncate font-medium text-ink">{user.email}</div>
                 <div>{ROLE_LABELS[user.role]}</div>
               </div>
+              <a href="/account/password" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-page">
+                <KeyRound size={15} /> Change password
+              </a>
               <form action="/api/auth/logout" method="post">
                 <button className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-page" type="submit">
                   <LogOut size={15} /> Log out

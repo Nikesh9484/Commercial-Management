@@ -7,7 +7,7 @@ export function logAudit(
   entry: {
     registerKey: string;
     recordId: number | null;
-    action: "create" | "update" | "delete" | "import" | "lock" | "unlock" | "login" | "context";
+    action: "create" | "update" | "delete" | "import" | "lock" | "unlock" | "login" | "login_failed" | "password" | "context";
     user: UserInfo | null;
     summary: string;
     changes?: Record<string, { from: unknown; to: unknown }> | null;

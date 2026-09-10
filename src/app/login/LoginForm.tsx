@@ -27,7 +27,7 @@ export function LoginForm() {
     setBusy(false);
     if (!res.ok) return setError(j.error ?? `Login failed (server error ${res.status}). Wait a minute and try again; if it keeps happening, check the Render logs.`);
     const next = params.get("next");
-    router.replace(next && next.startsWith("/") ? next : "/");
+    router.replace(j.mustChangePassword ? "/account/password?first=1" : next && next.startsWith("/") ? next : "/");
     router.refresh();
   }
 

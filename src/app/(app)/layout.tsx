@@ -10,9 +10,11 @@ export const dynamic = "force-dynamic";
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
+  const path = (await headers()).get("x-pathname") ?? "";
+  // A starting password must be replaced before anything else is used.
+  if (user.mustChangePassword && path && !path.startsWith("/account")) redirect("/account/password?first=1");
   if (user.role === "reporter") {
     // the role in the database wins over the one in the login token: a re-assigned account is limited at once
-    const path = (await headers()).get("x-pathname") ?? "";
     if (path && !reporterAllowed(path)) redirect("/reports");
   }
   const context = getAppContext();
