@@ -135,9 +135,9 @@ export type ChipTone = "green" | "amber" | "red" | "blue" | "grey";
 export function statusTone(value: unknown): ChipTone {
   const v = String(value ?? "").toLowerCase();
   if (!v) return "grey";
-  if (["approved", "review complete", "locked", "active", "yes", "expended", "closed", "paid", "current"].some((k) => v === k || v.includes(k))) return "green";
+  if (["approved", "review complete", "locked", "active", "yes", "expended", "closed", "paid", "current", "opportunity", "realised"].some((k) => v === k || v.includes(k))) return "green";
   if (["rejected", "cancelled", "overdue", "expired", "no", "not active", "disputed"].some((k) => v === k || v.includes(k))) return "red";
-  if (["pending", "revised", "partially", "open", "submitted", "in progress", "under review", "draft"].some((k) => v === k || v.includes(k))) return "amber";
+  if (["pending", "revised", "partially", "open", "submitted", "in progress", "under review", "draft", "risk", "mitigating", "converted"].some((k) => v === k || v.includes(k))) return "amber";
   if (["superseded", "transferred", "inactive", "withdrawn"].some((k) => v === k || v.includes(k))) return "grey";
   return "blue";
 }

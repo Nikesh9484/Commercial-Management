@@ -3,6 +3,7 @@ import { todayIso, toDate } from "../format";
 import { CHANGE_STAGES, CLOSED_STATUSES } from "./defs/changes";
 import { CLAIM_TYPES, NOTICE_LIMIT_DAYS, DETAIL_LIMIT_DAYS, claimCostReportAmount } from "./defs/claims";
 import { businessDaysBetween } from "../workdays";
+import { PROBABILITY_BANDS, IMPACT_BANDS, bandIndex, severity } from "./defs/risks";
 
 /**
  * Fills in the calculated ("virtual") columns of a register after its rows are read.
@@ -11,6 +12,7 @@ import { businessDaysBetween } from "../workdays";
 export function enrichRows(def: RegisterDef, rows: RecordRow[]) {
   if (def.key === "changes") rows.forEach(enrichChange);
   if (def.key === "claims") rows.forEach(enrichClaim);
+  if (def.key === "risks") rows.forEach(enrichRisk);
 }
 
 export function daysBetween(fromIso: string, toIso: string): number {
@@ -92,4 +94,18 @@ function enrichClaim(row: RecordRow) {
   row.contractor_cost_view = row.contractor_cost ?? null;
   row.determination_cost_view = row.determination_cost ?? null;
   row.cost_report_amount = claimCostReportAmount(row);
+}
+
+function enrichRisk(row: RecordRow) {
+  const prob = row.probability === null || row.probability === undefined ? null : Number(row.probability);
+  const impact = row.cost_impact === null || row.cost_impact === undefined ? null : Number(row.cost_impact);
+  row.expected_value = prob !== null && impact !== null ? Math.round((prob / 100) * impact * 100) / 100 : null;
+  if (prob !== null && impact !== null) {
+    const rating = severity(bandIndex(prob, PROBABILITY_BANDS), bandIndex(impact, IMPACT_BANDS));
+    row.rating = rating;
+    row.rating__tone = rating === "High" ? "red" : rating === "Medium" ? "amber" : "green";
+  } else {
+    row.rating = null;
+    row.rating__tone = null;
+  }
 }

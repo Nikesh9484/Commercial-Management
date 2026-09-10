@@ -96,6 +96,11 @@ export function claimFeeds(db: Database.Database, programmeId: number): Map<numb
   return out;
 }
 
+/** Open early warnings -> cost report column L. */
+export function earlyWarningFeeds(db: Database.Database, programmeId: number): Map<number, number> {
+  return sumByCostLine(db, "early_warnings", "COALESCE(cost_impact, 0)", "programme_id = ? AND status = 'Open'", [programmeId]);
+}
+
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 export function getCostFeeds(db: Database.Database, programmeId: number, periodId: number): { feeds: CostFeeds; status: FeedStatus[] } {
   // Each entry is filled in when the source module is built.
@@ -105,7 +110,7 @@ export function getCostFeeds(db: Database.Database, programmeId: number, periodI
     dvo: changes.dvo,
     pvo: changes.pvo,
     rfc: changes.rfc,
-    earlyWarnings: new Map(),
+    earlyWarnings: earlyWarningFeeds(db, programmeId),
     claims: claimFeeds(db, programmeId),
     certified: new Map(),
   };
@@ -114,7 +119,7 @@ export function getCostFeeds(db: Database.Database, programmeId: number, periodI
     { column: "H", label: "Determined Variation Orders", module: "Module 3 – Change Management", available: true },
     { column: "J", label: "Potential Variation Orders", module: "Module 3 – Change Management", available: true },
     { column: "K", label: "Requests for Change", module: "Module 3 – Change Management", available: true },
-    { column: "L", label: "Early Warnings", module: "Module 5 – Early Warnings", available: false },
+    { column: "L", label: "Early Warnings", module: "Module 5 – Early Warnings", available: true },
     { column: "M", label: "Claims", module: "Module 4 – Claims & Disputes", available: true },
     { column: "P", label: "Certified to Date", module: "Module 8 – Invoice & Payment Tracking", available: false },
   ];

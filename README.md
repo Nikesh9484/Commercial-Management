@@ -130,7 +130,7 @@ Every register has **Export** (all rows, formatted) and **Import**:
 | 2 | Cost Report Level 1 & 2 | **built** – Level 2 by package/contractor, Level 1 by asset, formulas, check line, chart, Excel export |
 | 3 | Change Management Tracker | **built** – stages EW→RFC→PVO→VO→EI→DVO→Funding, status matrix, days open, feeds cost report H/J/K |
 | 4 | Claims & Disputes | **built** – notice / detailed claim compliance (auto), 4-party assessment, summary cards, feeds cost report M |
-| 5 | Early Warnings & Risks / Opportunities | placeholder |
+| 5 | Early Warnings & Risks / Opportunities | **built** – EW register feeds cost report L; risk register with expected value, heat map, totals |
 | 6 | Provisional Sums | placeholder |
 | 7 | Bonds & Insurance | placeholder |
 | 8 | Invoice & Payment Tracking | placeholder |
