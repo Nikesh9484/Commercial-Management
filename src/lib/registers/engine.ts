@@ -282,6 +282,16 @@ function applyRules(def: RegisterDef, prepared: Prepared, mode: "create" | "upda
       }
     }
   }
+  if (def.key === "budget_transfers") {
+    const v = (k: string) => (k in prepared.values ? prepared.values[k] : existing?.[k]);
+    if (v("from_package_id") && v("to_package_id") && Number(v("from_package_id")) === Number(v("to_package_id"))) {
+      throw new ValidationError("From and To package must be different.", { to_package_id: "Choose a different package from the From package." });
+    }
+    const amount = v("amount");
+    if (amount !== null && amount !== undefined && Number(amount) <= 0) {
+      throw new ValidationError("Amount must be greater than zero.", { amount: "Enter a positive amount; the direction is set by From and To." });
+    }
+  }
   if (def.key === "users" && mode === "update" && existing) {
     if (existing.id === user.id && prepared.values.role && prepared.values.role !== "admin") {
       throw new ValidationError("You cannot remove your own Admin role.", { role: "You cannot change your own role." });

@@ -2,6 +2,7 @@ import type { RecordRow, RegisterDef } from "./types";
 import { todayIso } from "../format";
 import { daysBetween } from "./enrich-utils";
 import { computeContracts } from "../payments/compute";
+import { resolveTransfers } from "../budget-transfers/compute";
 import { CHANGE_STAGES, CLOSED_STATUSES } from "./defs/changes";
 import { CLAIM_TYPES, NOTICE_LIMIT_DAYS, DETAIL_LIMIT_DAYS, claimCostReportAmount } from "./defs/claims";
 import { businessDaysBetween } from "../workdays";
@@ -39,6 +40,15 @@ export function enrichRows(def: RegisterDef, rows: RecordRow[]) {
         const pct = r.pct_certified as number | null;
         r.pct_certified__tone = pct === null ? null : pct >= 100 ? "green" : null;
       }
+    }
+  }
+  if (def.key === "budget_transfers" && rows.length) {
+    const resolved = new Map(resolveTransfers(getDb(), Number(rows[0].programme_id)).map((t) => [t.id, t]));
+    for (const r of rows) {
+      const t = resolved.get(r.id);
+      if (!t) continue;
+      r.applied = t.problem ? (r.status === "Approved" ? `No – ${t.problem}` : "No") : "Yes";
+      r.applied__tone = t.problem ? (r.status === "Approved" ? "red" : null) : "green";
     }
   }
   if (def.key === "bonds" && rows.length) {
