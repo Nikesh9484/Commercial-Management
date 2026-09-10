@@ -131,7 +131,7 @@ Every register has **Export** (all rows, formatted) and **Import**:
 | 3 | Change Management Tracker | **built** – stages EW→RFC→PVO→VO→EI→DVO→Funding, status matrix, days open, feeds cost report H/J/K |
 | 4 | Claims & Disputes | **built** – notice / detailed claim compliance (auto), 4-party assessment, summary cards, feeds cost report M |
 | 5 | Early Warnings & Risks / Opportunities | **built** – EW register feeds cost report L; risk register with expected value, heat map, totals |
-| 6 | Provisional Sums | placeholder |
+| 6 | Provisional Sums | **built** – budget vs contract value, (saving)/extra auto, totals row and cards |
 | 7 | Bonds & Insurance | placeholder |
 | 8 | Invoice & Payment Tracking | placeholder |
 | 9 | Cash Flow | placeholder |

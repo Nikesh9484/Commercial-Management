@@ -337,6 +337,18 @@ export function RegisterPage({ registerKey, isAdmin = false }: { registerKey: st
                 </tr>
               ))}
             </tbody>
+            {def.totals && def.totals.length > 0 && visible.length > 0 && (
+              <tfoot>
+                <tr className="bg-page font-semibold">
+                  {tableFields.map((f, i) => (
+                    <td key={f.key} className={isNumeric(f) ? "tnum text-right" : ""}>
+                      {i === 0 ? `Total (${visible.length})` : def.totals!.includes(f.key) ? <TotalCell field={f} rows={visible} /> : ""}
+                    </td>
+                  ))}
+                  <td />
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line px-3 py-2 text-xs text-muted">
@@ -426,6 +438,13 @@ export function RegisterPage({ registerKey, isAdmin = false }: { registerKey: st
       <ImportDialog registerKey={registerKey} title={def.title} open={importOpen} onClose={() => setImportOpen(false)} onDone={load} />
     </div>
   );
+}
+
+function TotalCell({ field: f, rows }: { field: FieldDef; rows: RecordRow[] }) {
+  const total = rows.reduce((t, r) => t + (typeof r[f.key] === "number" ? (r[f.key] as number) : Number(r[f.key] ?? 0) || 0), 0);
+  if (f.type === "money") return <>{formatMoney(total)}</>;
+  if (f.type === "percent") return <>{formatPercent(total)}</>;
+  return <>{formatNumber(total, Number.isInteger(total) ? 0 : 2)}</>;
 }
 
 function isNumeric(f: FieldDef) {

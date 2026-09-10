@@ -13,6 +13,7 @@ export function enrichRows(def: RegisterDef, rows: RecordRow[]) {
   if (def.key === "changes") rows.forEach(enrichChange);
   if (def.key === "claims") rows.forEach(enrichClaim);
   if (def.key === "risks") rows.forEach(enrichRisk);
+  if (def.key === "provisional_sums") rows.forEach(enrichProvisionalSum);
 }
 
 export function daysBetween(fromIso: string, toIso: string): number {
@@ -108,4 +109,17 @@ function enrichRisk(row: RecordRow) {
     row.rating = null;
     row.rating__tone = null;
   }
+}
+
+function enrichProvisionalSum(row: RecordRow) {
+  const budget = row.budget === null || row.budget === undefined ? null : Number(row.budget);
+  const value = row.contract_value === null || row.contract_value === undefined ? null : Number(row.contract_value);
+  if (budget === null || value === null) {
+    row.saving_extra = null;
+    row.saving_extra__tone = null;
+    return;
+  }
+  const diff = Math.round((value - budget) * 100) / 100;
+  row.saving_extra = diff;
+  row.saving_extra__tone = diff > 0.004 ? "red" : diff < -0.004 ? "green" : null;
 }

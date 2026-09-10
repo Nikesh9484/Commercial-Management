@@ -6,9 +6,10 @@ import { changeRegisters } from "./defs/changes";
 import { claimRegisters } from "./defs/claims";
 import { earlyWarningRegisters } from "./defs/early-warnings";
 import { riskRegisters } from "./defs/risks";
+import { provisionalSumRegisters } from "./defs/provisional-sums";
 
 /** Every register in the app, by key. Module registers get added here as modules are built. */
-export const allRegisters: RegisterDef[] = [...settingsRegisters, ...projectSetupRegisters, ...costReportRegisters, ...changeRegisters, ...claimRegisters, ...earlyWarningRegisters, ...riskRegisters];
+export const allRegisters: RegisterDef[] = [...settingsRegisters, ...projectSetupRegisters, ...costReportRegisters, ...changeRegisters, ...claimRegisters, ...earlyWarningRegisters, ...riskRegisters, ...provisionalSumRegisters];
 
 const byKey = new Map(allRegisters.map((d) => [d.key, d]));
 

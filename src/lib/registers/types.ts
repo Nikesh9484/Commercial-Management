@@ -86,6 +86,8 @@ export interface RegisterDef {
    * and fills it in for new records.
    */
   scope?: "programme" | "asset";
+  /** Money / number fields to total in a footer row of the table (over the rows currently shown). */
+  totals?: string[];
 }
 
 export interface UserInfo {
