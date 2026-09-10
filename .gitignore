@@ -49,3 +49,6 @@ next-env.d.ts
 
 # generated session-signing secret – never commit
 data/.session-secret
+
+# Claim EAR case documents and reports (live data)
+/data/ear/

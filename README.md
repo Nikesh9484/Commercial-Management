@@ -87,6 +87,7 @@ Copy `.env.example` to `.env` and edit:
 | `SESSION_SECRET` | Random text used to sign login cookies. **Change it** before sharing the app. |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` / `ADMIN_NAME` | First admin user (only used on the very first start). |
 | `DB_PATH` | Where the database file is kept. |
+| `ANTHROPIC_API_KEY` | Enables the drafting engine behind **Automation → Claim EAR** (the Employer's Assessment Report written from the contractor's claim folder, your template and the contract documents). Without it the page stores the documents and produces a skeleton only. `EAR_MODEL` optionally picks the model (default `claude-opus-5`). |
 
 ---
 

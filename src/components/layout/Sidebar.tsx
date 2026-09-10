@@ -21,6 +21,7 @@ import {
   Upload,
   FolderDown,
   CalendarPlus,
+  Wand2,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -120,6 +121,8 @@ export function Sidebar({ open, onClose, role }: { open: boolean; onClose: () =>
               {link("/imports/payments", "Invoices & Payments", Upload)}
               {link("/imports/final-accounts", "Final Account Status", Upload)}
               {link("/imports/claims-tracker", "Claims Tracker", Upload)}
+              <div className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider text-blue-200/50">Automation</div>
+              {link("/automation/claim-ear", "Claim EAR", Wand2)}
             </>
           )}
           <div className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider text-blue-200/50">System</div>
