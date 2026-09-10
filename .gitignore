@@ -46,3 +46,6 @@ next-env.d.ts
 /data/*.db-wal
 /data/*.db-shm
 !.env.example
+
+# generated session-signing secret – never commit
+data/.session-secret
