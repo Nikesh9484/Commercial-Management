@@ -358,7 +358,7 @@ function mapColumns(headers: { index: number; header: string }[], def: RegisterD
 
 export async function analyzeWorkbook(buffer: ArrayBuffer, fileName: string, fileId: string): Promise<WorkbookAnalysis> {
   const wb = new ExcelJS.Workbook();
-  await wb.xlsx.load(buffer);
+  await wb.xlsx.load(buffer, { ignoreNodes: ["sheetPr", "sheetViews", "sheetFormatPr", "autoFilter", "rowBreaks", "hyperlinks", "pageMargins", "dataValidations", "pageSetup", "headerFooter", "printOptions", "picture", "drawing", "sheetProtection", "tableParts", "conditionalFormatting", "extLst"] });
   const db = getDb();
   const sheets: SheetAnalysis[] = [];
   for (const ws of wb.worksheets) {

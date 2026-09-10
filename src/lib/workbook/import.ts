@@ -122,7 +122,7 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo): Promis
   const db = getDb();
   const buffer = readUpload(req.fileId);
   const wb = new ExcelJS.Workbook();
-  await wb.xlsx.load(buffer as unknown as ArrayBuffer);
+  await wb.xlsx.load(buffer as unknown as ArrayBuffer, { ignoreNodes: ["sheetPr", "sheetViews", "sheetFormatPr", "autoFilter", "rowBreaks", "hyperlinks", "pageMargins", "dataValidations", "pageSetup", "headerFooter", "printOptions", "picture", "drawing", "sheetProtection", "tableParts", "conditionalFormatting", "extLst"] });
 
   // Reporting period
   let periodId = req.period.id ?? null;
