@@ -156,7 +156,7 @@ Private Function ImportInto(ByVal tableName As String, ByVal keyColumn As String
     Dim r As Long, key As String, existing As Long, lr As ListRow, col As Variant, v As Variant, n As Long, colType As String, colIdx As Long
     path = PickFile(title, "Excel workbooks", "*.xlsx;*.xlsm;*.xls")
     If Len(path) = 0 Then Exit Function
-    Busy True, "Reading " & path & "…"
+    Busy True, "Reading " & path & "..."
     On Error GoTo fail
     Set wb = Workbooks.Open(path, ReadOnly:=True, UpdateLinks:=0)
     For Each ws In wb.Worksheets
@@ -216,7 +216,7 @@ Private Function ImportInto(ByVal tableName As String, ByVal keyColumn As String
     wb.Close False
     ApplyAllFormulas
     Busy False
-    LogActivity "Import – " & title, path & " · " & n & " rows from sheet '" & bestWs.Name & "'"
+    LogActivity "Import - " & title, path & " - " & n & " rows from sheet '" & bestWs.Name & "'"
     MsgBox n & " rows imported from sheet '" & bestWs.Name & "' of " & vbCrLf & path, vbInformation, APP_TITLE
     ImportInto = n
     Exit Function
@@ -269,7 +269,7 @@ End Sub
 Public Sub ImportPayments()
     If Not RequireEditor() Then Exit Sub
     If MsgBox("Payment tracking is imported in two steps: first the contracts sheet, then the IPC log (payment applications). Continue?", vbOKCancel + vbQuestion, APP_TITLE) <> vbOK Then Exit Sub
-    If ImportInto("tblContracts", "PO No", "Contracts – payment summary", 3) > 0 Then
+    If ImportInto("tblContracts", "PO No", "Contracts - payment summary", 3) > 0 Then
         ImportInto "tblIPC", "Application No", "IPC log (payment applications)", 3
     End If
 End Sub

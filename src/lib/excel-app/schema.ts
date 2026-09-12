@@ -451,13 +451,8 @@ export const SNAPSHOTS: TableSpec = {
   title: "Stored copies of the cost report (one block per issued report)",
   cols: [
     { h: "Report No", type: "number", width: 9 },
-    { h: "Code", width: 16 },
-    { h: "Package", width: 24 },
-    { h: "Name", width: 36 },
-    { h: "Category", width: 22 },
-    { h: "Section", width: 12 },
-    { h: "Budget hold", width: 9 },
-    ...["E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q"].map((h) => ({ h, type: "money" as ColType })),
+    // every Level 2 column, as values (formula columns are re-applied when a report is loaded back)
+    ...LEVEL2.cols.map((c) => ({ h: c.h, type: c.type, width: c.width })),
   ],
 };
 

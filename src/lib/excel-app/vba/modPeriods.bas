@@ -14,25 +14,36 @@ End Function
 
 ' Stores the Level 2 lines of the current report in the Snapshots table (replacing any earlier copy of that report).
 Public Sub SnapshotCurrent(Optional ByVal reason As String = "stored copy")
-    Dim lo As ListObject, snap As ListObject, n As Long, i As Long, c As Long, rn As Long
-    Dim src As Variant, out() As Variant, keep As Long, cols As Variant, k As Long, total As Long
+    SnapshotReport CurrentReportNo()
+    LogActivity "Stored copy", "Report No " & CurrentReportNo() & " (" & reason & ")"
+End Sub
+
+' Stores the live Level 2 rows under a report number (every column, matched by name); other reports' rows are kept.
+Public Sub SnapshotReport(ByVal rn As Long)
+    Dim lo As ListObject, snap As ListObject, n As Long, i As Long, c As Long, k As Long
+    Dim src As Variant, out() As Variant, keep As Long, total As Long, existing As Variant, v As Variant, map() As Long
     Set lo = TableOf("tblLevel2")
     Set snap = TableOf("tblSnapshots")
-    rn = CurrentReportNo()
-    ' rows of other reports are kept; this report's rows are replaced
     total = RowCountOf(snap)
-    keep = 0
-    Dim existing As Variant
     If total > 0 Then existing = snap.DataBodyRange.Value
     n = RowCountOf(lo)
-    cols = Array("Code", "Package", "Name", "Category", "Section", "Budget hold", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q")
+    ReDim map(1 To snap.ListColumns.Count)
+    For c = 2 To snap.ListColumns.Count
+        map(c) = 0
+        On Error Resume Next
+        map(c) = lo.ListColumns(snap.ListColumns(c).Name).Index
+        On Error GoTo 0
+    Next c
     ReDim out(1 To total + n + 1, 1 To snap.ListColumns.Count)
     For i = 1 To total
-        If CLng(Nz(existing(i, 1), 0)) <> rn Then
-            keep = keep + 1
-            For c = 1 To snap.ListColumns.Count
-                out(keep, c) = existing(i, c)
-            Next c
+        v = existing(i, 1)
+        If Not IsEmpty(v) And Not IsNull(v) Then
+            If CLng(Val(CStr(v))) <> rn Then
+                keep = keep + 1
+                For c = 1 To snap.ListColumns.Count
+                    out(keep, c) = existing(i, c)
+                Next c
+            End If
         End If
     Next i
     If n > 0 Then
@@ -40,17 +51,17 @@ Public Sub SnapshotCurrent(Optional ByVal reason As String = "stored copy")
         For i = 1 To n
             keep = keep + 1
             out(keep, 1) = rn
-            For k = 0 To UBound(cols)
-                out(keep, ColIndex(snap, CStr(cols(k)))) = src(i, ColIndex(lo, CStr(cols(k))))
-            Next k
+            For c = 2 To snap.ListColumns.Count
+                If map(c) > 0 Then out(keep, c) = src(i, map(c))
+            Next c
         Next i
     End If
     FillTable snap, out, keep
-    LogActivity "Stored copy", "Report No " & rn & " – " & n & " cost lines (" & reason & ")"
 End Sub
 
 Public Sub LockCurrentPeriod()
     If Not RequireEditor() Then Exit Sub
+    modNav.EnsureCurrentView
     Dim r As Long, lo As ListObject
     Set lo = TableOf("tblPeriods")
     r = PeriodRow(CurrentReportNo())
@@ -59,8 +70,8 @@ Public Sub LockCurrentPeriod()
         Exit Sub
     End If
     If MsgBox("Lock Report No " & CurrentReportNo() & "? Its cost report is stored as the issued copy and becomes the 'previous report' for the next month's movement.", vbOKCancel + vbQuestion, APP_TITLE) <> vbOK Then Exit Sub
-    Busy True, "Locking…"
-    SnapshotCurrent "locked"
+    Busy True, "Locking..."
+    modStore.SaveLive CurrentReportNo()
     lo.DataBodyRange.Cells(r, ColIndex(lo, "Status")).Value = "Locked"
     lo.DataBodyRange.Cells(r, ColIndex(lo, "Locked at")).Value = Now
     lo.DataBodyRange.Cells(r, ColIndex(lo, "Locked by")).Value = CStr(NamedValue("SignedInUser"))
@@ -71,6 +82,7 @@ End Sub
 
 Public Sub UnlockCurrentPeriod()
     If Not RequireEditor() Then Exit Sub
+    modNav.EnsureCurrentView
     Dim r As Long, lo As ListObject
     Set lo = TableOf("tblPeriods")
     r = PeriodRow(CurrentReportNo())
@@ -84,7 +96,8 @@ End Sub
 ' period row is added and the live registers carry on for the new month.
 Public Sub NewMonth()
     If Not RequireEditor() Then Exit Sub
-    Dim lo As ListObject, r As Long, rn As Long, lastEnd As Date, newEnd As Date, lr As ListRow, s As String
+    modNav.EnsureCurrentView
+    Dim lo As ListObject, r As Long, rn As Long, lastEnd As Date, newEnd As Date, lr As ListRow, s As String, newNo As Long
     Set lo = TableOf("tblPeriods")
     rn = CurrentReportNo()
     r = PeriodRow(rn)
@@ -94,16 +107,25 @@ Public Sub NewMonth()
         lastEnd = MonthEnd(Date)
     End If
     newEnd = MonthEnd(DateAdd("m", 1, lastEnd))
-    s = InputBox("Cut-off date of the new report (Report No " & (rn + 1) & "):", APP_TITLE, Format$(newEnd, "yyyy-mm-dd"))
+    s = InputBox("Report number of the new report:", APP_TITLE, CStr(rn + 1))
+    If Len(s) = 0 Then Exit Sub
+    newNo = CLng(Val(s))
+    If newNo <= 0 Then Exit Sub
+    If PeriodRow(newNo) > 0 Then
+        MsgBox "Report No " & newNo & " already exists. Choose it on the Periods page or delete it first.", vbExclamation, APP_TITLE
+        Exit Sub
+    End If
+    s = InputBox("Cut-off date of Report No " & newNo & ":", APP_TITLE, Format$(newEnd, "yyyy-mm-dd"))
     If Len(s) = 0 Then Exit Sub
     If Not IsDate(s) Then
         MsgBox "That is not a date.", vbExclamation, APP_TITLE
         Exit Sub
     End If
     newEnd = CDate(s)
-    Busy True, "Starting the new month…"
+    If MsgBox("Start Report No " & newNo & " (cut-off " & Format$(newEnd, "dd-mmm-yy") & ")? Report No " & rn & " is stored as an issued report and the new report starts from its data.", vbOKCancel + vbQuestion, APP_TITLE) <> vbOK Then Exit Sub
+    Busy True, "Starting the new month..."
     If r > 0 Then
-        SnapshotCurrent "previous report stored when the new month started"
+        modStore.SaveLive rn
         If LCase$(CellText(lo, r, "Status")) <> "locked" Then
             lo.DataBodyRange.Cells(r, ColIndex(lo, "Status")).Value = "Locked"
             lo.DataBodyRange.Cells(r, ColIndex(lo, "Locked at")).Value = Now
@@ -111,22 +133,23 @@ Public Sub NewMonth()
         End If
     End If
     Set lr = lo.ListRows.Add
-    lr.Range.Cells(1, ColIndex(lo, "Report No")).Value = rn + 1
-    lr.Range.Cells(1, ColIndex(lo, "Label")).Value = "Monthly Report No " & (rn + 1) & " – " & Format$(newEnd, "mmm'yy")
+    lr.Range.Cells(1, ColIndex(lo, "Report No")).Value = newNo
+    lr.Range.Cells(1, ColIndex(lo, "Label")).Value = "Monthly Report No " & newNo & " - " & Format$(newEnd, "mmm'yy")
     lr.Range.Cells(1, ColIndex(lo, "Period start")).Value = DateSerial(Year(newEnd), Month(newEnd), 1)
     lr.Range.Cells(1, ColIndex(lo, "Period end")).Value = newEnd
     lr.Range.Cells(1, ColIndex(lo, "Status")).Value = "Open"
-    SetNamed "CurrentReportNo", rn + 1
-    SetNamed "ViewReportNo", rn + 1
-    modNav.ApplyViewVisibility
+    SetNamed "CurrentReportNo", newNo
+    SetNamed "ViewReportNo", newNo
+    modStore.SaveLive newNo
     modNav.SyncPicker
     Busy False
-    LogActivity "New month", "Report No " & (rn + 1) & " – cut-off " & Format$(newEnd, "dd-mmm-yy")
-    MsgBox "Report No " & (rn + 1) & " started. The movement columns now compare with Report No " & rn & ".", vbInformation, APP_TITLE
+    Application.Calculate
+    LogActivity "New month", "Report No " & newNo & " - cut-off " & Format$(newEnd, "dd-mmm-yy")
+    MsgBox "Report No " & newNo & " started. The movement columns now compare with Report No " & rn & ".", vbInformation, APP_TITLE
 End Sub
 
 ' Makes sure a period row exists for a report number (used by the monthly import).
-Public Sub EnsurePeriod(ByVal reportNo As Long, ByVal periodEnd As Date, ByVal sourceFile As String)
+Public Sub EnsurePeriod(ByVal reportNo As Long, ByVal periodEnd As Date, ByVal sourceFile As String, Optional ByVal status As String = "Open")
     Dim lo As ListObject, r As Long, lr As ListRow
     Set lo = TableOf("tblPeriods")
     r = PeriodRow(reportNo)
@@ -134,9 +157,13 @@ Public Sub EnsurePeriod(ByVal reportNo As Long, ByVal periodEnd As Date, ByVal s
         Set lr = lo.ListRows.Add
         r = RowCountOf(lo)
         lr.Range.Cells(1, ColIndex(lo, "Report No")).Value = reportNo
-        lr.Range.Cells(1, ColIndex(lo, "Status")).Value = "Open"
+        lr.Range.Cells(1, ColIndex(lo, "Status")).Value = status
+        If status = "Locked" Then
+            lr.Range.Cells(1, ColIndex(lo, "Locked at")).Value = Now
+            lr.Range.Cells(1, ColIndex(lo, "Locked by")).Value = CStr(NamedValue("SignedInUser"))
+        End If
     End If
-    lo.DataBodyRange.Cells(r, ColIndex(lo, "Label")).Value = "Monthly Report No " & reportNo & " – " & Format$(periodEnd, "mmm'yy")
+    lo.DataBodyRange.Cells(r, ColIndex(lo, "Label")).Value = "Monthly Report No " & reportNo & " - " & Format$(periodEnd, "mmm'yy")
     lo.DataBodyRange.Cells(r, ColIndex(lo, "Period start")).Value = DateSerial(Year(periodEnd), Month(periodEnd), 1)
     lo.DataBodyRange.Cells(r, ColIndex(lo, "Period end")).Value = periodEnd
     lo.DataBodyRange.Cells(r, ColIndex(lo, "Source file")).Value = sourceFile

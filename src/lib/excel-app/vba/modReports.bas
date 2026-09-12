@@ -6,7 +6,7 @@ Option Explicit
 Public Sub ExportPdf()
     If Not IsSignedIn() Then Exit Sub
     Dim names As Variant, path As String, base As String, i As Long, vis() As String, n As Long
-    names = Array("Home", "Level 1", IIf(modNav.IsViewingPast(), "Level 2 (view)", "Level 2"), "Movement", "Changes", "Claims", "Early Warnings", "Risks", "Provisional Sums", "Bonds", "Contracts", "Cash Flow", "Transfers", "Actions")
+    names = Array("Home", "Level 1", "Level 2", "Movement", "Changes", "Claims", "Early Warnings", "Risks", "Provisional Sums", "Bonds", "Contracts", "Cash Flow", "Transfers", "Actions")
     base = DefaultFolder()
     path = SaveAsName(base & PathSep() & "Cost Report No " & CStr(NamedValue("ViewReportNo")) & " - " & FileSafe(CStr(NamedValue("ViewPeriodLabel"))) & ".pdf", "PDF (*.pdf), *.pdf", "Save the report as PDF")
     If Len(path) = 0 Then Exit Sub
@@ -23,7 +23,7 @@ Public Sub ExportPdf()
     Next i
     If n = 0 Then Exit Sub
     ReDim Preserve vis(0 To n - 1)
-    Busy True, "Exporting PDF…"
+    Busy True, "Exporting PDF..."
     On Error GoTo fail
     ThisWorkbook.Worksheets(vis).Select
     ActiveSheet.ExportAsFixedFormat Type:=xlTypePDF, Filename:=path, Quality:=xlQualityStandard, IncludeDocProperties:=True, IgnorePrintAreas:=False, OpenAfterPublish:=True
@@ -117,4 +117,42 @@ Public Sub OpenReportsFolder()
     On Error Resume Next
     ThisWorkbook.FollowHyperlink DefaultFolder()
     If Err.Number <> 0 Then MsgBox "The reports are saved next to this workbook: " & DefaultFolder(), vbInformation, APP_TITLE
+End Sub
+
+' ---- the library buttons: act on the report selected in the library block (else the report shown) --
+
+Private Function LibraryReportNo() As Long
+    Dim first As Range, ws As Worksheet
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets("Reports")
+    Set first = ws.Range("LibraryFirstRow")
+    If ActiveSheet.Name = "Reports" And Not first Is Nothing Then
+        If ActiveCell.Row >= first.Row And ActiveCell.Row < first.Row + 30 Then LibraryReportNo = CLng(Val(CStr(Nz(ws.Cells(ActiveCell.Row, 1).Value))))
+    End If
+    If LibraryReportNo = 0 Then LibraryReportNo = CLng(Nz(NamedValue("ViewReportNo"), 0))
+End Function
+
+Private Function SwitchTo(ByVal rn As Long) As Boolean
+    If rn <= 0 Then Exit Function
+    If rn <> CLng(Nz(NamedValue("ViewReportNo"), 0)) Then modNav.ShowPeriod rn, True
+    SwitchTo = (rn = CLng(Nz(NamedValue("ViewReportNo"), 0)))
+End Function
+
+Public Sub LibPdf()
+    If Not IsSignedIn() Then Exit Sub
+    If Not SwitchTo(LibraryReportNo()) Then Exit Sub
+    ExportPdf
+    modNav.NavReports
+End Sub
+
+Public Sub LibExcel()
+    If Not IsSignedIn() Then Exit Sub
+    If Not SwitchTo(LibraryReportNo()) Then Exit Sub
+    SaveIssuedCopy
+End Sub
+
+Public Sub LibPpt()
+    If Not IsSignedIn() Then Exit Sub
+    If Not SwitchTo(LibraryReportNo()) Then Exit Sub
+    modPresentation.BuildPresentation
 End Sub

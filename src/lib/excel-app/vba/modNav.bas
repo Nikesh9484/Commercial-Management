@@ -4,8 +4,6 @@ Option Explicit
 ' report shown in view mode: Home, Level 1 and Level 2 follow the report chosen on Periods.
 ' ------------------------------------------------------------------------------------------
 
-Private Const VIEW_SHEET As String = "Level 2 (view)"
-
 Public Sub HideTabs()
     On Error Resume Next
     ActiveWindow.DisplayWorkbookTabs = False
@@ -70,7 +68,7 @@ Public Sub NavLevel1()
 End Sub
 
 Public Sub NavLevel2()
-    If IsViewingPast() Then GoSheet VIEW_SHEET Else GoSheet "Level 2"
+    GoSheet "Level 2"
 End Sub
 
 Public Sub NavMovement()
@@ -195,79 +193,103 @@ Public Sub SyncPicker()
 End Sub
 
 Public Sub ShowPeriod(ByVal rn As Long, Optional ByVal quiet As Boolean = False)
-    Dim cur As Long
-    cur = CLng(Nz(NamedValue("CurrentReportNo"), 0))
+    Dim cur As Long, v As Long
+    cur = CurrentReportNo()
+    v = CLng(Nz(NamedValue("ViewReportNo"), cur))
+    If rn = v Then
+        SyncPicker
+        Exit Sub
+    End If
     If rn <> cur Then
-        If CountOfReport(rn) = 0 Then
-            MsgBox "There is no stored copy of Report No " & rn & ". Only issued (locked) reports can be shown; the current report is live.", vbInformation, APP_TITLE
+        If Not modStore.HasStored(rn) Then
+            MsgBox "There is nothing stored for Report No " & rn & " yet. Import it on the Imports page, or lock it first.", vbInformation, APP_TITLE
+            SyncPicker
             Exit Sub
         End If
-        FillView rn
     End If
+    Busy True, "Loading Report No " & rn & "..."
+    On Error GoTo fail
+    If v = cur Then modStore.SaveLive cur
+    modStore.LoadLive rn
     SetNamed "ViewReportNo", rn
-    ApplyViewVisibility
+    Busy False
+    modMain.ApplyRole
     Application.Calculate
     SyncPicker
     If quiet Then Exit Sub
     If rn = cur Then
         MsgBox "Showing the current report (live data).", vbInformation, APP_TITLE
     Else
-        MsgBox "Home, Level 1 and Level 2 now show the issued copy of Report No " & rn & " (read only). The registers keep showing the current data.", vbInformation, APP_TITLE
+        MsgBox "Every page now shows the issued copy of Report No " & rn & " (read only). Choose the current report to edit again.", vbInformation, APP_TITLE
     End If
     NavHome
+    Exit Sub
+fail:
+    Busy False
+    MsgBox "Could not switch report: " & Err.Description, vbExclamation, APP_TITLE
 End Sub
 
 Public Sub BackToCurrent()
     If Not IsSignedIn() Then Exit Sub
-    SetNamed "ViewReportNo", CLng(Nz(NamedValue("CurrentReportNo"), 0))
-    ApplyViewVisibility
-    Application.Calculate
-    SyncPicker
+    ShowPeriod CurrentReportNo(), True
     NavHome
 End Sub
 
-' Shows Level 2 or Level 2 (view) according to the report shown (for roles that may see Level 2).
-Public Sub ApplyViewVisibility()
-    On Error Resume Next
-    Dim live As Worksheet, viewWs As Worksheet
-    Set live = ThisWorkbook.Worksheets("Level 2")
-    Set viewWs = ThisWorkbook.Worksheets(VIEW_SHEET)
-    If live.Visible <> xlSheetVisible And viewWs.Visible <> xlSheetVisible Then Exit Sub
-    If IsViewingPast() Then
-        viewWs.Visible = xlSheetVisible
-        live.Visible = xlSheetVeryHidden
-    Else
-        live.Visible = xlSheetVisible
-        viewWs.Visible = xlSheetVeryHidden
-    End If
+' Puts the current report back into the live tables (before closing, signing out, importing, locking).
+Public Sub LeaveViewMode()
+    If IsViewingPast() Then ShowPeriod CurrentReportNo(), True
 End Sub
 
-Private Function CountOfReport(ByVal rn As Long) As Long
-    Dim snap As ListObject
-    Set snap = TableOf("tblSnapshots")
-    If snap.DataBodyRange Is Nothing Then Exit Function
-    CountOfReport = Application.WorksheetFunction.CountIf(snap.ListColumns("Report No").DataBodyRange, rn)
-End Function
+Public Sub EnsureCurrentView()
+    LeaveViewMode
+End Sub
 
-' Copies the stored rows of a report into the Level 2 (view) table.
-Private Sub FillView(ByVal rn As Long)
-    Dim snap As ListObject, dst As ListObject, src As Variant, out() As Variant, i As Long, c As Long, k As Long, total As Long
-    Set snap = TableOf("tblSnapshots")
-    Set dst = TableOf("tblLevel2View")
-    total = RowCountOf(snap)
-    If total = 0 Then
-        ClearTable dst
+' Periods page: removes a report and everything stored for it.
+Public Sub DeleteReport()
+    If Not RequireEditor() Then Exit Sub
+    Dim lo As ListObject, r As Long, rn As Long, cur As Long, newCur As Long, i As Long, n As Long, v As Long
+    Set lo = TableOf("tblPeriods")
+    If ActiveSheet.Name = "Periods" And Not lo.DataBodyRange Is Nothing Then
+        If Not Intersect(ActiveCell, lo.DataBodyRange) Is Nothing Then
+            r = ActiveCell.Row - lo.DataBodyRange.Row + 1
+            rn = CLng(Val(CellText(lo, r, "Report No")))
+        End If
+    End If
+    If rn = 0 Then rn = CLng(Val(InputBox("Which report number do you want to delete?", APP_TITLE)))
+    If rn <= 0 Then Exit Sub
+    If PeriodRow(rn) = 0 Then
+        MsgBox "There is no Report No " & rn & ".", vbExclamation, APP_TITLE
         Exit Sub
     End If
-    src = snap.DataBodyRange.Value
-    ReDim out(1 To total + 1, 1 To dst.ListColumns.Count)
-    For i = 1 To total
-        If CLng(Nz(src(i, 1), 0)) = rn Then
-            k = k + 1
-            For c = 1 To dst.ListColumns.Count
-                out(k, c) = src(i, c + 1)
-            Next c
-        End If
+    cur = CurrentReportNo()
+    n = RowCountOf(lo)
+    For i = 1 To n
+        v = CLng(Val(CellText(lo, i, "Report No")))
+        If v <> rn And v > newCur Then newCur = v
     Next i
-    FillTable dst, out, k
+    If rn = cur And newCur = 0 Then
+        MsgBox "The only report cannot be deleted.", vbExclamation, APP_TITLE
+        Exit Sub
+    End If
+    If MsgBox("Delete Report No " & rn & " and everything stored for it (cost report, registers, library entries)? This cannot be undone." & IIf(rn = cur, vbLf & vbLf & "It is the current report: Report No " & newCur & " becomes current.", ""), vbYesNo + vbExclamation, APP_TITLE) <> vbYes Then Exit Sub
+    LeaveViewMode
+    Busy True, "Deleting Report No " & rn & "..."
+    On Error GoTo fail
+    modStore.DeleteStored rn
+    lo.ListRows(PeriodRow(rn)).Delete
+    If rn = cur Then
+        modStore.LoadLive newCur
+        SetNamed "CurrentReportNo", newCur
+        SetNamed "ViewReportNo", newCur
+    End If
+    Busy False
+    modMain.ApplyRole
+    Application.Calculate
+    SyncPicker
+    LogActivity "Report deleted", "Report No " & rn
+    MsgBox "Report No " & rn & " deleted.", vbInformation, APP_TITLE
+    Exit Sub
+fail:
+    Busy False
+    MsgBox "Could not delete the report: " & Err.Description, vbExclamation, APP_TITLE
 End Sub

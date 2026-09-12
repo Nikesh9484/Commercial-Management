@@ -16,14 +16,14 @@ Public Function CanonicalContractor(ByVal name As String) As String
     CanonicalContractor = Trim$(name)
     If Len(n) = 0 Then Exit Function
     If InStr(n, "al saad") > 0 Or InStr(n, "alsaad") > 0 Or InStr(n, "als -") > 0 Or InStr(n, "als-") > 0 Then CanonicalContractor = "Al Saad General Contracting Co. Ltd."
-    If InStr(n, "mme") > 0 Or InStr(n, "majestic marine") > 0 Or InStr(n, "ps-mmemarine") > 0 Then CanonicalContractor = "MME – Majestic Marine Engineering LLC"
+    If InStr(n, "mme") > 0 Or InStr(n, "majestic marine") > 0 Or InStr(n, "ps-mmemarine") > 0 Then CanonicalContractor = "MME - Majestic Marine Engineering LLC"
     If InStr(n, "wsp") > 0 Then CanonicalContractor = "WSP Middle East"
     If InStr(n, "elmar") > 0 Then CanonicalContractor = "Elmar Marinas Khaleej LLC"
     If InStr(n, "five ocean") > 0 Or InStr(n, "5 ocean") > 0 Then CanonicalContractor = "Five Oceans Environmental Services LLC"
     If InStr(n, "beacon") > 0 Or InStr(n, "becon") > 0 Then CanonicalContractor = "Beacon Development Company"
     If InStr(n, "jvd") > 0 Or InStr(n, "dredging int") > 0 Then CanonicalContractor = "Dredging International Saudi Arabia (JVD)"
     If InStr(n, "haskoning") > 0 Then CanonicalContractor = "Haskoning DHV Saudia"
-    If InStr(n, "kaust") > 0 Or InStr(n, "king abdullah") > 0 Then CanonicalContractor = "KAUST – King Abdullah University of Science & Technology"
+    If InStr(n, "kaust") > 0 Or InStr(n, "king abdullah") > 0 Then CanonicalContractor = "KAUST - King Abdullah University of Science & Technology"
     If InStr(n, "sydney sea") > 0 Or InStr(n, "sys-sydney") > 0 Then CanonicalContractor = "Sydney Seaplanes Asia Limited"
     If InStr(n, "supreme rubber") > 0 Then CanonicalContractor = "Supreme Rubber LLC"
     If InStr(n, "al rajhi") > 0 Then CanonicalContractor = "Al Rajhi Takaful (insurance)"
@@ -58,7 +58,7 @@ Private Function BondType(ByVal t As String) As String
         Case "contractors all risk": BondType = "Contractors All Risks"
         Case "advance payment bond": BondType = "Advance Payment Bond"
         Case "performance bond": BondType = "Performance Bond"
-        Case "workmens compensation", "workmen's compensation", "workmen’s compensation": BondType = "Workmen's Compensation"
+        Case "workmens compensation", "workmen's compensation", "workmen's compensation": BondType = "Workmen's Compensation"
         Case "motor vehicle", "motor vehicle insurance": BondType = "Motor Vehicle Liability"
         Case "contractor's plant & machinery policy": BondType = "Plant & Equipment"
         Case "marine hull": BondType = "Marine & Hull"
@@ -158,7 +158,7 @@ Public Sub ImportMonthlyReport()
     Dim path As String, wb As Workbook
     path = PickFile("Choose the monthly cost report workbook (The Marina CM Report layout)", "Excel workbooks", "*.xlsx;*.xlsm;*.xls")
     If Len(path) = 0 Then Exit Sub
-    Busy True, "Opening " & path & "…"
+    Busy True, "Opening " & path & "..."
     On Error GoTo fail
     Set wb = Workbooks.Open(path, ReadOnly:=True, UpdateLinks:=0)
     If SheetNamed(wb, "Schedule B") Is Nothing Or SheetNamed(wb, "Schedule C") Is Nothing Then
@@ -197,25 +197,30 @@ Public Sub ImportMonthlyReport()
     Busy False
     Dim cur As Long, msg As String
     cur = CurrentReportNo()
-    If reportNo = 0 Then
-        s = InputBox("The report number was not found on the Data Input sheet. Which report number is this?", APP_TITLE, CStr(cur + 1))
-        If Len(s) = 0 Then GoTo closeQuiet
-        reportNo = CLng(Val(s))
-    End If
-    If reportNo < cur Then
-        MsgBox "This is Report No " & reportNo & " but the workbook already holds Report No " & cur & ". The Excel edition keeps the latest report live and earlier reports as stored copies, so an older month cannot be re-imported here. Use the website for that.", vbExclamation, APP_TITLE
+    s = InputBox("Report number for this import" & vbLf & "(the file says " & IIf(reportNo > 0, "No " & reportNo, "nothing") & "; the current report is No " & cur & ")", APP_TITLE, CStr(IIf(reportNo > 0, reportNo, cur + 1)))
+    If Len(s) = 0 Then GoTo closeQuiet
+    reportNo = CLng(Val(s))
+    If reportNo <= 0 Then GoTo closeQuiet
+    s = InputBox("Cut-off date (period end) of Report No " & reportNo & ":", APP_TITLE, Format$(periodEnd, "yyyy-mm-dd"))
+    If Len(s) = 0 Then GoTo closeQuiet
+    If Not IsDate(s) Then
+        MsgBox "That is not a date.", vbExclamation, APP_TITLE
         GoTo closeQuiet
     End If
+    periodEnd = CDate(s)
     If reportNo = cur Then
         msg = "Re-import Report No " & reportNo & " (cut-off " & Format$(periodEnd, "dd-mmm-yy") & ")? Its cost lines, changes, early warnings, risks, provisional sums, contracts, IPC log and budget transfers are replaced. Claims, bonds and final accounts are not touched."
+    ElseIf reportNo > cur Then
+        msg = "Import Report No " & reportNo & " (cut-off " & Format$(periodEnd, "dd-mmm-yy") & ") as the new current report? Report No " & cur & " is stored first as an issued report."
     Else
-        msg = "Import Report No " & reportNo & " (cut-off " & Format$(periodEnd, "dd-mmm-yy") & ") as the new month? Report No " & cur & " is stored first as the previous report."
+        msg = "Import Report No " & reportNo & " (cut-off " & Format$(periodEnd, "dd-mmm-yy") & ") as an earlier issued report? It is stored on its own and can be shown from the Periods page; the current report (No " & cur & ") stays live."
     End If
     If MsgBox(msg, vbOKCancel + vbQuestion, APP_TITLE) <> vbOK Then GoTo closeQuiet
-    Busy True, "Importing Report No " & reportNo & "…"
+    modNav.EnsureCurrentView
+    Busy True, "Importing Report No " & reportNo & "..."
     On Error GoTo fail
+    If cur > 0 Then modStore.SaveLive cur
     If reportNo > cur And cur > 0 Then
-        SnapshotCurrent "stored before importing Report No " & reportNo
         Dim lp As ListObject, pr As Long
         Set lp = TableOf("tblPeriods")
         pr = PeriodRow(cur)
@@ -227,8 +232,8 @@ Public Sub ImportMonthlyReport()
             End If
         End If
     End If
-    EnsurePeriod reportNo, periodEnd, Mid$(path, InStrRev(path, "\") + 1)
-    SetNamed "CurrentReportNo", reportNo
+    EnsurePeriod reportNo, periodEnd, FileBaseName(path), IIf(reportNo < cur, "Locked", "Open")
+    If reportNo >= cur Then SetNamed "CurrentReportNo", reportNo
     Dim summary As String
     summary = ImportCostLines(wb, asset)
     summary = summary & vbCrLf & ImportContractsAndIpcs(wb, periodEnd)
@@ -241,10 +246,18 @@ Public Sub ImportMonthlyReport()
     Set wb = Nothing
     ApplyAllFormulas
     RebuildMovement
+    modStore.SaveLive reportNo
+    If reportNo < cur Then
+        modStore.LoadLive cur
+        SetNamed "ViewReportNo", cur
+    Else
+        SetNamed "ViewReportNo", reportNo
+    End If
+    modNav.SyncPicker
     Busy False
     Application.Calculate
     LogActivity "Monthly report imported", "Report No " & reportNo & " from " & path
-    MsgBox "Report No " & reportNo & " imported." & vbCrLf & vbCrLf & summary, vbInformation, APP_TITLE
+    MsgBox "Report No " & reportNo & " imported and stored." & vbCrLf & vbCrLf & summary & IIf(reportNo < cur, vbCrLf & vbCrLf & "Choose it in the gold box on Home or on the Periods page to see it.", ""), vbInformation, APP_TITLE
     Exit Sub
 closeQuiet:
     On Error Resume Next
@@ -301,7 +314,7 @@ Private Function ImportCostLines(ByVal wb As Workbook, ByVal asset As String) As
     Set ws = SheetNamed(wb, "Schedule B")
     Set lo = TableOf("tblLevel2")
     If ws Is Nothing Then
-        ImportCostLines = "Schedule B not found – cost lines unchanged."
+        ImportCostLines = "Schedule B not found - cost lines unchanged."
         Exit Function
     End If
     Set seen = New Dict
@@ -346,7 +359,7 @@ Private Function ImportCostLines(ByVal wb As Workbook, ByVal asset As String) As
         out(n, ColIndex(lo, "Order")) = n
         out(n, ColIndex(lo, "E")) = baseline
         out(n, ColIndex(lo, "Opening transfers")) = transfers
-        out(n, ColIndex(lo, "Notes")) = IIf(hold, "Budget hold – remaining budget not yet allocated to a contract", IIf(ucode <> code, "Excel code " & code & " (shared with other lines)", ""))
+        out(n, ColIndex(lo, "Notes")) = IIf(hold, "Budget hold - remaining budget not yet allocated to a contract", IIf(ucode <> code, "Excel code " & code & " (shared with other lines)", ""))
 nextRow:
     Next r
     ' the budget-hold block sits below the asset grand total
@@ -373,7 +386,7 @@ nextRow:
         out(n, ColIndex(lo, "Order")) = n
         out(n, ColIndex(lo, "E")) = MoneyOr0(a, r, 5)
         out(n, ColIndex(lo, "Opening transfers")) = MoneyOr0(a, r, 6)
-        out(n, ColIndex(lo, "Notes")) = "Budget hold – remaining budget not yet allocated to a contract"
+        out(n, ColIndex(lo, "Notes")) = "Budget hold - remaining budget not yet allocated to a contract"
 nextRow2:
     Next r
     FillTable lo, out, n
@@ -417,7 +430,7 @@ Private Function PackageOfLine(ByVal code As String) As String
     If r > 0 Then PackageOfLine = CellText(lo, r, "Package")
 End Function
 
-' Schedule H (contracts) + "Schedule H - …" IPC logs -> tblContracts / tblIPC
+' Schedule H (contracts) + "Schedule H - ..." IPC logs -> tblContracts / tblIPC
 Private Function ImportContractsAndIpcs(ByVal wb As Workbook, ByVal periodEnd As Date) As String
     Dim H As Worksheet, a As Variant, hdr As Long, r As Long, loC As ListObject, loI As ListObject, outC() As Variant, nC As Long
     Dim acc As String, scope As String, line As String, po As String, ws As Worksheet, ipcSheets As Collection, s As Variant
@@ -551,7 +564,7 @@ nextL:
         Set ws = s
         ci2 = ContractForSheet(ws, fragBy, engFragBy, contractByFrag, outC, loC)
         If ci2 = 0 Then
-            skipped = skipped & vbCrLf & "  IPC sheet '" & ws.Name & "' skipped – contract not identified."
+            skipped = skipped & vbCrLf & "  IPC sheet '" & ws.Name & "' skipped - contract not identified."
             GoTo nextSheet
         End If
         prm = paramsBy(ws.Name)
@@ -609,7 +622,7 @@ nextI:
 nextSheet:
     Next s
     FillTable loI, outI, nI
-    ImportContractsAndIpcs = "Contracts: " & nC & " · payment applications: " & nI & skipped
+    ImportContractsAndIpcs = "Contracts: " & nC & " - payment applications: " & nI & skipped
 End Function
 
 Private Function NameOfLine(ByVal code As String) As String
@@ -707,7 +720,7 @@ Private Function ImportChanges(ByVal wb As Workbook, ByVal asset As String) As S
     Set ws = SheetNamed(wb, "Schedule C")
     Set lo = TableOf("tblChanges")
     If ws Is Nothing Then
-        ImportChanges = "Schedule C not found – changes unchanged."
+        ImportChanges = "Schedule C not found - changes unchanged."
         Exit Function
     End If
     Set seen = New Dict
@@ -844,7 +857,7 @@ Private Function ImportEarlyWarnings(ByVal wb As Workbook, ByVal periodEnd As Da
     Set ws = SheetNamed(wb, "Early Warning", "Early Warnings")
     Set lo = TableOf("tblEW")
     If ws Is Nothing Then
-        ImportEarlyWarnings = "Early Warning sheet not found – early warnings unchanged."
+        ImportEarlyWarnings = "Early Warning sheet not found - early warnings unchanged."
         Exit Function
     End If
     Set seen = New Dict
@@ -892,7 +905,7 @@ Private Function ImportRisks(ByVal wb As Workbook, ByVal periodEnd As Date) As S
     Set ws = SheetNamed(wb, "Schedule D")
     Set lo = TableOf("tblRisks")
     If ws Is Nothing Then
-        ImportRisks = "Schedule D not found – risks unchanged."
+        ImportRisks = "Schedule D not found - risks unchanged."
         Exit Function
     End If
     a = Grid(ws)
@@ -924,7 +937,7 @@ Private Function ImportProvisionalSums(ByVal wb As Workbook) As String
     Set ws = SheetNamed(wb, "Schedule F")
     Set lo = TableOf("tblPS")
     If ws Is Nothing Then
-        ImportProvisionalSums = "Schedule F not found – provisional sums unchanged."
+        ImportProvisionalSums = "Schedule F not found - provisional sums unchanged."
         Exit Function
     End If
     a = Grid(ws)
@@ -953,7 +966,7 @@ Private Function ImportTransfers(ByVal wb As Workbook, ByVal periodEnd As Date) 
     Set ws = SheetNamed(wb, "Schedule J")
     Set lo = TableOf("tblTransfers")
     If ws Is Nothing Then
-        ImportTransfers = "Schedule J not found – budget transfers unchanged."
+        ImportTransfers = "Schedule J not found - budget transfers unchanged."
         Exit Function
     End If
     Set seen = New Dict
@@ -1002,7 +1015,7 @@ Public Sub ImportClaimsTracker()
     If Len(path) = 0 Then Exit Sub
     prog = NormCode(CStr(Nz(NamedValue("ProgrammeCode"))))
     asset = NormCode(CStr(Nz(NamedValue("AssetCode"))))
-    Busy True, "Reading the Claims Tracker…"
+    Busy True, "Reading the Claims Tracker..."
     On Error GoTo fail
     Set wb = Workbooks.Open(path, ReadOnly:=True, UpdateLinks:=0)
     Set lo = TableOf("tblClaims")
@@ -1048,12 +1061,12 @@ Public Sub ImportClaimsTracker()
             approved = InStr(st68, "determination issued") > 0 Or InStr(st68, "dvo issued") > 0 Or InStr(st68, "ei issued") > 0
             status = IIf(rejected, "Rejected", IIf(approved, "Approved", "Pending"))
             notes = "Claims Tracker item " & no & " (" & IIf(Len(Txt(a, r, 2)) > 0, Txt(a, r, 2), "claim") & ")"
-            If Len(Txt(a, r, 67)) > 0 Then notes = notes & " · Assessment report: " & Txt(a, r, 67)
-            If Len(Txt(a, r, 68)) > 0 Then notes = notes & " · EI / DVO: " & Txt(a, r, 68)
-            If Len(Txt(a, r, 69)) > 0 Then notes = notes & " · Action with: " & Txt(a, r, 69)
-            If LCase$(Txt(a, r, 73)) = "yes" Then notes = notes & " · Notice of Dissatisfaction: Yes"
-            If LCase$(Txt(a, r, 74)) = "yes" Then notes = notes & " · Notice of Dispute: Yes"
-            If Len(Txt(a, r, 70)) > 0 Then notes = notes & " · Remarks: " & Txt(a, r, 70)
+            If Len(Txt(a, r, 67)) > 0 Then notes = notes & " - Assessment report: " & Txt(a, r, 67)
+            If Len(Txt(a, r, 68)) > 0 Then notes = notes & " - EI / DVO: " & Txt(a, r, 68)
+            If Len(Txt(a, r, 69)) > 0 Then notes = notes & " - Action with: " & Txt(a, r, 69)
+            If LCase$(Txt(a, r, 73)) = "yes" Then notes = notes & " - Notice of Dissatisfaction: Yes"
+            If LCase$(Txt(a, r, 74)) = "yes" Then notes = notes & " - Notice of Dispute: Yes"
+            If Len(Txt(a, r, 70)) > 0 Then notes = notes & " - Remarks: " & Txt(a, r, 70)
             n = n + 1
             out(n, ColIndex(lo, "Claim No")) = claimNo
             out(n, ColIndex(lo, "Description")) = Txt(a, r, 3) & IIf(isCost, " [Cost claim]", IIf(InStr(kind, "TIA") > 0, " [Time claim]", ""))
@@ -1070,7 +1083,7 @@ Public Sub ImportClaimsTracker()
             out(n, ColIndex(lo, "Disruption")) = YesNo(YesOf(a, r, 11))
             out(n, ColIndex(lo, "Acceleration")) = YesNo(YesOf(a, r, 12))
             out(n, ColIndex(lo, "Other")) = YesNo(YesOf(a, r, 13) Or YesOf(a, r, 14))
-            out(n, ColIndex(lo, "Other – describe")) = IIf(YesOf(a, r, 13), "Notice of Dissatisfaction", IIf(YesOf(a, r, 14), "Other", ""))
+            out(n, ColIndex(lo, "Other - describe")) = IIf(YesOf(a, r, 13), "Notice of Dissatisfaction", IIf(YesOf(a, r, 14), "Other", ""))
             out(n, ColIndex(lo, "(A) Aware date")) = DateOf(a, r, 15)
             out(n, ColIndex(lo, "Notice letter ref")) = Txt(a, r, 16)
             out(n, ColIndex(lo, "(B) Received date")) = DateOf(a, r, 17)
@@ -1117,7 +1130,7 @@ nextWs:
     ApplyAllFormulas
     Busy False
     Application.Calculate
-    LogActivity "Claims Tracker imported", path & " · " & n & " of " & total & " claims"
+    LogActivity "Claims Tracker imported", path & " - " & n & " of " & total & " claims"
     MsgBox n & " claims imported (of " & total & " in the tracker" & IIf(IsEmpty(asOf), "", ", as of " & Format$(CDate(asOf), "dd-mmm-yy")) & "). Pending claims are not carried in column M; approved claims feed it through their determined amount.", vbInformation, APP_TITLE
     Exit Sub
 fail:

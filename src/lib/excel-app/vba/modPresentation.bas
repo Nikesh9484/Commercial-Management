@@ -1,7 +1,7 @@
 Option Explicit
 ' ------------------------------------------------------------------------------------------
 ' The cost report as a PowerPoint presentation (needs PowerPoint on this PC): the same slides
-' as the website's deck – tiles, native charts copied from the Home sheet, editable tables –
+' as the website's deck - tiles, native charts copied from the Home sheet, editable tables -
 ' with a fade transition and staggered fade-in on every slide. Also saved as PDF.
 ' ------------------------------------------------------------------------------------------
 
@@ -46,15 +46,15 @@ Private Function NewSlide(ByVal title As String, ByVal subtitle As String) As Ob
     shp.Name = "band"
     AddText sld, title, 32, 16, 620, 40, 24, True, "1F3A5F", False
     If Len(subtitle) > 0 Then AddText sld, subtitle, 32, 52, 700, 22, 11, False, "6B7280", False
-    AddText sld, CStr(Nz(NamedValue("ProgrammeCode"))) & "  ·  " & CStr(Nz(NamedValue("CurrentPeriodLabel"))), 640, 18, 300, 22, 10, True, "1F3A5F", False
+    AddText sld, CStr(Nz(NamedValue("ProgrammeCode"))) & "  -  " & CStr(Nz(NamedValue("CurrentPeriodLabel"))), 640, 18, 300, 22, 10, True, "1F3A5F", False
     Set shp = sld.Shapes.AddShape(1, 32, 78, SLIDE_W - 64, 1.5)
     shp.Fill.ForeColor.RGB = RGBHex("D6DCE5")
     shp.Line.Visible = 0
     Set shp = sld.Shapes.AddShape(1, 32, 76, 100, 5)
     shp.Fill.ForeColor.RGB = RGBHex(accent)
     shp.Line.Visible = 0
-    AddText sld, APP_TITLE & "  ·  Monthly Report No " & CStr(Nz(NamedValue("CurrentReportNo"))) & "  ·  all amounts SAR", 32, SLIDE_H - 24, 600, 18, 8, False, "6B7280", False
-    AddText sld, "Confidential · " & slideNo, 800, SLIDE_H - 24, 128, 18, 8, False, "6B7280", False
+    AddText sld, APP_TITLE & "  -  Monthly Report No " & CStr(Nz(NamedValue("CurrentReportNo"))) & "  -  all amounts SAR", 32, SLIDE_H - 24, 600, 18, 8, False, "6B7280", False
+    AddText sld, "Confidential - " & slideNo, 800, SLIDE_H - 24, 128, 18, 8, False, "6B7280", False
     Set NewSlide = sld
 End Function
 
@@ -224,7 +224,7 @@ Private Function TableRows(ByVal tableName As String, ByVal cols As Variant, ByV
         For c = 0 To UBound(cols)
             tmp = lo.DataBodyRange.Cells(keep(i), idx(c)).Value
             If VarType(tmp) = vbDate Then tmp = Format$(tmp, "dd-mmm-yy")
-            If VarType(tmp) = vbString Then If Len(tmp) > 60 Then tmp = Left$(tmp, 58) & "…"
+            If VarType(tmp) = vbString Then If Len(tmp) > 60 Then tmp = Left$(tmp, 58) & "..."
             out(i, c + 1) = tmp
         Next c
     Next i
@@ -254,7 +254,7 @@ Public Sub BuildPresentation()
     On Error GoTo fail
     Set pptApp = CreateObject("PowerPoint.Application")
     On Error GoTo fail2
-    Busy True, "Building the presentation…"
+    Busy True, "Building the presentation..."
     Application.ScreenUpdating = True
     pptApp.Visible = -1
     Set pres = pptApp.Presentations.Add
@@ -324,14 +324,14 @@ Private Sub TitleSlide()
     shp.Line.Visible = 0
     AddText sld, UCase$(APP_TITLE), 64, 70, 600, 24, 12, False, "9FB3C8", True
     AddText sld, "Monthly Cost Report", 64, 100, 700, 70, 44, True, "FFFFFF", True
-    AddText sld, CStr(Nz(NamedValue("CurrentPeriodLabel"))) & "  ·  cut-off " & Format$(Nz(NamedValue("CurrentPeriodEnd"), Date), "dd-mmm-yy"), 64, 180, 700, 34, 20, False, "DCE6F2", True
+    AddText sld, CStr(Nz(NamedValue("CurrentPeriodLabel"))) & "  -  cut-off " & Format$(Nz(NamedValue("CurrentPeriodEnd"), Date), "dd-mmm-yy"), 64, 180, 700, 34, 20, False, "DCE6F2", True
     Set shp = sld.Shapes.AddShape(1, 64, 250, 160, 6)
     shp.Fill.ForeColor.RGB = RGBHex("EB6834")
     shp.Line.Visible = 0
     AddText sld, CStr(Nz(NamedValue("ProgrammeName"))), 64, 290, 700, 30, 18, True, "FFFFFF", True
-    AddText sld, CStr(Nz(NamedValue("AssetCode"))) & " · " & CStr(Nz(NamedValue("AssetName"))) & vbCr & CStr(Nz(NamedValue("ClientName"))) & " · " & CStr(Nz(NamedValue("LocationName"))), 64, 322, 700, 44, 13, False, "C7D3E2", True
-    AddText sld, IIf(LCase$(CStr(Nz(NamedValue("CurrentPeriodStatus")))) = "locked", "Issued report", "Draft – period not yet locked") & " · prepared by the Commercial Management team · " & Format$(Date, "dd-mmm-yy"), 64, 440, 800, 24, 12, True, "FFFFFF", True
-    AddText sld, "Report No " & CStr(Nz(NamedValue("CurrentReportNo"))) & "  ·  Confidential", 64, 490, 600, 20, 10, False, "9FB3C8", False
+    AddText sld, CStr(Nz(NamedValue("AssetCode"))) & " - " & CStr(Nz(NamedValue("AssetName"))) & vbCr & CStr(Nz(NamedValue("ClientName"))) & " - " & CStr(Nz(NamedValue("LocationName"))), 64, 322, 700, 44, 13, False, "C7D3E2", True
+    AddText sld, IIf(LCase$(CStr(Nz(NamedValue("CurrentPeriodStatus")))) = "locked", "Issued report", "Draft - period not yet locked") & " - prepared by the Commercial Management team - " & Format$(Date, "dd-mmm-yy"), 64, 440, 800, 24, 12, True, "FFFFFF", True
+    AddText sld, "Report No " & CStr(Nz(NamedValue("CurrentReportNo"))) & "  -  Confidential", 64, 490, 600, 20, 10, False, "9FB3C8", False
 End Sub
 
 Private Sub ExecutiveSlide()
@@ -362,7 +362,7 @@ End Sub
 
 Private Sub Level1Slide()
     Dim sld As Object, ws As Worksheet, hdrRow As Long, lastRow As Long, rg As Range, shp As Object, r As Long, keys As Variant, rows As Variant, k As Long, i As Long, ncat As Long, c As Long
-    Set sld = NewSlide("Cost Report – Level 1 (Executive)", "By cost category, executive view (budget includes the unallocated hold; other lines exclude it)")
+    Set sld = NewSlide("Cost Report - Level 1 (Executive)", "By cost category, executive view (budget includes the unallocated hold; other lines exclude it)")
     Set ws = ThisWorkbook.Worksheets("Level 1")
     keys = Array("G", "awards", "H", "J", "K", "L", "M", "N", "O", "P")
     ncat = 0
@@ -404,8 +404,8 @@ End Sub
 Private Sub MovementSlide()
     Dim sld As Object, ws As Worksheet, first As Long, n As Long, i As Long, rows As Variant, k As Long, headers As Variant, tmp As Variant, j As Long, idx() As Long, r As Long
     Set sld = NewSlide("Movement since the previous report", "Report No " & CStr(NamedValue("PrevReportNo")) & " to " & CStr(NamedValue("CurrentPeriodLabel")))
-    AddTile sld, 1, 4, "AFA – previous report", Money(L1("prevN")), "Report No " & CStr(NamedValue("PrevReportNo")), "1F3A5F"
-    AddTile sld, 2, 4, "AFA – this report", Money(L1("N")), CStr(NamedValue("CurrentPeriodLabel")), "EB6834"
+    AddTile sld, 1, 4, "AFA - previous report", Money(L1("prevN")), "Report No " & CStr(NamedValue("PrevReportNo")), "1F3A5F"
+    AddTile sld, 2, 4, "AFA - this report", Money(L1("N")), CStr(NamedValue("CurrentPeriodLabel")), "EB6834"
     AddTile sld, 3, 4, "Period movement", Money(L1("S")), "", IIf(L1("S") > 0, "D64545", IIf(L1("S") < 0, "2E9E5B", "2A78D6"))
     AddTile sld, 4, 4, "Variance to budget", Money(L1("O")), "this report", IIf(L1("O") > 0, "D64545", "2E9E5B")
     ' the largest line movements from the Movement sheet
@@ -493,7 +493,7 @@ Private Sub PaymentsSlide()
     AddTile sld, 2, 4, "Net paid to date", Money(Application.WorksheetFunction.Sum(lo.ListColumns(ColIndex(lo, "Net paid")).DataBodyRange)), "", "2E9E5B"
     AddTile sld, 3, 4, "Works to complete (Q)", Money(L1("Q")), "", "7C5CBF"
     AddTile sld, 4, 4, "Contracts", CStr(RowCountOf(lo)), "", "1F3A5F"
-    AddSectionTitle sld, "Cash flow – cumulative forecast vs actual", 32, 182, 420
+    AddSectionTitle sld, "Cash flow - cumulative forecast vs actual", 32, 182, 420
     AddHomeChart sld, 6, 32, 206, 420, 300
     AddSectionTitle sld, "Payment status by contract", 470, 182, 460
     k = TableRows("tblContracts", Array("Title", "Contractor", "Status", "Revised value", "Latest certified", "Net paid"), "", "", "Revised value", 9, rows)
@@ -551,7 +551,7 @@ Private Sub KeyIssuesSlide()
         If Len(Trim$(parts(i))) > 0 Then
             n = n + 1
             items(n) = Trim$(parts(i))
-            If Left$(items(n), 1) = "-" Or Left$(items(n), 1) = "•" Then items(n) = Trim$(Mid$(items(n), 2))
+            If Left$(items(n), 1) = "-" Or Left$(items(n), 1) = "-" Then items(n) = Trim$(Mid$(items(n), 2))
         End If
     Next i
     AddSectionTitle sld, "Key issues this period", 32, 90, 430

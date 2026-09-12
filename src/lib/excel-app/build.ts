@@ -31,7 +31,7 @@ const MONEY = "#,##0.00;[Red](#,##0.00)";
 const WHOLE = "#,##0;[Red](#,##0)";
 const DATE = "DD-MMM-YY";
 const CATEGORIES = LISTS.Category;
-const SHEETS_ORDER = ["Login", "Home", "Registers", "Imports", "Periods", "Reports", "Level 1", "Level 2", "Level 2 (view)", "Movement", "Changes", "Claims", "Early Warnings", "Risks", "Provisional Sums", "Bonds", "Contracts", "IPCs", "Final Accounts", "Cash Flow", "Transfers", "Actions", "Setup", "Snapshots", "Users", "Activity", "Lists", "ChartData"];
+const SHEETS_ORDER = ["Login", "Home", "Registers", "Imports", "Periods", "Reports", "Level 1", "Level 2", "Movement", "Changes", "Claims", "Early Warnings", "Risks", "Provisional Sums", "Bonds", "Contracts", "IPCs", "Final Accounts", "Cash Flow", "Transfers", "Actions", "Setup", "Snapshots", "Users", "Activity", "Lists", "ChartData", ...REGISTER_TABLES.filter((t) => t.register !== "cost_lines" && t.register !== "reporting_periods").map((t) => `${t.sheet} store`)];
 const REGISTER_SHEETS = ["Changes", "Claims", "Early Warnings", "Risks", "Provisional Sums", "Bonds", "Contracts", "IPCs", "Final Accounts", "Cash Flow", "Transfers", "Actions"];
 /** The navigation bar shown on every page once signed in: label, macro (wired by the workbook from the shape name "nav:<macro>"). */
 const NAV: [string, string][] = [["Home", "NavHome"], ["Level 1", "NavLevel1"], ["Level 2", "NavLevel2"], ["Movement", "NavMovement"], ["Registers", "NavRegisters"], ["Imports", "NavImports"], ["Periods", "NavPeriods"], ["Reports", "NavReports"], ["Setup", "NavSetup"], ["Users", "NavUsers"], ["Sign out", "SignOut"]];
@@ -204,6 +204,8 @@ interface Seed {
   rows: Record<string, RecordRow[]>;
   lines: CostLineRow[];
   snapshots: { reportNo: number; lines: CostLineRow[] }[];
+  /** the website's stored copies of each register per issued report: register key -> report no -> rows */
+  registerCopies: Record<string, Record<number, RecordRow[]>>;
   cashflow: { month: Date; forecast: number }[];
   users: { name: string; email: string; role: string; active: boolean }[];
   lineCode: Map<number, string>;
@@ -236,14 +238,21 @@ function loadSeed(programmeId: number): Seed {
   for (const r of rows.changes) changeItem.set(Number(r.id), String(r.item_no ?? ""));
   const lines = latest ? computeCostReport(programmeId, latest.id).lines : [];
   const snapshots: Seed["snapshots"] = [];
+  const registerCopies: Seed["registerCopies"] = {};
   for (const p of periods) {
     const snap = snapshotRows<CostLineRow>(db, Number(p.id), "cost_report");
     if (snap && snap.length) snapshots.push({ reportNo: Number(p.report_no), lines: snap });
+    if (latest && Number(p.id) === Number(latest.id)) continue; // the current report's rows are the live rows
+    for (const t of REGISTER_TABLES) {
+      if (!t.register || t.register === "cost_lines" || t.register === "reporting_periods") continue;
+      const copy = snapshotRows<RecordRow>(db, Number(p.id), t.register);
+      if (copy && copy.length) (registerCopies[t.register] ??= {})[Number(p.report_no)] = copy;
+    }
   }
   const cf = getCashflow(db, programmeId);
   const cashflow = cf.months.map((m) => ({ month: new Date(`${m.key}-01T00:00:00Z`), forecast: cf.monthTotals[m.key]?.forecast ?? 0 }));
   const users = (db.prepare("SELECT name, email, role, active FROM users ORDER BY id").all() as { name: string; email: string; role: string; active: number }[]).map((u) => ({ ...u, active: !!u.active }));
-  return { programme, asset, client, location, periods, currentReportNo: latest ? latest.report_no : 1, rows, lines, snapshots, cashflow, users, lineCode, contractPo, meetingNo, changeItem };
+  return { programme, asset, client, location, periods, currentReportNo: latest ? latest.report_no : 1, rows, lines, snapshots, registerCopies, cashflow, users, lineCode, contractPo, meetingNo, changeItem };
 }
 
 /* ------------------------------------------------------------------ cell values from register rows */
@@ -850,20 +859,21 @@ function homeSheet(wb: ExcelJS.Workbook, names: Names, seed: Seed, charts: XlsxC
 }
 
 
-/** Level 2 (view): the stored copy of the report chosen on the Periods page, filled by the workbook. */
-const LEVEL2VIEW: TableSpec = { sheet: "Level 2 (view)", table: "tblLevel2View", title: "Cost Report – Level 2 (issued copy)", cols: SNAPSHOTS.cols.filter((c) => c.h !== "Report No") };
-const LIBRARY: TableSpec = { sheet: "Reports", table: "tblLibrary", title: "Report library", cols: [{ h: "Report No", type: "number", width: 10 }, { h: "Report", width: 34 }, { h: "File", width: 70 }, { h: "Created", type: "date", width: 16 }, { h: "By", width: 22 }] };
+const LIBRARY: TableSpec = { sheet: "Reports", table: "tblLibrary", title: "Files produced", cols: [{ h: "Report No", type: "number", width: 10 }, { h: "Report", width: 34 }, { h: "File", width: 70 }, { h: "Created", type: "date", width: 16 }, { h: "By", width: 22 }] };
 
-function level2ViewSheet(wb: ExcelJS.Workbook) {
-  const r = tableSheet(wb, LEVEL2VIEW, [], { subtitle: "Read-only copy of an issued report, shown when a past report is chosen on the Periods page", before: (ws) => {
-    const b = ws.addRow([{ formula: `"Showing the stored copy of "&ViewPeriodLabel&" (Report No "&ViewReportNo&"). Choose 'Back to current report' on the Periods page to return to the live cost lines."`, result: undefined }]);
-    b.font = { bold: true, color: { argb: XL.navy } };
-    b.alignment = { vertical: "middle", indent: 1 };
-    b.height = 22;
-    for (let c = 1; c <= 10; c++) b.getCell(c).fill = gradient(["FFFFFFFF", "FFFFF4D6"], 90);
-    ws.mergeCells(b.number, 1, b.number, 10);
-  } });
-  r.ws.getColumn(1).width = 16;
+/** A hidden store sheet: the rows of one register for every report (Report No + the register's columns, as values). */
+function storeSheet(wb: ExcelJS.Workbook, spec: TableSpec, rows: ExcelJS.CellValue[][]) {
+  const ws = sheet(wb, `${spec.sheet} store`);
+  ws.getCell("A1").value = `${spec.title} – stored rows of every report (hidden; written by the workbook)`;
+  ws.getCell("A1").font = { bold: true, color: { argb: XL.navy } };
+  const cols = [{ h: "Report No", type: "number" as const, width: 9 }, ...spec.cols];
+  ws.addTable({ name: `${spec.table}Store`, ref: "A3", headerRow: true, totalsRow: false, style: { theme: "TableStyleLight9", showRowStripes: true }, columns: cols.map((c) => ({ name: c.h, filterButton: false })), rows: rows.length ? rows : [cols.map(() => null)] });
+  cols.forEach((c, i) => {
+    const col = ws.getColumn(i + 1);
+    col.width = c.width ?? 14;
+    if (c.type === "money") col.numFmt = MONEY;
+    if (c.type === "date") col.numFmt = DATE;
+  });
 }
 
 /** Registers: the menu page with a tile per register, as on the website. */
@@ -950,36 +960,63 @@ function importsSheet(wb: ExcelJS.Workbook, shapes: XlsxShape[]) {
 }
 
 /** Reports: produce the reports of the report shown, and the library of everything produced (as the website's Reports & downloads page). */
-function reportsSheet(wb: ExcelJS.Workbook, shapes: XlsxShape[]) {
+function reportsSheet(wb: ExcelJS.Workbook, shapes: XlsxShape[], names: Names) {
   const ws = sheet(wb, "Reports");
   ws.views = [{ showGridLines: false }];
+  const LIB_ROWS = 30;
   const before = (w: ExcelJS.Worksheet) => {
-    const l = w.addRow([{ formula: `"Reports are produced for "&ViewPeriodLabel&" (Report No "&ViewReportNo&", "&ViewMode&"). Choose another report on the Periods page first."`, result: undefined }]);
+    const l = w.addRow(["Report library – every report the workbook holds. Click a report, then a button: the dashboard switches to that report and the file is produced from it."]);
     l.font = { bold: true, color: { argb: XL.navy } };
     l.alignment = { vertical: "middle", indent: 1 };
     l.height = 22;
-    for (let c = 1; c <= 5; c++) l.getCell(c).fill = gradient(["FFFFFFFF", "FFEAF1FA"], 90);
-    w.mergeCells(l.number, 1, l.number, 5);
+    for (let c = 1; c <= 6; c++) l.getCell(c).fill = gradient(["FFFFFFFF", "FFEAF1FA"], 90);
+    w.mergeCells(l.number, 1, l.number, 6);
     w.addRow([]).height = 34; // buttons
-    w.addRow([]).height = 34;
-    const n = w.addRow(["Each report is saved where you choose and listed below; select a row and click 'Open selected file' to open it again. The PDF and PowerPoint use the report shown; the Excel copy and the Claim EAR use the live workbook."]);
+    const h = w.addRow(["Report No", "Report", "Cut-off", "Status", "Source file", "Files produced"]);
+    h.font = { bold: true, color: { argb: XL.white } };
+    h.height = 22;
+    h.alignment = { vertical: "middle" };
+    for (let c = 1; c <= 6; c++) h.getCell(c).fill = gradient(GRAD.bandLight, 90);
+    const first = h.number + 1;
+    for (let i = 0; i < LIB_ROWS; i++) {
+      const r = w.addRow([]);
+      const k = i + 1;
+      r.getCell(1).value = { formula: `IFERROR(INDEX(tblPeriods[Report No],${k}),"")`, result: undefined };
+      r.getCell(2).value = { formula: `IFERROR(INDEX(tblPeriods[Label],${k}),"")`, result: undefined };
+      r.getCell(3).value = { formula: `IFERROR(IF(INDEX(tblPeriods[Period end],${k})="","",INDEX(tblPeriods[Period end],${k})),"")`, result: undefined };
+      r.getCell(3).numFmt = DATE;
+      r.getCell(4).value = { formula: `IFERROR(IF(INDEX(tblPeriods[Report No],${k})=CurrentReportNo,"Current (live)",INDEX(tblPeriods[Status],${k})),"")`, result: undefined };
+      r.getCell(5).value = { formula: `IFERROR(INDEX(tblPeriods[Source file],${k}),"")`, result: undefined };
+      r.getCell(6).value = { formula: `IF(A${r.number}="","",COUNTIF(tblLibrary[Report No],A${r.number}))`, result: undefined };
+      r.getCell(6).numFmt = "0";
+      for (let c = 1; c <= 6; c++) {
+        r.getCell(c).border = { bottom: { style: "hair", color: { argb: XL.line } } };
+        if (i % 2) r.getCell(c).fill = solid(XL.zebra);
+      }
+      r.getCell(1).alignment = { indent: 1 };
+    }
+    names.add("LibraryFirstRow", "Reports", `$A$${first}`);
+    w.addRow([]);
+    const n = w.addRow(["Files produced from this workbook are listed below; click a row and 'Open selected file' to open it again."]);
     n.font = { italic: true, size: 9, color: { argb: XL.muted } };
-    n.alignment = { wrapText: true };
-    n.height = 30;
-    w.mergeCells(n.number, 1, n.number, 5);
+    w.mergeCells(n.number, 1, n.number, 6);
     w.addRow([]);
   };
   tableSheet(wb, LIBRARY, [], { subtitle: "Every report produced from this workbook, newest first", before });
   const y1 = rowTop(ws, 5) + 4;
-  const y2 = rowTop(ws, 6) + 4;
   const btn = (label: string, macro: string, colors: readonly string[], x: number, y: number, w: number) => shapes.push(buttonAt(ws, `act:${macro}`, label, macro, colors, x, y, w, 26, 10));
-  btn("▤  Cost report (PDF)", "ExportPdf", GRAD.orange, 6, y1, 150);
-  btn("▦  Issued copy (Excel)", "SaveIssuedCopy", GRAD.green, 162, y1, 160);
-  btn("▶  PowerPoint presentation", "BuildPresentation", GRAD.gold, 328, y1, 190);
-  btn("✎  Claim EAR (Word)", "CreateClaimEar", GRAD.purple, 524, y1, 160);
-  btn("⧉  Open selected file", "OpenSelectedFile", GRAD.blue, 6, y2, 170);
-  btn("✕  Remove selected row", "RemoveLibraryRow", GRAD.navy, 182, y2, 170);
-  btn("▣  Open the reports folder", "OpenReportsFolder", GRAD.teal, 358, y2, 190);
+  btn("▤  Cost report (PDF)", "LibPdf", GRAD.orange, 6, y1, 150);
+  btn("▦  Excel copy", "LibExcel", GRAD.green, 162, y1, 120);
+  btn("▶  PowerPoint", "LibPpt", GRAD.gold, 288, y1, 120);
+  btn("✎  Claim EAR (Word)", "CreateClaimEar", GRAD.purple, 414, y1, 150);
+  btn("⧉  Open selected file", "OpenSelectedFile", GRAD.blue, 570, y1, 160);
+  btn("▣  Reports folder", "OpenReportsFolder", GRAD.teal, 736, y1, 130);
+  ws.getColumn(1).width = 11;
+  ws.getColumn(2).width = 34;
+  ws.getColumn(3).width = 12;
+  ws.getColumn(4).width = 18;
+  ws.getColumn(5).width = 34;
+  ws.getColumn(6).width = 14;
 }
 
 /* ------------------------------------------------------------------ the workbook */
@@ -1000,18 +1037,17 @@ export async function renderExcelEdition(programmeId: number): Promise<Buffer> {
   setupSheet(wb, names, seed);
   // Periods
   const periodsWs = tableSheet(wb, PERIODS, seed.periods.map((p) => PERIODS.cols.map((c) => cellValue(c, p, seed))), { subtitle: `${subtitle} · click a row, then "Show this report" to view that issued report on Home, Level 1 and Level 2`, before: (ws) => { ws.addRow([]).height = 34; ws.addRow([]); } });
-  [["show", "◉  Show this report", "ShowSelectedPeriod", GRAD.gold, 6, 150], ["back", "↩  Back to current report", "BackToCurrent", GRAD.blue, 162, 170], ["new", "◆  New month", "NewMonth", GRAD.navy, 360, 110], ["lock", "🔒  Lock period", "LockCurrentPeriod", GRAD.teal, 476, 120], ["unlock", "🔓  Unlock period", "UnlockCurrentPeriod", GRAD.purple, 602, 130]].forEach(([, label, macro, colors, x, w]) =>
+  [["show", "◉  Show this report", "ShowSelectedPeriod", GRAD.gold, 6, 150], ["back", "↩  Back to current report", "BackToCurrent", GRAD.blue, 162, 170], ["new", "◆  New month", "NewMonth", GRAD.navy, 360, 110], ["lock", "🔒  Lock period", "LockCurrentPeriod", GRAD.teal, 476, 120], ["unlock", "🔓  Unlock period", "UnlockCurrentPeriod", GRAD.purple, 602, 130], ["del", "✕  Delete report", "DeleteReport", GRAD.red, 738, 120]].forEach(([, label, macro, colors, x, w]) =>
     shapes.Periods.push(buttonAt(periodsWs.ws, `act:${macro}`, label as string, macro as string, colors as readonly string[], x as number, rowTop(periodsWs.ws, 4) + 4, w as number, 26, 10)),
   );
   const l1 = level1Sheet(wb, names, seed);
   // Level 2 from the live cost lines register
   const costLines = seed.rows.cost_lines.slice().sort((a, b) => Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0));
   tableSheet(wb, LEVEL2, costLines.map((r) => LEVEL2.cols.map((c) => cellValue(c, r, seed))), { subtitle, before: (ws) => ws.addRow(["Money columns F to S are formulas over the other sheets (transfers, changes, early warnings, claims, contracts, stored copies). Enter E and Opening transfers; everything else calculates."]).font = { italic: true, size: 9, color: { argb: XL.muted } } });
-  level2ViewSheet(wb);
   movementSheet(wb, names, l1, Math.max(1, costLines.length));
   registersSheet(wb, shapes.Registers);
   importsSheet(wb, shapes.Imports);
-  reportsSheet(wb, shapes.Reports);
+  reportsSheet(wb, shapes.Reports, names);
   // registers
   const regSpecs: [TableSpec, RecordRow[]][] = [
     [CHANGES, seed.rows.changes],
@@ -1028,9 +1064,16 @@ export async function renderExcelEdition(programmeId: number): Promise<Buffer> {
   for (const [spec, rows] of regSpecs) tableSheet(wb, spec, rows.map((r) => spec.cols.map((c) => cellValue(c, r, seed))), { subtitle });
   tableSheet(wb, CASHFLOW, seed.cashflow.map((m) => [m.month, m.forecast || null, null, null, null, null]), { subtitle: `${subtitle} · Actual = net payments by paid date from the IPC log; type the forecast per month` });
   tableSheet(wb, ACTIONS, seed.rows.actions.map((r) => ACTIONS.cols.map((c) => cellValue(c, r, seed))), { subtitle });
+  // every register's rows of the current report, stored under its report number (earlier reports are stored as they are imported or locked)
+  const storeRows: [TableSpec, ExcelJS.CellValue[][]][] = [...regSpecs.map(([spec, rows]): [TableSpec, ExcelJS.CellValue[][]] => [spec, rows.map((r) => spec.cols.map((c) => cellValue(c, r, seed)))]), [CASHFLOW, seed.cashflow.map((m) => [m.month, m.forecast || null, null, null, null, null])], [ACTIONS, seed.rows.actions.map((r) => ACTIONS.cols.map((c) => cellValue(c, r, seed)))]];
+  for (const [spec, rows] of storeRows) {
+    const stored: ExcelJS.CellValue[][] = rows.map((r) => [seed.currentReportNo, ...spec.cols.map((c, i) => (c.formula ? null : r[i]))]);
+    for (const [rn, copy] of Object.entries(seed.registerCopies[spec.register ?? ""] ?? {})) for (const r of copy) stored.push([Number(rn), ...spec.cols.map((c) => (c.formula ? null : cellValue(c, r, seed)))]);
+    storeSheet(wb, spec, stored);
+  }
   // stored copies
   const snapRows: ExcelJS.CellValue[][] = [];
-  for (const s of seed.snapshots) for (const l of s.lines) snapRows.push([s.reportNo, l.code, l.package ?? "", l.name ?? "", l.category ?? "", l.section ?? "", l.is_budget_hold ? "Yes" : "No", l.E, l.F, l.G, l.H, l.I, l.J, l.K, l.L, l.M, l.N, l.O, l.P, l.Q]);
+  for (const s of seed.snapshots) for (const l of s.lines) snapRows.push([s.reportNo, ...LEVEL2.cols.map((c) => { const v = (l as unknown as Record<string, unknown>)[c.h]; if (c.h === "Code") return l.code; if (c.h === "Package") return l.package ?? ""; if (c.h === "Name") return l.name ?? ""; if (c.h === "Category") return l.category ?? ""; if (c.h === "Section") return l.section ?? ""; if (c.h === "Budget hold") return l.is_budget_hold ? "Yes" : "No"; return typeof v === "number" ? v : null; })]); // eslint-disable-line
   tableSheet(wb, SNAPSHOTS, snapRows, { subtitle: `${subtitle} · written by "Lock period" / "New month"; the Previous columns read the latest stored report before the current one` });
   // users
   const userRows = seed.users.map((u) => [u.name, u.email, u.role, u.active ? "Yes" : "No", hashPassword(u.role === "admin" ? "Admin@123" : "Welcome@123"), "Yes", null]);
@@ -1043,10 +1086,10 @@ export async function renderExcelEdition(programmeId: number): Promise<Buffer> {
   homeSheet(wb, names, seed, charts, shapes.Home, l1);
   // the navigation bar on every page except Login
   for (const n of SHEETS_ORDER) {
-    if (n === "Login" || n === "ChartData") continue;
+    if (n === "Login" || n === "ChartData" || n.endsWith(" store")) continue;
     const ws = wb.getWorksheet(n)!;
     shapes[n] = shapes[n] ?? [];
-    navBar(ws, shapes[n], n === "Home" ? "Home" : n === "Level 2 (view)" ? "Level 2" : REGISTER_SHEETS.includes(n) ? "Registers" : n);
+    navBar(ws, shapes[n], n === "Home" ? "Home" : REGISTER_SHEETS.includes(n) ? "Registers" : n);
   }
   // tab order, visibility, names
   const ordered = SHEETS_ORDER.map((n) => wb.getWorksheet(n)).filter((w): w is ExcelJS.Worksheet => !!w);
@@ -1075,10 +1118,10 @@ export const codeName = (sheet: string) => "sht" + sheet.replace(/[^A-Za-z0-9]/g
 async function toMacroWorkbook(xlsx: Buffer, sheets: string[]): Promise<Buffer> {
   const dir = vbaDir();
   const modules: VbaModule[] = [
-    { name: "ThisWorkbook", type: "document", code: "Option Explicit\r\n\r\nPrivate Sub Workbook_Open()\r\n    modMain.AppStart\r\nEnd Sub\r\n" },
+    { name: "ThisWorkbook", type: "document", code: "Option Explicit\r\n\r\nPrivate Sub Workbook_Open()\r\n    modMain.AppStart\r\nEnd Sub\r\n\r\nPrivate Sub Workbook_BeforeClose(Cancel As Boolean)\r\n    On Error Resume Next\r\n    modNav.LeaveViewMode\r\nEnd Sub\r\n" },
     ...sheets.map((s) => ({ name: codeName(s), type: "document" as const, code: s === "Home" ? "Option Explicit\r\n\r\nPrivate Sub Worksheet_Change(ByVal Target As Range)\r\n    On Error Resume Next\r\n    If Not Intersect(Target, Me.Range(\"ViewPicker\")) Is Nothing Then modNav.PickerChanged\r\nEnd Sub\r\n" : "Option Explicit\r\n" })),
     { name: "Dict", type: "class" as const, code: fs.readFileSync(path.join(dir, "Dict.cls"), "utf8") },
-    ...["modUtil", "modJson", "modAuth", "modMain", "modNav", "modPeriods", "modImport", "modImportGeneric", "modReports", "modPresentation", "modEar"].map((m) => ({ name: m, type: "standard" as const, code: fs.readFileSync(path.join(dir, `${m}.bas`), "utf8") })),
+    ...["modUtil", "modJson", "modAuth", "modMain", "modNav", "modStore", "modPeriods", "modImport", "modImportGeneric", "modReports", "modPresentation", "modEar"].map((m) => ({ name: m, type: "standard" as const, code: fs.readFileSync(path.join(dir, `${m}.bas`), "utf8") })),
   ];
   return packageMacroWorkbook(xlsx, modules, "CommercialDashboard");
 }
@@ -1121,7 +1164,7 @@ export async function packageMacroWorkbook(xlsx: Buffer, modules: VbaModule[], p
 export async function excelEditionModulesZip(): Promise<Buffer> {
   const dir = vbaDir();
   const zip = new JSZip();
-  for (const m of ["modUtil", "modJson", "modAuth", "modMain", "modNav", "modPeriods", "modImport", "modImportGeneric", "modReports", "modPresentation", "modEar"]) zip.file(`${m}.bas`, `Attribute VB_Name = "${m}"\r\n` + fs.readFileSync(path.join(dir, `${m}.bas`), "utf8").replace(/\r?\n/g, "\r\n"));
+  for (const m of ["modUtil", "modJson", "modAuth", "modMain", "modNav", "modStore", "modPeriods", "modImport", "modImportGeneric", "modReports", "modPresentation", "modEar"]) zip.file(`${m}.bas`, `Attribute VB_Name = "${m}"\r\n` + fs.readFileSync(path.join(dir, `${m}.bas`), "utf8").replace(/\r?\n/g, "\r\n"));
   zip.file("Dict.cls", `VERSION 1.0 CLASS\r\nBEGIN\r\n  MultiUse = -1  'True\r\nEND\r\nAttribute VB_Name = "Dict"\r\nAttribute VB_GlobalNameSpace = False\r\nAttribute VB_Creatable = False\r\nAttribute VB_PredeclaredId = False\r\nAttribute VB_Exposed = False\r\n` + fs.readFileSync(path.join(dir, "Dict.cls"), "utf8").replace(/\r?\n/g, "\r\n"));
   zip.file("ThisWorkbook.txt", "Option Explicit\r\n\r\nPrivate Sub Workbook_Open()\r\n    modMain.AppStart\r\nEnd Sub\r\n");
   zip.file(

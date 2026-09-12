@@ -1,6 +1,6 @@
 Option Explicit
 ' ------------------------------------------------------------------------------------------
-' Commercial Dashboard – Excel edition · shared helpers (tables, values, logging)
+' Commercial Dashboard - Excel edition - shared helpers (tables, values, logging)
 ' ------------------------------------------------------------------------------------------
 
 Public Const APP_TITLE As String = "The Marina Commercial Dashboard"

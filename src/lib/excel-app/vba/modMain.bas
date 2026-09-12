@@ -5,12 +5,12 @@ Option Explicit
 
 ' Sheets that need a signed-in user (everything except Login).
 Private Function AppSheets() As Variant
-    AppSheets = Array("Home", "Registers", "Imports", "Reports", "Level 2 (view)", "Setup", "Periods", "Level 1", "Level 2", "Movement", "Changes", "Claims", "Early Warnings", "Risks", "Provisional Sums", "Bonds", "Contracts", "IPCs", "Final Accounts", "Cash Flow", "Transfers", "Actions", "Snapshots", "Users", "Activity", "Lists")
+    AppSheets = Array("Home", "Registers", "Imports", "Reports", "Setup", "Periods", "Level 1", "Level 2", "Movement", "Changes", "Claims", "Early Warnings", "Risks", "Provisional Sums", "Bonds", "Contracts", "IPCs", "Final Accounts", "Cash Flow", "Transfers", "Actions", "Snapshots", "Users", "Activity", "Lists")
 End Function
 
 ' Sheets a reporter may open.
 Private Function ReporterSheets() As Variant
-    ReporterSheets = Array("Home", "Level 1", "Level 2", "Level 2 (view)", "Movement", "Periods", "Reports")
+    ReporterSheets = Array("Home", "Level 1", "Level 2", "Movement", "Periods", "Reports")
 End Function
 
 ' Runs when the workbook opens: everything hidden until someone signs in.
@@ -25,6 +25,11 @@ Public Sub AppStart()
     Note trace, "reset the signed-in user"
     ShowLoginOnly
     Note trace, "show the Login sheet"
+    If CLng(Nz(NamedValue("ViewReportNo"), 0)) <> CLng(Nz(NamedValue("CurrentReportNo"), 0)) Then
+        modStore.LoadLive CLng(Nz(NamedValue("CurrentReportNo"), 0))
+        SetNamed "ViewReportNo", CLng(Nz(NamedValue("CurrentReportNo"), 0))
+    End If
+    Note trace, "restore the current report"
     FitLogin
     modNav.HideTabs
     Note trace, "fit the Login sheet"
@@ -162,6 +167,8 @@ fail:
 End Sub
 
 Public Sub SignOut()
+    On Error Resume Next
+    modNav.LeaveViewMode
     LogActivity "Sign out", ""
     AppStart
 End Sub
@@ -184,7 +191,7 @@ Public Sub ApplyRole()
         If allowed Then
             ws.Visible = xlSheetVisible
             ws.Unprotect SHEET_PWD
-            If Not CanEdit() Or CStr(n) = "Level 1" Or CStr(n) = "Home" Or CStr(n) = "Movement" Then
+            If Not CanEdit() Or modNav.IsViewingPast() Or CStr(n) = "Level 1" Or CStr(n) = "Home" Or CStr(n) = "Movement" Then
                 ws.Protect Password:=SHEET_PWD, UserInterfaceOnly:=True, AllowFiltering:=True, AllowSorting:=True, AllowFormattingColumns:=True, AllowFormattingRows:=True
             End If
         Else
@@ -193,7 +200,6 @@ Public Sub ApplyRole()
 nextSheet:
     Next n
     ThisWorkbook.Worksheets("Login").Visible = xlSheetVisible
-    modNav.ApplyViewVisibility
     modNav.WireNav
     modNav.HideTabs
     modNav.SyncPicker
@@ -265,7 +271,7 @@ End Sub
 ' Re-applies every calculated column and rebuilds the Movement sheet.
 Public Sub RefreshAll()
     If Not IsSignedIn() Then Exit Sub
-    Busy True, "Recalculating…"
+    Busy True, "Recalculating..."
     On Error GoTo done
     modPeriods.ApplyAllFormulas
     modPeriods.RebuildMovement

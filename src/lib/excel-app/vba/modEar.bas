@@ -189,8 +189,8 @@ Private Sub AddPdfBlock(ByVal path As String, ByVal label As String)
     Dim size As Double, b64 As String
     size = FileSize(path)
     If requestBytes + size * 1.37 > MAX_REQUEST_BYTES Then
-        unreadable = unreadable & vbLf & BaseName(path) & " – too large for one request (skipped)"
-        AddTextBlock "### File: " & label & " (PDF, " & Format$(size / 1048576, "0.0") & " MB – not sent: the request would exceed the size limit)"
+        unreadable = unreadable & vbLf & BaseName(path) & " - too large for one request (skipped)"
+        AddTextBlock "### File: " & label & " (PDF, " & Format$(size / 1048576, "0.0") & " MB - not sent: the request would exceed the size limit)"
         Exit Sub
     End If
     b64 = Base64File(path)
@@ -231,7 +231,7 @@ Private Sub AddFile(ByVal wordApp As Object, ByVal path As String, ByVal label A
         Case "docx", "doc", "docm", "rtf", "dotx"
             text = WordText(wordApp, path)
             If Len(text) = 0 Then
-                unreadable = unreadable & vbLf & label & " – could not be read"
+                unreadable = unreadable & vbLf & label & " - could not be read"
                 AddTextBlock "### File: " & label & " (not readable)"
             Else
                 AddTextBlock "### File: " & label & " (Word document)" & vbLf & Clip(text, 400000)
@@ -243,8 +243,8 @@ Private Sub AddFile(ByVal wordApp As Object, ByVal path As String, ByVal label A
             text = TextFile(path)
             AddTextBlock "### File: " & label & " (text)" & vbLf & Clip(text, 300000)
         Case Else
-            unreadable = unreadable & vbLf & label & " – file type not readable (" & ext & ")"
-            AddTextBlock "### File: " & label & " (type " & ext & " – not readable)"
+            unreadable = unreadable & vbLf & label & " - file type not readable (" & ext & ")"
+            AddTextBlock "### File: " & label & " (type " & ext & " - not readable)"
     End Select
 End Sub
 
@@ -252,7 +252,7 @@ Private Function Clip(ByVal s As String, ByVal maxLen As Long) As String
     If Len(s) <= maxLen Then
         Clip = s
     Else
-        Clip = Left$(s, maxLen * 0.8) & vbLf & "[… " & (Len(s) - maxLen) & " characters omitted …]" & vbLf & Right$(s, maxLen * 0.2)
+        Clip = Left$(s, maxLen * 0.8) & vbLf & "[... " & (Len(s) - maxLen) & " characters omitted ...]" & vbLf & Right$(s, maxLen * 0.2)
     End If
 End Function
 
@@ -324,7 +324,7 @@ Private Sub AddFolder(ByVal wordApp As Object, ByVal folder As String, ByVal rel
     For Each f In FolderEntries(folder, False)
         nm = FileBaseName(CStr(f))
         If Left$(nm, 1) <> "~" And Left$(nm, 1) <> "." Then
-            Application.StatusBar = "Reading " & rel & nm & "…"
+            Application.StatusBar = "Reading " & rel & nm & "..."
             DoEvents
             AddFile wordApp, CStr(f), rel & nm
         End If
@@ -380,7 +380,7 @@ Private Function CallClaude(ByVal apiKey As String, ByVal model As String, ByVal
         http.send body
         t0 = Timer
         Do While http.readyState <> 4
-            Application.StatusBar = "Drafting the Employer's Assessment Report… " & Format$((Timer - t0) / 86400, "nn:ss") & " elapsed (usually 3–10 minutes)"
+            Application.StatusBar = "Drafting the Employer's Assessment Report... " & Format$((Timer - t0) / 86400, "nn:ss") & " elapsed (usually 3-10 minutes)"
             DoEvents
             Application.Wait Now + TimeSerial(0, 0, 1)
         Loop
@@ -416,7 +416,7 @@ Private Function CurlPost(ByVal apiKey As String, ByVal body As String, ByRef st
     Open reqFile For Binary Access Write As #f
     Put #f, , b
     Close #f
-    Application.StatusBar = "Drafting the Employer's Assessment Report… this usually takes 3–10 minutes"
+    Application.StatusBar = "Drafting the Employer's Assessment Report... this usually takes 3-10 minutes"
     DoEvents
     cmd = "curl -s -S -m 3600 -X POST " & API_URL & " -H 'Content-Type: application/json' -H 'x-api-key: " & apiKey & "' -H 'anthropic-version: 2023-06-01' -H 'Accept: text/event-stream' --data-binary @'" & reqFile & "' -o '" & respFile & "' -w '%{http_code}'"
     On Error GoTo noShell
@@ -645,15 +645,15 @@ Public Sub CreateClaimEar()
         Exit Sub
     End If
     Dim title As String, submission As String, template As String, contracts As String, revised As Boolean, prevEar As String, prevSub As String, contractor As String, contractNo As String, claimRef As String
-    title = InputBox("Title of the claim / assessment (used for the file name), e.g. 'EOT-02 Elmar boardwalk':", APP_TITLE & " – Claim EAR")
+    title = InputBox("Title of the claim / assessment (used for the file name), e.g. 'EOT-02 Elmar boardwalk':", APP_TITLE & " - Claim EAR")
     If Len(title) = 0 Then Exit Sub
     contractor = InputBox("Contractor (optional):", APP_TITLE)
     contractNo = InputBox("Contract No (optional):", APP_TITLE)
     claimRef = InputBox("Claim reference (optional):", APP_TITLE)
     submission = PickFolder("Folder with the contractor's claim submission and its supporting documents")
     If Len(submission) = 0 Then Exit Sub
-    template = PickFile("EAR template (Word) – Cancel if there is none", "Word documents", "*.docx;*.docm;*.dotx")
-    If MsgBox("Do you have a folder of contract documents to include (conditions, particular conditions, programme obligations…)?", vbYesNo + vbQuestion, APP_TITLE) = vbYes Then contracts = PickFolder("Folder with the contract documents")
+    template = PickFile("EAR template (Word) - Cancel if there is none", "Word documents", "*.docx;*.docm;*.dotx")
+    If MsgBox("Do you have a folder of contract documents to include (conditions, particular conditions, programme obligations...)?", vbYesNo + vbQuestion, APP_TITLE) = vbYes Then contracts = PickFolder("Folder with the contract documents")
     revised = (MsgBox("Is this a REVISED submission (a previous Employer's Assessment Report exists)?", vbYesNo + vbQuestion, APP_TITLE) = vbYes)
     If revised Then
         prevEar = PickFile("Previous Employer's Assessment Report (Word)", "Word documents", "*.docx;*.docm")
@@ -672,7 +672,7 @@ Public Sub CreateClaimEar()
     t0 = Timer
     Set wordApp = CreateObject("Word.Application")
     wordApp.Visible = False
-    Busy True, "Reading the documents…"
+    Busy True, "Reading the documents..."
     Application.ScreenUpdating = True
     blocks = ""
     requestBytes = 0
@@ -691,7 +691,7 @@ Public Sub CreateClaimEar()
         AddTextBlock "# EAR TEMPLATE (structure and wording to follow)"
         AddFile wordApp, template, BaseName(template)
     Else
-        AddTextBlock "# EAR TEMPLATE (structure and wording to follow)" & vbLf & "(no template supplied – use the standard Employer's Assessment Report structure: introduction, contractor's submission, contractual basis and notices, assessment of delay, assessment of cost, conclusion and recommendation)"
+        AddTextBlock "# EAR TEMPLATE (structure and wording to follow)" & vbLf & "(no template supplied - use the standard Employer's Assessment Report structure: introduction, contractor's submission, contractual basis and notices, assessment of delay, assessment of cost, conclusion and recommendation)"
     End If
     AddTextBlock "# CONTRACTOR'S CLAIM SUBMISSION AND SUPPORTING DOCUMENTS"
     AddFolder wordApp, submission, "", 0
@@ -712,17 +712,17 @@ Public Sub CreateClaimEar()
     prompt = "Now write the complete Employer's Assessment Report for this case as JSON in the required format."
     If revised Then prompt = prompt & vbLf & vbLf & rules
     prompt = prompt & vbLf & "The ""meta"" cover block must include: Project, Employer, Contractor, Contract No, Claim reference, Submission reference / date, Report revision, Report date, Prepared by."
-    If Len(outline) > 0 Then prompt = prompt & vbLf & vbLf & "REQUIRED OUTLINE – the Word template's own headings. Use exactly these headings, in this order, with these levels (you may add level 2 or level 3 sub-headings under them; do NOT number the headings, the template numbers them):" & outline
+    If Len(outline) > 0 Then prompt = prompt & vbLf & vbLf & "REQUIRED OUTLINE - the Word template's own headings. Use exactly these headings, in this order, with these levels (you may add level 2 or level 3 sub-headings under them; do NOT number the headings, the template numbers them):" & outline
     AddTextBlock prompt
     Busy False
-    If MsgBox(fileCount & " files read (" & Format$(requestBytes / 1048576, "0.0") & " MB sent" & IIf(imageCount > 0, ", " & imageCount & " images", "") & ")." & IIf(Len(unreadable) > 0, vbLf & "Not readable:" & unreadable, "") & vbLf & vbLf & "Draft the report now? This usually takes 3–10 minutes; Excel stays busy meanwhile.", vbOKCancel + vbQuestion, APP_TITLE) <> vbOK Then
+    If MsgBox(fileCount & " files read (" & Format$(requestBytes / 1048576, "0.0") & " MB sent" & IIf(imageCount > 0, ", " & imageCount & " images", "") & ")." & IIf(Len(unreadable) > 0, vbLf & "Not readable:" & unreadable, "") & vbLf & vbLf & "Draft the report now? This usually takes 3-10 minutes; Excel stays busy meanwhile.", vbOKCancel + vbQuestion, APP_TITLE) <> vbOK Then
         wordApp.Quit
         Exit Sub
     End If
     jsonText = CallClaude(apiKey, model, system, blocks, schema)
     blocks = ""
     Set ear = JsonParse(jsonText)
-    Application.StatusBar = "Writing the Word document…"
+    Application.StatusBar = "Writing the Word document..."
     outPath = submission & "\EAR - " & SafeName(title) & IIf(revised, " - Rev " & Format$(revisionNo, "00"), "") & ".docx"
     Set doc = WriteReport(wordApp, ear, template, outPath, IIf(revised, revisionNo, 0))
     If revised Then
@@ -741,7 +741,7 @@ Public Sub CreateClaimEar()
     Application.StatusBar = False
     wordApp.Visible = True
     doc.Activate
-    LogActivity "Claim EAR drafted", outPath & " · " & fileCount & " files · " & Format$((Timer - t0) / 60, "0") & " min"
+    LogActivity "Claim EAR drafted", outPath & " - " & fileCount & " files - " & Format$((Timer - t0) / 60, "0") & " min"
     modReports.AddToLibrary "Claim EAR (Word)", outPath
     MsgBox "The Employer's Assessment Report is ready:" & vbCrLf & outPath & vbCrLf & vbCrLf & "It is open in Word for review." & IIf(revised, " Changes against the previous report are shown as tracked changes by 'Commercial Manager'.", ""), vbInformation, APP_TITLE
     Exit Sub

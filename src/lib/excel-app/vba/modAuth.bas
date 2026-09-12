@@ -91,14 +91,14 @@ End Function
 
 Public Function AskNewPassword() As String
     Dim p1 As String, p2 As String
-    p1 = InputBox("Choose a new password (at least 8 characters). It replaces your starting password.", APP_TITLE & " – new password")
+    p1 = InputBox("Choose a new password (at least 8 characters). It replaces your starting password.", APP_TITLE & " - new password")
     If Len(p1) < 8 Then
         If Len(p1) > 0 Then MsgBox "The password must be at least 8 characters.", vbExclamation, APP_TITLE
         Exit Function
     End If
-    p2 = InputBox("Type the new password again.", APP_TITLE & " – confirm")
+    p2 = InputBox("Type the new password again.", APP_TITLE & " - confirm")
     If p1 <> p2 Then
-        MsgBox "The two passwords differ – not changed.", vbExclamation, APP_TITLE
+        MsgBox "The two passwords differ - not changed.", vbExclamation, APP_TITLE
         Exit Function
     End If
     AskNewPassword = p1
