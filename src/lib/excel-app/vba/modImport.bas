@@ -1,4 +1,6 @@
 Option Explicit
+
+Private presetReportNo As Long ' set by the library's Replace button
 ' ------------------------------------------------------------------------------------------
 ' Imports of the two known report layouts:
 '   - "The Marina CM Report" monthly workbook (Schedule B / C / D / F / H / J, Early Warning, Data Input)
@@ -152,8 +154,6 @@ Private Function TimeImpact(ByRef a As Variant, ByVal r As Long, ByVal c As Long
 End Function
 
 ' ---- the monthly report --------------------------------------------------------------------
-
-Private presetReportNo As Long
 
 ' Library: re-import (replace) the selected report from its file.
 Public Sub ImportMonthlyReportFor(ByVal rn As Long)
