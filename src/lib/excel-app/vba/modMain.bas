@@ -127,7 +127,15 @@ End Function
 ' ---- buttons: created once, on the first sign in, so the workbook needs no drawing parts ----
 
 Private Sub AddButton(ByVal ws As Worksheet, ByVal anchor As String, ByVal caption As String, ByVal macro As String, Optional ByVal widthPt As Double = 150, Optional ByVal heightPt As Double = 22)
-    Dim b As Object, rg As Range
+    Dim b As Object, rg As Range, shp As Object
+    ' the workbook ships with styled button shapes; when one exists, it only needs its macro
+    On Error Resume Next
+    Set shp = ws.Shapes(caption)
+    On Error GoTo 0
+    If Not shp Is Nothing Then
+        shp.OnAction = macro
+        Exit Sub
+    End If
     Set rg = ws.Range(anchor)
     On Error Resume Next
     Set b = ws.Buttons(caption)

@@ -14,7 +14,7 @@ import { computeCostReport, type CostLineRow } from "../cost-report/compute";
 import { level1Matrix } from "../cost-report/level1";
 import type { RecordRow } from "../registers/types";
 import { XL, titleBlock, sectionRow, solid, colLetter } from "../xlsx-style";
-import { addChartsToXlsx, type XlsxChart } from "../xlsx-charts";
+import { addChartsToXlsx, type XlsxChart, type XlsxShape } from "../xlsx-charts";
 import { buildVbaProject, type VbaModule } from "./ovba";
 import { EAR_SCHEMA } from "../ear/model";
 import { SYSTEM as EAR_SYSTEM, REVISION_RULES as EAR_REVISION_RULES, EAR_MODEL } from "../ear/generate";
@@ -34,6 +34,75 @@ const CATEGORIES = LISTS.Category;
 const SHEETS_ORDER = ["Login", "Home", "Setup", "Periods", "Level 1", "Level 2", "Movement", "Changes", "Claims", "Early Warnings", "Risks", "Provisional Sums", "Bonds", "Contracts", "IPCs", "Final Accounts", "Cash Flow", "Transfers", "Actions", "Snapshots", "Users", "Activity", "Lists"];
 const TILE = { navy: "FF1F3A5F", teal: "FF0E7C86", orange: "FFEB6834", green: "FF2E9E5B", red: "FFD64545", blue: "FF2A78D6", purple: "FF7C5CBF", gold: "FFC9A227" };
 const CHART_COLORS = { navy: "1F3A5F", teal: "0E7C86", orange: "EB6834", green: "2E9E5B", red: "D64545", blue: "2A78D6", purple: "7C5CBF", gold: "C9A227", amber: "E29A1A", grey: "6B7280" };
+
+/* ------------------------------------------------------------------ the premium look */
+
+/** Gradient pairs (top → bottom) for the tiles, bands and buttons. */
+const GRAD = {
+  navy: ["FF1E3F6E", "FF0F2B4C"], teal: ["FF19A3AE", "FF0B6670"], orange: ["FFF58A5A", "FFD9552A"], green: ["FF3FB86F", "FF1F7F45"],
+  red: ["FFE86060", "FFB83535"], blue: ["FF3E8DF0", "FF1F5FB8"], purple: ["FF9271D6", "FF5F41A6"], gold: ["FFE0B84A", "FFAE8A18"],
+  band: ["FF1F4F8F", "FF0F2B4C"], bandLight: ["FF2F6DB5", "FF1F4F8F"], header: ["FF0F2B4C", "FF0E5C80"], card: ["FFFFFFFF", "FFF3F7FC"],
+} as const;
+const gradient = (colors: readonly string[], degree = 90): ExcelJS.Fill => ({ type: "gradient", gradient: "angle", degree, stops: colors.map((c, i) => ({ position: i / (colors.length - 1), color: { argb: c } })) });
+/** Darker bottom/right edges so a block of cells reads as a raised card. */
+function raised(ws: ExcelJS.Worksheet, r1: number, c1: number, r2: number, c2: number, dark = "FF0B1B33", light = "FFFFFFFF") {
+  for (let c = c1; c <= c2; c++) {
+    const top = ws.getCell(r1, c);
+    top.border = { ...top.border, top: { style: "thin", color: { argb: light } } };
+    const bottom = ws.getCell(r2, c);
+    bottom.border = { ...bottom.border, bottom: { style: "medium", color: { argb: dark } } };
+  }
+  for (let r = r1; r <= r2; r++) {
+    const left = ws.getCell(r, c1);
+    left.border = { ...left.border, left: { style: "thin", color: { argb: light } } };
+    const right = ws.getCell(r, c2);
+    right.border = { ...right.border, right: { style: "medium", color: { argb: dark } } };
+  }
+}
+/** A gradient band across the sheet (title / section). */
+function band(ws: ExcelJS.Worksheet, row: number, span: number, colors: readonly string[]) {
+  for (let c = 1; c <= span; c++) ws.getCell(row, c).fill = gradient(colors, 90);
+  raised(ws, row, 1, row, span, "FF07162B", "FF3E7BC6");
+}
+/** A glossy button shape wired to a macro; the workbook's VBA only sets .OnAction on a shape named like the caption. */
+const colEmu = (ws: ExcelJS.Worksheet, col: number) => Math.trunc((ws.getColumn(col).width ?? 8.43) * 7 + 5) * 9525;
+const rowEmu = (ws: ExcelJS.Worksheet, row: number) => Math.round((ws.getRow(row).height ?? 15) * 12700);
+/** A glossy button shape wired to a macro, filling the cells col..col+span-1 on the given row (1-based); the VBA only sets .OnAction on a shape named like the caption. */
+function button(ws: ExcelJS.Worksheet, name: string, macro: string, colors: readonly string[], col: number, span: number, row: number, opts: { icon?: string; fontSize?: number; glow?: string; rows?: number } = {}): XlsxShape {
+  const m = 28000;
+  const lastRow = row + (opts.rows ?? 1) - 1;
+  return {
+    kind: "roundRect", name, macro, text: opts.icon ? `${opts.icon}  ${name}` : name, textColor: "FFFFFF", fontSize: opts.fontSize ?? 10, bold: true,
+    colors: colors.map((c) => c.slice(-6)), angle: 90, shadow: true, bevel: true, glow: opts.glow, radius: 0.35,
+    from: { col: col - 1, row: row - 1, colOff: m, rowOff: m }, to: { col: col + span - 2, row: lastRow - 1, colOff: Math.max(m, colEmu(ws, col + span - 1) - m), rowOff: Math.max(m, rowEmu(ws, lastRow) - m) },
+  };
+}
+/** A translucent decorative blob. */
+function blob(name: string, kind: XlsxShape["kind"], color: string, alpha: number, from: { col: number; row: number }, to: { col: number; row: number }, angle = 45): XlsxShape {
+  return { kind, name, colors: [color, color === "FFFFFF" ? "9FD3FF" : "FFFFFF"], angle, alpha, from, to };
+}
+/** Restyles the sheet's title block (rows 1–2 written by titleBlock) into a gradient header with a soft rule. */
+function premiumTitle(ws: ExcelJS.Worksheet, span: number) {
+  band(ws, 1, span, GRAD.header);
+  ws.getRow(1).height = 34;
+  ws.getRow(1).font = { bold: true, size: 17, color: { argb: XL.white } };
+  for (let c = 1; c <= span; c++) {
+    const cell = ws.getCell(2, c);
+    cell.fill = gradient(["FFEAF1FA", "FFFFFFFF"], 90);
+    cell.border = { ...cell.border, bottom: { style: "medium", color: { argb: "FF2F80ED" } } };
+  }
+  ws.getRow(2).font = { italic: true, size: 10, color: { argb: XL.navy } };
+  ws.getRow(2).height = 20;
+}
+/** A gradient section heading with an accent rule. */
+function premiumSection(ws: ExcelJS.Worksheet, text: string, span: number, colors: readonly string[] = GRAD.band): ExcelJS.Row {
+  const r = sectionRow(ws, text, span, colors[0]);
+  band(ws, r.number, span, colors);
+  r.height = 24;
+  r.getCell(1).alignment = { vertical: "middle", indent: 1 };
+  r.font = { bold: true, size: 12, color: { argb: XL.white } };
+  return r;
+}
 
 /* ------------------------------------------------------------------ hashing (mirrors modAuth) */
 
@@ -151,7 +220,9 @@ interface Names {
 
 function tableSheet(wb: ExcelJS.Workbook, spec: TableSpec, data: ExcelJS.CellValue[][], opts: { subtitle: string; firstRow?: number; before?: (ws: ExcelJS.Worksheet) => void }): { ws: ExcelJS.Worksheet; first: number; last: number } {
   const ws = sheet(wb, spec.sheet);
-  titleBlock(ws, spec.title, opts.subtitle, Math.min(spec.cols.length, 10));
+  const span = Math.min(spec.cols.length, 10);
+  titleBlock(ws, spec.title, opts.subtitle, span);
+  premiumTitle(ws, span);
   opts.before?.(ws);
   const headerRowNo = Math.max(opts.firstRow ?? ws.rowCount + 1, ws.rowCount + 1);
   while (ws.rowCount < headerRowNo - 1) ws.addRow([]);
@@ -161,7 +232,7 @@ function tableSheet(wb: ExcelJS.Workbook, spec: TableSpec, data: ExcelJS.CellVal
     ref: `A${headerRowNo}`,
     headerRow: true,
     totalsRow: false,
-    style: { theme: "TableStyleMedium2", showRowStripes: true },
+    style: { theme: "TableStyleMedium9", showRowStripes: true },
     columns: spec.cols.map((c) => ({ name: c.h, filterButton: true })),
     rows,
   });
@@ -193,7 +264,9 @@ function tableSheet(wb: ExcelJS.Workbook, spec: TableSpec, data: ExcelJS.CellVal
 /** A coloured tile: label, big value (a formula), small note. */
 function tile(ws: ExcelJS.Worksheet, row: number, col: number, span: number, label: string, formula: string, fill: string, fmt = WHOLE, sub = "") {
   const end = col + span - 1;
-  for (let r = row; r <= row + 2; r++) for (let c = col; c <= end; c++) ws.getCell(r, c).fill = solid(fill);
+  const g = (Object.entries(TILE).find(([, v]) => v === fill)?.[0] ?? "navy") as keyof typeof GRAD;
+  for (let r = row; r <= row + 2; r++) for (let c = col; c <= end; c++) ws.getCell(r, c).fill = gradient(GRAD[g] ?? [fill, fill], 90);
+  raised(ws, row, col, row + 2, end);
   const l = ws.getCell(row, col);
   l.value = label.toUpperCase();
   l.font = { bold: true, size: 8, color: { argb: "FFE4ECF6" } };
@@ -210,50 +283,91 @@ function tile(ws: ExcelJS.Worksheet, row: number, col: number, span: number, lab
   ws.mergeCells(row, col, row, end);
   ws.mergeCells(row + 1, col, row + 1, end);
   ws.mergeCells(row + 2, col, row + 2, end);
-  ws.getRow(row + 1).height = 30;
+  ws.getRow(row).height = 16;
+  ws.getRow(row + 1).height = 32;
+  ws.getRow(row + 2).height = 16;
 }
 
-function loginSheet(wb: ExcelJS.Workbook, names: Names, seed: Seed) {
+function loginSheet(wb: ExcelJS.Workbook, names: Names, seed: Seed, shapes: XlsxShape[]) {
   const ws = sheet(wb, "Login");
-  ws.views = [{ showGridLines: false }];
-  [3, 34, 3, 60].forEach((w, i) => (ws.getColumn(i + 1).width = w));
-  for (let r = 1; r <= 40; r++) for (let c = 1; c <= 10; c++) ws.getCell(r, c).fill = solid("FF0F2B4C");
-  ws.getCell("B3").value = APP_NAME.toUpperCase();
-  ws.getCell("B3").font = { size: 11, color: { argb: "FF9FB3C8" }, bold: true };
-  ws.getCell("B4").value = "Excel edition – sign in";
-  ws.getCell("B4").font = { size: 22, bold: true, color: { argb: XL.white } };
-  ws.getCell("B5").value = `${seed.programme.code} · ${seed.programme.name}${seed.asset.code ? ` · ${seed.asset.code} ${seed.asset.name}` : ""}`;
-  ws.getCell("B5").font = { size: 10, color: { argb: "FFDCE6F2" } };
-  const label = (cell: string, text: string) => {
-    ws.getCell(cell).value = text;
-    ws.getCell(cell).font = { bold: true, size: 9, color: { argb: "FFC7D3E2" } };
+  ws.views = [{ showGridLines: false, zoomScale: 110 }];
+  const widths = [4, 38, 3, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6];
+  widths.forEach((w, i) => (ws.getColumn(i + 1).width = w));
+  const COLS = widths.length;
+  const ROWS = 42;
+  // a smooth colour ramp, navy at the top to teal at the bottom, with a warm glow towards the right
+  const mix = (a: string, b: string, t: number) => {
+    const ch = (o: number) => Math.round(parseInt(a.slice(o, o + 2), 16) * (1 - t) + parseInt(b.slice(o, o + 2), 16) * t).toString(16).padStart(2, "0");
+    return `${ch(0)}${ch(2)}${ch(4)}`.toUpperCase();
   };
-  label("B7", "EMAIL");
-  label("B10", "PASSWORD");
+  // (a cell gradient repeats in every cell, so only a top-to-bottom ramp row by row reads as one smooth sweep)
+  const ramp = (r: number) => `FF${mix("0F2B4C", "12A090", Math.min(1, Math.max(0, (r - 1) / (ROWS - 1))))}`;
+  for (let r = 1; r <= ROWS; r++) for (let c = 1; c <= COLS; c++) ws.getCell(r, c).fill = gradient([ramp(r), ramp(r + 1)], 90);
+  ws.getRow(1).height = 10;
+  // the wordmark and welcome text on the right
+  const D = 4;
+  const say = (row: number, text: ExcelJS.CellValue, font: Partial<ExcelJS.Font>, span = 10, height?: number) => {
+    const cell = ws.getCell(row, D);
+    cell.value = text;
+    cell.font = { name: "Calibri", ...font };
+    cell.alignment = { vertical: "middle", wrapText: true, indent: 1 };
+    ws.mergeCells(row, D, row, D + span);
+    if (height) ws.getRow(row).height = height;
+  };
+  say(3, APP_NAME.toUpperCase(), { size: 10, bold: true, color: { argb: "FF9FD3FF" } });
+  say(4, "Commercial", { size: 34, bold: true, color: { argb: XL.white } }, 10, 44);
+  say(5, "Dashboard", { size: 34, bold: true, color: { argb: "FFFFD166" } }, 10, 44);
+  say(6, "Excel edition · the whole commercial control of the programme in one workbook", { size: 11, italic: true, color: { argb: "FFDCE6F2" } });
+  say(8, `${seed.programme.code} · ${seed.programme.name}${seed.asset.code ? `\n${seed.asset.code} · ${seed.asset.name}` : ""}`, { size: 11, bold: true, color: { argb: XL.white } }, 10, 34);
+  const bullets = ["Sign in with the same users, roles and passwords as the website", "Level 1 · Level 2 · Movement · every register as a live Excel table", "Import the monthly report, claims tracker, bonds, payments and final accounts", "PDF report, PowerPoint presentation and the Claim EAR in Word"];
+  bullets.forEach((b, i) => say(10 + i, `✦  ${b}`, { size: 10, color: { argb: "FFEAF1FA" } }, 10, 18));
+  say(16, "Type your email and password in the card, then click Sign in. The password shows as blank while you type.", { size: 9, italic: true, color: { argb: "FFBFDBFE" } }, 10, 30);
+  say(18, "No Sign in button? Macros are switched off: close the file, right-click it → Properties → tick Unblock, open it again and choose Enable Content.", { size: 9, italic: true, color: { argb: "FFBFDBFE" } }, 10, 30);
+  say(20, "First sign-in passwords: the administrator uses Admin@123, everyone else Welcome@123. You choose your own password the first time.", { size: 9, italic: true, color: { argb: "FFBFDBFE" } }, 10, 30);
+  // the sign-in card (white cells with a shadow edge)
+  const cardTop = 3;
+  const cardBottom = 19;
+  for (let r = cardTop; r <= cardBottom; r++) ws.getCell(r, 2).fill = gradient(GRAD.card, 90);
+  raised(ws, cardTop, 2, cardBottom, 2, "FF06182E", "FFFFFFFF");
+  for (let r = cardTop; r <= cardBottom + 1; r++) ws.getCell(r, 3).fill = solid("FF0A2140"); // shadow column
+  for (let c = 2; c <= 3; c++) ws.getCell(cardBottom + 1, c).fill = solid("FF0A2140");
+  const w = (cell: string, text: ExcelJS.CellValue, font: Partial<ExcelJS.Font>, align: Partial<ExcelJS.Alignment> = {}) => {
+    ws.getCell(cell).value = text;
+    ws.getCell(cell).font = { name: "Calibri", ...font };
+    ws.getCell(cell).alignment = { vertical: "middle", indent: 1, wrapText: true, ...align };
+  };
+  w("B4", "Welcome back", { size: 18, bold: true, color: { argb: XL.navy } });
+  ws.getRow(4).height = 44;
+  w("B5", "Sign in to open the dashboard", { size: 10, color: { argb: XL.muted } });
+  ws.getRow(5).height = 44;
+  w("B7", "EMAIL", { size: 8, bold: true, color: { argb: "FF2F80ED" } }, { vertical: "bottom" });
+  w("B10", "PASSWORD", { size: 8, bold: true, color: { argb: "FF2F80ED" } }, { vertical: "bottom" });
   for (const cell of ["B8", "B11"]) {
-    ws.getCell(cell).fill = solid(XL.white);
-    ws.getCell(cell).font = { size: 12, color: { argb: XL.ink } };
+    ws.getCell(cell).fill = solid("FFF3F7FC");
+    ws.getCell(cell).font = { name: "Calibri", size: 12, color: { argb: XL.ink } };
     ws.getCell(cell).alignment = { vertical: "middle", indent: 1 };
+    ws.getCell(cell).border = { bottom: { style: "medium", color: { argb: "FF2F80ED" } }, left: { style: "thin", color: { argb: XL.line } }, right: { style: "thin", color: { argb: XL.line } }, top: { style: "thin", color: { argb: XL.line } } };
     ws.getCell(cell).protection = { locked: false };
   }
-  ws.getRow(8).height = 24;
-  ws.getRow(11).height = 24;
+  ws.getRow(8).height = 32;
+  ws.getRow(11).height = 28;
   ws.getCell("B11").numFmt = ";;;";
-  ws.getCell("B13").value = "";
-  ws.getCell("B13").font = { size: 10, bold: true, color: { argb: "FFFFB4B4" } };
-  ws.getCell("B15").value = "";
-  ws.getCell("D8").value = "Type your email, then your password in the white box below (it shows as blank while you type), and click Sign in.";
-  ws.getCell("D8").font = { size: 10, color: { argb: "FFDCE6F2" } };
-  ws.getCell("D8").alignment = { wrapText: true, vertical: "top" };
-  ws.getCell("D11").value = "If the Sign in button is missing, macros are switched off: close the file, right-click it → Properties → tick Unblock, open it again and choose Enable Content.";
-  ws.getCell("D11").font = { size: 10, color: { argb: "FFDCE6F2" } };
-  ws.getCell("D11").alignment = { wrapText: true, vertical: "top" };
-  ws.getCell("B20").value = "First sign-in passwords: the administrator uses Admin@123, everyone else Welcome@123. You are asked to choose your own password the first time.";
-  ws.getCell("B20").font = { size: 9, italic: true, color: { argb: "FF9FB3C8" } };
-  ws.mergeCells("B20:D21");
-  ws.getCell("B20").alignment = { wrapText: true, vertical: "top" };
-  ws.mergeCells("D8:D9");
-  ws.mergeCells("D11:D13");
+  w("B13", "", { size: 9, bold: true, color: { argb: XL.redInk } });
+  ws.getRow(13).height = 26;
+  ws.getRow(15).height = 34;
+  w("B15", "", { size: 9 });
+  w("B17", "Forgotten your password? The administrator can set a new one from the Users sheet.", { size: 8, italic: true, color: { argb: XL.muted } });
+  ws.getRow(17).height = 28;
+  w("B19", `© ${new Date().getFullYear()} ${APP_NAME}`, { size: 8, color: { argb: XL.muted } });
+  // the Sign in button and the decoration
+  shapes.push(button(ws, "Sign in", "modMain.SignIn", GRAD.blue, 2, 1, 15, { icon: "➜", fontSize: 12, glow: "9FD3FF" }));
+  shapes.push(
+    blob("Glow 1", "ellipse", "FFFFFF", 0.1, { col: 9, row: 22 }, { col: 14, row: 40 }),
+    blob("Glow 2", "ellipse", "FFD166", 0.16, { col: 4, row: 30 }, { col: 8, row: 41 }, 135),
+    blob("Glow 3", "ellipse", "9FD3FF", 0.14, { col: 12, row: 0 }, { col: 14, row: 4 }),
+    blob("Ring", "ellipse", "FFFFFF", 0.06, { col: 6, row: 24 }, { col: 12, row: 42 }),
+  );
+  for (let r = 22; r <= ROWS; r++) ws.getRow(r).height = 15;
   names.add("LoginEmail", "Login", "$B$8");
   names.add("LoginPassword", "Login", "$B$11");
   names.add("LoginMessage", "Login", "$B$13");
@@ -265,15 +379,21 @@ function setupSheet(wb: ExcelJS.Workbook, names: Names, seed: Seed) {
   const ws = sheet(wb, "Setup");
   [30, 40, 4, 30, 30].forEach((w, i) => (ws.getColumn(i + 1).width = w));
   titleBlock(ws, "Project setup & report control", "Programme, asset, current report and the rules used by the formulas", 5);
+  premiumTitle(ws, 5);
+  ws.views = [{ showGridLines: false }];
   const put = (row: number, label: string, value: ExcelJS.CellValue, name: string, fmt?: string) => {
     ws.getCell(row, 1).value = label;
     ws.getCell(row, 1).font = { bold: true, color: { argb: XL.navy } };
+    ws.getCell(row, 1).alignment = { vertical: "middle", indent: 1 };
     ws.getCell(row, 2).value = value;
-    ws.getCell(row, 2).fill = solid(XL.zebra);
+    ws.getCell(row, 2).fill = gradient(GRAD.card, 90);
+    ws.getCell(row, 2).alignment = { vertical: "middle", indent: 1 };
+    ws.getCell(row, 2).border = { bottom: { style: "medium", color: { argb: "FF2F80ED" } }, left: { style: "thin", color: { argb: XL.line } }, right: { style: "thin", color: { argb: XL.line } }, top: { style: "thin", color: { argb: XL.line } } };
+    ws.getRow(row).height = 22;
     if (fmt) ws.getCell(row, 2).numFmt = fmt;
     names.add(name, "Setup", `$B$${row}`);
   };
-  sectionRow(ws, "Programme and asset", 5, XL.navyLight);
+  premiumSection(ws, "Programme and asset", 5, GRAD.bandLight);
   put(5, "Programme code", seed.programme.code, "ProgrammeCode");
   put(6, "Programme name", seed.programme.name, "ProgrammeName");
   put(7, "Asset code", seed.asset.code, "AssetCode");
@@ -281,14 +401,14 @@ function setupSheet(wb: ExcelJS.Workbook, names: Names, seed: Seed) {
   put(9, "Client", seed.client, "ClientName");
   put(10, "Location", seed.location, "LocationName");
   ws.addRow([]);
-  sectionRow(ws, "Current report", 5, XL.navyLight);
+  premiumSection(ws, "Current report", 5, GRAD.bandLight);
   put(13, "Current report No", seed.currentReportNo, "CurrentReportNo", "0");
   put(14, "Previous issued report No (stored copy)", { formula: `IFERROR(MAXIFS(tblSnapshots[Report No],tblSnapshots[Report No],"<"&CurrentReportNo),0)`, result: undefined }, "PrevReportNo", "0");
   put(15, "Current report label", { formula: `IFERROR(INDEX(tblPeriods[Label],MATCH(CurrentReportNo,tblPeriods[Report No],0)),"Report No "&CurrentReportNo)`, result: undefined }, "CurrentPeriodLabel");
   put(16, "Cut-off date", { formula: `IFERROR(INDEX(tblPeriods[Period end],MATCH(CurrentReportNo,tblPeriods[Report No],0)),"")`, result: undefined }, "CurrentPeriodEnd", DATE);
   put(17, "Status", { formula: `IFERROR(INDEX(tblPeriods[Status],MATCH(CurrentReportNo,tblPeriods[Report No],0)),"")`, result: undefined }, "CurrentPeriodStatus");
   ws.addRow([]);
-  sectionRow(ws, "Rules", 5, XL.navyLight);
+  premiumSection(ws, "Rules", 5, GRAD.bandLight);
   put(20, "Bonds: amber when expiring within (days)", 60, "ExpiryAmberDays", "0");
   put(21, "Bonds: red when expiring within (days)", 30, "ExpiryRedDays", "0");
   put(22, "API key for the Claim EAR (Anthropic, admin only)", "", "ApiKey");
@@ -297,14 +417,14 @@ function setupSheet(wb: ExcelJS.Workbook, names: Names, seed: Seed) {
   ws.getCell(22, 4).value = "Type the key here; it shows as blank. The website's key works here too.";
   ws.getCell(22, 4).font = { italic: true, size: 9, color: { argb: XL.muted } };
   ws.addRow([]);
-  sectionRow(ws, "Signed in (set by the workbook)", 5, XL.navyLight);
-  put(24, "User", "", "SignedInUser");
-  put(25, "Email", "", "SignedInEmail");
-  put(26, "Role", "", "SignedInRole");
-  const note = ws.getCell(28, 1);
+  premiumSection(ws, "Signed in (set by the workbook)", 5, GRAD.bandLight);
+  put(26, "User", "", "SignedInUser");
+  put(27, "Email", "", "SignedInEmail");
+  put(28, "Role", "", "SignedInRole");
+  const note = ws.getCell(30, 1);
   note.value = "Change the programme, asset, client and location here. The report number moves on with 'New month' or when a later monthly report is imported.";
   note.font = { italic: true, size: 9, color: { argb: XL.muted } };
-  ws.mergeCells(28, 1, 28, 5);
+  ws.mergeCells(30, 1, 30, 5);
 }
 
 function listsSheet(wb: ExcelJS.Workbook) {
@@ -349,6 +469,7 @@ function level1Sheet(wb: ExcelJS.Workbook, names: Names, seed: Seed): { rows: Re
   const PREV = TOTAL + 1;
   const MOVE = TOTAL + 2;
   titleBlock(ws, "Cost Report – Level 1 (Executive)", "Every figure is a formula over the Level 2 table; Previous = the stored copy of the previous issued report", MOVE);
+  premiumTitle(ws, MOVE);
   const hdr = ws.addRow(["SAR", ...cats, "Total", "Previous report", "Movement"]);
   hdr.font = { bold: true, color: { argb: XL.white } };
   hdr.alignment = { wrapText: true, vertical: "middle" };
@@ -358,7 +479,7 @@ function level1Sheet(wb: ExcelJS.Workbook, names: Names, seed: Seed): { rows: Re
   const rows: Record<string, number> = {};
   const cat = (ci: number) => `${colLetter(2 + ci)}$${headerRow}`;
   const sumifs = (col: string, ci: number, extra = "", table = "tblLevel2") => `SUMIFS(${table}[${col}],${table}[Category],${cat(ci)}${extra})`;
-  const group = (label: string) => sectionRow(ws, label, MOVE, XL.navyLight);
+  const group = (label: string) => premiumSection(ws, label, MOVE, GRAD.bandLight);
   const line = (key: string, label: string, perCat: (ci: number) => string, prev: (ci: number) => string | null, strong = false, muted = false, signed = false) => {
     const r = ws.addRow([label]);
     rows[key] = r.number;
@@ -422,6 +543,7 @@ function movementSheet(wb: ExcelJS.Workbook, names: Names, l1: { rows: Record<st
   const ws = sheet(wb, "Movement");
   [18, 40, 26, 18, 18, 18, 14].forEach((w, i) => (ws.getColumn(i + 1).width = w));
   titleBlock(ws, "Movement since the previous issued report", "Cost report columns and every Level 2 line, this report against the stored copy of the previous report", 7);
+  premiumTitle(ws, 7);
   const hdr = ws.addRow(["Cost report line", "", "", "Previous report", "This report", "Movement", ""]);
   hdr.font = { bold: true, color: { argb: XL.white } };
   hdr.eachCell({ includeEmpty: true }, (c) => (c.fill = solid(XL.navy)));
@@ -448,7 +570,7 @@ function movementSheet(wb: ExcelJS.Workbook, names: Names, l1: { rows: Record<st
     if (key === "N" || key === "O") r.font = { bold: true, color: { argb: XL.navy } };
   }
   ws.addRow([]);
-  sectionRow(ws, "Level 2 lines – previous report vs this report (rebuilt by the workbook after each import)", 7, XL.navyLight);
+  premiumSection(ws, "Level 2 lines – previous report vs this report (rebuilt by the workbook after each import)", 7, GRAD.bandLight);
   const h2 = ws.addRow(["Code", "Name", "Package", "Previous N", "This report N", "Movement", "What happened"]);
   h2.font = { bold: true, color: { argb: XL.white } };
   h2.eachCell({ includeEmpty: true }, (c) => (c.fill = solid(XL.navy)));
@@ -471,26 +593,43 @@ function movementSheet(wb: ExcelJS.Workbook, names: Names, l1: { rows: Record<st
   ws.views = [{ state: "frozen", ySplit: hdr.number }];
 }
 
-function homeSheet(wb: ExcelJS.Workbook, names: Names, seed: Seed, charts: XlsxChart[], l1: { rows: Record<string, number>; totalCol: number; headerRow: number; nCats: number }) {
+function homeSheet(wb: ExcelJS.Workbook, names: Names, seed: Seed, charts: XlsxChart[], shapes: XlsxShape[], l1: { rows: Record<string, number>; totalCol: number; headerRow: number; nCats: number }) {
   const ws = sheet(wb, "Home");
   ws.views = [{ showGridLines: false }];
   const COLS = 18;
   for (let c = 1; c <= COLS; c++) ws.getColumn(c).width = 10.5;
   titleBlock(ws, `Commercial Dashboard – Excel edition`, `${seed.programme.code} · ${seed.programme.name}${seed.asset.code ? ` · ${seed.asset.code} ${seed.asset.name}` : ""}`, COLS);
+  premiumTitle(ws, COLS);
+  ws.getRow(1).height = 40;
+  ws.getRow(1).font = { bold: true, size: 20, color: { argb: XL.white } };
   ws.getCell("A3").value = { formula: `"Signed in as "&SignedInUser&" ("&SignedInRole&")  ·  "&CurrentPeriodLabel&"  ·  cut-off "&TEXT(CurrentPeriodEnd,"dd-mmm-yy")&"  ·  "&CurrentPeriodStatus`, result: undefined };
   ws.getCell("A3").font = { bold: true, color: { argb: XL.navy } };
+  ws.getCell("A3").alignment = { vertical: "middle", indent: 1 };
+  ws.getRow(3).height = 22;
+  for (let c = 1; c <= COLS; c++) ws.getCell(3, c).fill = gradient(["FFFFFFFF", "FFEAF1FA"], 90);
   ws.mergeCells("A3:R3");
-  // buttons (created by the workbook on the first sign in) sit on these anchors
-  sectionRow(ws, "Actions", COLS, XL.navyLight);
-  ws.getRow(5).height = 26;
-  ws.getRow(6).height = 26;
+  // the buttons are shapes shipped with the workbook; the VBA wires the macros on the first sign in
+  premiumSection(ws, "Actions", COLS, GRAD.bandLight);
+  ws.getRow(5).height = 32;
+  ws.getRow(6).height = 32;
   ws.addRow([]);
-  ws.getRow(7).height = 26;
+  ws.getRow(7).height = 32;
   const anchors: [string, string][] = [["ButtonsRow1", "A5"], ["ButtonsRow1b", "C5"], ["ButtonsRow1c", "E5"], ["ButtonsRow1d", "G5"], ["ButtonsRow1e", "I5"], ["ButtonsRow1f", "L5"], ["ButtonsRow2", "A6"], ["ButtonsRow2b", "D6"], ["ButtonsRow2c", "G6"], ["ButtonsRow2d", "J6"], ["ButtonsRow2e", "M6"], ["ButtonsRow2f", "P6"], ["ButtonsRow3", "A7"], ["ButtonsRow3b", "E7"]];
   for (const [n, cell] of anchors) names.add(n, "Home", `$${cell.replace(/(\d+)/, "$$$1")}`);
+  for (let r = 5; r <= 7; r++) for (let c = 1; c <= COLS; c++) ws.getCell(r, c).fill = gradient(["FFF3F7FC", "FFE4ECF6"], 90);
+  const btnRow1: [string, string, readonly string[], string][] = [["New month", "modPeriods.NewMonth", GRAD.blue, "◆"], ["Lock period", "modPeriods.LockCurrentPeriod", GRAD.navy, "🔒"], ["Unlock period", "modPeriods.UnlockCurrentPeriod", GRAD.teal, "🔓"], ["Recalculate", "modMain.RefreshAll", GRAD.purple, "↻"], ["Export PDF report", "modReports.ExportPdf", GRAD.orange, "▤"], ["Sign out", "modMain.SignOut", GRAD.red, "⏻"]];
+  btnRow1.forEach(([n, m, g, icon], i) => shapes.push(button(ws, n, m, g, 1 + i * 3, 3, 5, { icon })));
+  const btnRow2: [string, string, readonly string[], string][] = [["Import monthly report", "modImport.ImportMonthlyReport", GRAD.navy, "⬆"], ["Import claims tracker", "modImport.ImportClaimsTracker", GRAD.navy, "⬆"], ["Import bonds & insurance", "modImportGeneric.ImportBonds", GRAD.navy, "⬆"], ["Import payment tracking", "modImportGeneric.ImportPayments", GRAD.navy, "⬆"], ["Import final accounts", "modImportGeneric.ImportFinalAccounts", GRAD.navy, "⬆"], ["Change my password", "modAuth.ChangeMyPassword", GRAD.green, "✱"]];
+  btnRow2.forEach(([n, m, g, icon], i) => shapes.push(button(ws, n, m, g, 1 + i * 3, 3, 6, { icon, fontSize: 9 })));
+  shapes.push(button(ws, "PowerPoint presentation", "modPresentation.BuildPresentation", GRAD.gold, 1, 4, 7, { icon: "▶", glow: "FFD166" }));
+  shapes.push(button(ws, "Claim EAR (Word)", "modEar.CreateClaimEar", GRAD.purple, 5, 4, 7, { icon: "✎", glow: "C9B8F5" }));
+  ws.getCell(7, 10).value = "Every button asks before it changes anything; imports and exports open a file window.";
+  ws.getCell(7, 10).font = { italic: true, size: 9, color: { argb: XL.muted } };
+  ws.getCell(7, 10).alignment = { vertical: "middle", wrapText: true };
+  ws.mergeCells(7, 10, 7, COLS);
   ws.addRow([]);
   // headline tiles
-  sectionRow(ws, "Cost position (SAR) – from the Level 1 sheet", COLS, XL.navy);
+  premiumSection(ws, "Cost position (SAR) – from the Level 1 sheet", COLS, GRAD.band);
   const t1 = 10;
   tile(ws, t1, 1, 3, "Approved baseline budget", "L1_E", TILE.navy, WHOLE, "column E");
   tile(ws, t1, 4, 3, "Latest budget", "L1_G", TILE.teal, WHOLE, "E + transfers");
@@ -500,7 +639,7 @@ function homeSheet(wb: ExcelJS.Workbook, names: Names, seed: Seed, charts: XlsxC
   tile(ws, t1, 16, 3, "Period movement", "L1_S", TILE.blue, WHOLE, "vs the previous issued report");
   while (ws.rowCount < t1 + 3) ws.addRow([]);
   ws.addRow([]);
-  sectionRow(ws, "Open items – counted on the module sheets", COLS, XL.navyLight);
+  premiumSection(ws, "Open items – counted on the module sheets", COLS, GRAD.bandLight);
   const t2 = ws.rowCount + 1;
   tile(ws, t2, 1, 3, "Open change items", `COUNTIF(tblChanges[Closed],"No")`, TILE.blue, "0", "Changes sheet");
   tile(ws, t2, 4, 3, "Open early warnings", `COUNTIF(tblEW[Status],"Open")`, TILE.gold, "0", "Early Warnings sheet");
@@ -511,26 +650,33 @@ function homeSheet(wb: ExcelJS.Workbook, names: Names, seed: Seed, charts: XlsxC
   while (ws.rowCount < t2 + 3) ws.addRow([]);
   ws.addRow([]);
   // module links
-  sectionRow(ws, "Modules – click to open", COLS, XL.navyLight);
+  premiumSection(ws, "Modules – click to open", COLS, GRAD.bandLight);
   const links = ["Setup", "Periods", "Level 1", "Level 2", "Movement", "Changes", "Claims", "Early Warnings", "Risks", "Provisional Sums", "Bonds", "Contracts", "IPCs", "Final Accounts", "Cash Flow", "Transfers", "Actions", "Users"];
   const linkRow = ws.rowCount + 1;
+  const linkColors = [GRAD.blue, GRAD.teal, GRAD.purple, GRAD.green, GRAD.orange, GRAD.gold];
   links.forEach((s, i) => {
     const r = linkRow + Math.floor(i / 6);
     const c = 1 + (i % 6) * 3;
     const cell = ws.getCell(r, c);
-    cell.value = { text: `▸ ${s}`, hyperlink: `#'${s}'!A1` };
-    cell.font = { color: { argb: XL.accent }, underline: true, bold: true, size: 10 };
+    cell.value = { text: `▸  ${s}`, hyperlink: `#'${s}'!A1` };
+    cell.font = { color: { argb: XL.navy }, bold: true, size: 10 };
+    cell.alignment = { vertical: "middle", indent: 1 };
+    for (let k = c; k <= c + 2; k++) {
+      ws.getCell(r, k).fill = gradient(["FFFFFFFF", "FFEAF1FA"], 90);
+      ws.getCell(r, k).border = { left: { style: "medium", color: { argb: linkColors[i % 6][0] } }, bottom: { style: "thin", color: { argb: XL.line } }, top: { style: "thin", color: { argb: XL.white } }, right: { style: "thin", color: { argb: XL.line } } };
+    }
     ws.mergeCells(r, c, r, c + 2);
+    ws.getRow(r).height = 24;
   });
   while (ws.rowCount < linkRow + Math.ceil(links.length / 6)) ws.addRow([]);
   ws.addRow([]);
-  sectionRow(ws, "Charts – live Excel charts over the tables", COLS, XL.navy);
+  premiumSection(ws, "Charts – live Excel charts over the tables", COLS, GRAD.band);
   const chartTop = ws.rowCount; // 0-based anchor row
   const CH = 17;
   while (ws.rowCount < chartTop + CH * 2 + 2) ws.addRow([]);
   ws.addRow([]);
   // data behind the charts
-  sectionRow(ws, "Data behind the charts", COLS, XL.navyLight);
+  premiumSection(ws, "Data behind the charts", COLS, GRAD.bandLight);
   const dTop = ws.rowCount + 2;
   const small = (row: number, col: number, title: string, headers: string[], body: (ExcelJS.CellValue | { formula: string })[][], fmts: (string | undefined)[]) => {
     ws.getCell(row, col).value = title;
@@ -623,10 +769,11 @@ export async function renderExcelEdition(programmeId: number): Promise<Buffer> {
   const definedNames: [string, string, string][] = [];
   const names: Names = { add: (name, sheet, cell) => definedNames.push([name, sheet, cell]) };
   const charts: XlsxChart[] = [];
+  const shapes: Record<string, XlsxShape[]> = { Login: [], Home: [], Users: [] };
   const subtitle = `${seed.programme.code} · ${seed.programme.name} · loaded from the dashboard on ${new Date().toISOString().slice(0, 10)}`;
 
   for (const n of SHEETS_ORDER) wb.addWorksheet(n); // created up front so the tab order is fixed
-  loginSheet(wb, names, seed);
+  loginSheet(wb, names, seed, shapes.Login);
   setupSheet(wb, names, seed);
   // Periods
   tableSheet(wb, PERIODS, seed.periods.map((p) => PERIODS.cols.map((c) => cellValue(c, p, seed))), { subtitle });
@@ -658,11 +805,12 @@ export async function renderExcelEdition(programmeId: number): Promise<Buffer> {
   // users
   const userRows = seed.users.map((u) => [u.name, u.email, u.role, u.active ? "Yes" : "No", hashPassword(u.role === "admin" ? "Admin@123" : "Welcome@123"), "Yes", null]);
   if (!userRows.some((u) => u[2] === "admin")) userRows.unshift(["Administrator", "admin@commercial.local", "admin", "Yes", hashPassword("Admin@123"), "Yes", null]);
-  const usersWs = tableSheet(wb, USERS, userRows, { subtitle: "Add a row for a new user (or use the buttons); passwords are stored as one-way hashes", before: (ws) => { ws.addRow([]); names.add("UsersButtons", "Users", "$A$4"); names.add("UsersButtons2", "Users", "$C$4"); ws.getRow(4).height = 26; } });
+  const usersWs = tableSheet(wb, USERS, userRows, { subtitle: "Add a row for a new user (or use the buttons); passwords are stored as one-way hashes", before: (ws) => { ws.addRow([]); names.add("UsersButtons", "Users", "$A$4"); names.add("UsersButtons2", "Users", "$C$4"); ws.getRow(4).height = 32; } });
+  shapes.Users.push(button(usersWs.ws, "Add user", "modAuth.AdminAddUser", GRAD.blue, 1, 1, 4, { icon: "＋" }), button(usersWs.ws, "Set a user's password", "modAuth.AdminSetPassword", GRAD.teal, 2, 2, 4, { icon: "✱" }));
   usersWs.ws.getColumn(5).hidden = true;
   tableSheet(wb, ACTIVITY, [[new Date(), "dashboard", "Workbook generated", `Loaded from ${APP_NAME}: Report No ${seed.currentReportNo}`]], { subtitle: "Newest first" });
   listsSheet(wb);
-  homeSheet(wb, names, seed, charts, l1);
+  homeSheet(wb, names, seed, charts, shapes.Home, l1);
   // tab order, visibility, names
   const ordered = SHEETS_ORDER.map((n) => wb.getWorksheet(n)).filter((w): w is ExcelJS.Worksheet => !!w);
   for (const ws of ordered) {
@@ -673,7 +821,7 @@ export async function renderExcelEdition(programmeId: number): Promise<Buffer> {
   for (const [name, sheet, cell] of definedNames) wb.definedNames.add(`'${sheet}'!${cell}`, name);
   wb.calcProperties.fullCalcOnLoad = true;
   const xlsx = Buffer.from(await wb.xlsx.writeBuffer());
-  const withCharts = await addChartsToXlsx(xlsx, { Home: charts });
+  const withCharts = await addChartsToXlsx(xlsx, { Home: charts }, shapes);
   return toMacroWorkbook(withCharts, ordered.map((w) => w.name));
 }
 
