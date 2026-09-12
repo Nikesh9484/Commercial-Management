@@ -251,7 +251,7 @@ function tableSheet(wb: ExcelJS.Workbook, spec: TableSpec, data: ExcelJS.CellVal
     if (c.list && LISTS[c.list]) {
       const n = LISTS[c.list].length;
       const listCol = colLetter(Object.keys(LISTS).indexOf(c.list) + 1);
-      (ws as unknown as { dataValidations: { add: (range: string, v: object) => void } }).dataValidations.add(`${colLetter(i + 1)}${first}:${colLetter(i + 1)}${last + 500}`, { type: "list", allowBlank: true, formulae: [`=Lists!$${listCol}$2:$${listCol}$${n + 1}`], showErrorMessage: false });
+      (ws as unknown as { dataValidations: { add: (range: string, v: object) => void } }).dataValidations.add(`${colLetter(i + 1)}${first}:${colLetter(i + 1)}${last + 500}`, { type: "list", allowBlank: true, formulae: [`Lists!$${listCol}$2:$${listCol}$${n + 1}`], showErrorMessage: false });
     }
   });
   ws.getRow(headerRowNo).font = { bold: true, color: { argb: XL.white } };
@@ -315,8 +315,8 @@ function loginSheet(wb: ExcelJS.Workbook, names: Names, seed: Seed, shapes: Xlsx
     if (height) ws.getRow(row).height = height;
   };
   say(3, APP_NAME.toUpperCase(), { size: 10, bold: true, color: { argb: "FF9FD3FF" } });
-  say(4, "Commercial", { size: 34, bold: true, color: { argb: XL.white } }, 10, 44);
-  say(5, "Dashboard", { size: 34, bold: true, color: { argb: "FFFFD166" } }, 10, 44);
+  say(4, "Commercial Dashboard", { size: 30, bold: true, color: { argb: XL.white } }, 10, 44);
+  say(5, "The Marina", { size: 30, bold: true, color: { argb: "FFFFD166" } }, 10, 44);
   say(6, "Excel edition · the whole commercial control of the programme in one workbook", { size: 11, italic: true, color: { argb: "FFDCE6F2" } });
   say(8, `${seed.programme.code} · ${seed.programme.name}${seed.asset.code ? `\n${seed.asset.code} · ${seed.asset.name}` : ""}`, { size: 11, bold: true, color: { argb: XL.white } }, 10, 34);
   const bullets = ["Sign in with the same users, roles and passwords as the website", "Level 1 · Level 2 · Movement · every register as a live Excel table", "Import the monthly report, claims tracker, bonds, payments and final accounts", "PDF report, PowerPoint presentation and the Claim EAR in Word"];
@@ -598,7 +598,7 @@ function homeSheet(wb: ExcelJS.Workbook, names: Names, seed: Seed, charts: XlsxC
   ws.views = [{ showGridLines: false }];
   const COLS = 18;
   for (let c = 1; c <= COLS; c++) ws.getColumn(c).width = 10.5;
-  titleBlock(ws, `Commercial Dashboard – Excel edition`, `${seed.programme.code} · ${seed.programme.name}${seed.asset.code ? ` · ${seed.asset.code} ${seed.asset.name}` : ""}`, COLS);
+  titleBlock(ws, `Commercial Dashboard – The Marina`, `Excel edition · ${seed.programme.code} · ${seed.programme.name}${seed.asset.code ? ` · ${seed.asset.code} ${seed.asset.name}` : ""}`, COLS);
   premiumTitle(ws, COLS);
   ws.getRow(1).height = 40;
   ws.getRow(1).font = { bold: true, size: 20, color: { argb: XL.white } };
@@ -658,7 +658,7 @@ function homeSheet(wb: ExcelJS.Workbook, names: Names, seed: Seed, charts: XlsxC
     const r = linkRow + Math.floor(i / 6);
     const c = 1 + (i % 6) * 3;
     const cell = ws.getCell(r, c);
-    cell.value = { text: `▸  ${s}`, hyperlink: `#'${s}'!A1` };
+    cell.value = { formula: `HYPERLINK("#'${s}'!A1","▸  ${s}")`, result: `▸  ${s}` };
     cell.font = { color: { argb: XL.navy }, bold: true, size: 10 };
     cell.alignment = { vertical: "middle", indent: 1 };
     for (let k = c; k <= c + 2; k++) {
@@ -766,6 +766,7 @@ export async function renderExcelEdition(programmeId: number): Promise<Buffer> {
   const seed = loadSeed(programmeId);
   const wb = new ExcelJS.Workbook();
   wb.creator = APP_NAME;
+  wb.title = "Commercial Dashboard – The Marina";
   const definedNames: [string, string, string][] = [];
   const names: Names = { add: (name, sheet, cell) => definedNames.push([name, sheet, cell]) };
   const charts: XlsxChart[] = [];

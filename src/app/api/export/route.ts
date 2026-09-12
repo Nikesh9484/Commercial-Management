@@ -45,7 +45,7 @@ export async function GET(req: Request, ctx: unknown) {
       // the whole dashboard as a stand-alone macro-enabled workbook, loaded with the current data
       if (!["admin", "editor"].includes(user.role)) return NextResponse.json({ error: "Only an admin or editor can download the Excel edition." }, { status: 403 });
       const buffer = await renderExcelEdition(app.programme.id);
-      return new Response(new Uint8Array(buffer), { headers: { "Content-Type": "application/vnd.ms-excel.sheet.macroEnabled.12", "Content-Disposition": `attachment; filename="Commercial_Dashboard_Excel_Edition_${app.programme.code}_${todayIso()}.xlsm"` } });
+      return new Response(new Uint8Array(buffer), { headers: { "Content-Type": "application/vnd.ms-excel.sheet.macroEnabled.12", "Content-Disposition": `attachment; filename="Commercial_Dashboard_The_Marina_${app.programme.code}_${todayIso()}.xlsm"` } });
     }
     const data = getReportData(app.programme.id, periodId);
     const name = sections.map((s) => NAMES[s] ?? s.replace(/[^A-Za-z0-9]+/g, "_")).join("_");

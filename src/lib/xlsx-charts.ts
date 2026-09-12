@@ -193,7 +193,7 @@ function dLbls(c: XlsxChart, round: boolean): string {
   const fmt = c.numFmt ?? "#,##0";
   return (
     `<c:dLbls><c:numFmt formatCode="${esc(round ? "0%" : fmt)}" sourceLinked="0"/><c:spPr><a:noFill/><a:ln><a:noFill/></a:ln></c:spPr>${txt(8, round ? "FFFFFF" : "172033", round)}` +
-    `${round ? `<c:dLblPos val="ctr"/>` : c.type === "stackedBar" ? `<c:dLblPos val="ctr"/>` : c.type === "line" ? `<c:dLblPos val="t"/>` : `<c:dLblPos val="outEnd"/>`}` +
+    `${round ? "" : c.type === "stackedBar" ? `<c:dLblPos val="ctr"/>` : c.type === "line" ? `<c:dLblPos val="t"/>` : `<c:dLblPos val="outEnd"/>`}` +
     `<c:showLegendKey val="0"/><c:showVal val="${round ? 0 : 1}"/><c:showCatName val="0"/><c:showSerName val="0"/><c:showPercent val="${round ? 1 : 0}"/><c:showBubbleSize val="0"/></c:dLbls>`
   );
 }

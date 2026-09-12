@@ -570,7 +570,7 @@ function dashboardSheet(ws: ExcelJS.Worksheet, d: ReportData, l1: Level1Ref, l1c
   const dash = d.dashboard;
   const COLS = 18;
   for (let c = 1; c <= COLS; c++) ws.getColumn(c).width = 10.5;
-  titleBlock(ws, `Commercial Dashboard – ${d.period.label}`, sub(d), COLS);
+  titleBlock(ws, `Commercial Dashboard – The Marina · ${d.period.label}`, sub(d), COLS);
   const movementOk = !!d.costReport.previousPeriod?.snapshotAvailable && !!d.movement && !d.movement.warning;
   const prevLabel = (d.costReport.previousPeriod?.label ?? "").replace("Monthly Report ", "");
 
@@ -627,7 +627,7 @@ function dashboardSheet(ws: ExcelJS.Worksheet, d: ReportData, l1: Level1Ref, l1c
     const r = linkRow + Math.floor(i / 6);
     const c = 1 + (i % 6) * 3;
     const cell = ws.getCell(r, c);
-    cell.value = { text: `▸ ${label}`, hyperlink: `#${q(sheet)}!A1` };
+    cell.value = { formula: `HYPERLINK("#${q(sheet)}!A1","▸ ${label}")`, result: `▸ ${label}` };
     cell.font = { color: { argb: XL.accent }, underline: true, bold: true, size: 10 };
     ws.mergeCells(r, c, r, c + 2);
   });

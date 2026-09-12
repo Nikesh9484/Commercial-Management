@@ -341,7 +341,7 @@ function coverSheet(wb: ExcelJS.Workbook, d: ReportData) {
   }
   ws.addRow([]);
   const go = ws.addRow(["Contents", "Go to the Index sheet"]);
-  go.getCell(2).value = { text: "▶ Index of sheets", hyperlink: "#'Index'!A1" };
+  go.getCell(2).value = { formula: `HYPERLINK("#'Index'!A1","▶ Index of sheets")`, result: "▶ Index of sheets" };
   go.getCell(2).font = { color: { argb: XL.accent }, underline: true };
 }
 
@@ -356,7 +356,7 @@ function indexSheet(wb: ExcelJS.Workbook, d: ReportData) {
   };
   const linkRow = (section: string, title: string, sheet: string, chk: string) => {
     const r = ws.addRow([section, title, chk]);
-    r.getCell(2).value = { text: title, hyperlink: `#'${sheet.replace(/'/g, "''")}'!A1` };
+    r.getCell(2).value = { formula: `HYPERLINK("#'${sheet.replace(/'/g, "''")}'!A1",${JSON.stringify(title)})`, result: title };
     r.getCell(2).font = { color: { argb: XL.accent }, underline: true };
   };
   linkRow("", "Minutes of Meeting", "MoM", check(11));

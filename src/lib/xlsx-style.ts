@@ -243,7 +243,7 @@ export function finishSheet(ws: ExcelJS.Worksheet, opts: { freezeCols?: number; 
   if (opts.indexSheet && ws.name !== opts.indexSheet) {
     const cell = ws.getCell(1, Math.max(ws.columnCount, 2));
     if (!cell.value) {
-      cell.value = { text: `◀ ${opts.indexSheet}`, hyperlink: `#'${opts.indexSheet}'!A1` };
+      cell.value = { formula: `HYPERLINK("#'${opts.indexSheet}'!A1","◀ ${opts.indexSheet}")`, result: `◀ ${opts.indexSheet}` };
       cell.font = { color: { argb: "FFBFDBFE" }, underline: true, size: 10 };
       cell.alignment = { horizontal: "right", vertical: "middle" };
     }
