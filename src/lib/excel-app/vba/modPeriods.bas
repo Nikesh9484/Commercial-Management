@@ -119,6 +119,7 @@ Public Sub NewMonth()
     SetNamed "CurrentReportNo", rn + 1
     SetNamed "ViewReportNo", rn + 1
     modNav.ApplyViewVisibility
+    modNav.SyncPicker
     Busy False
     LogActivity "New month", "Report No " & (rn + 1) & " – cut-off " & Format$(newEnd, "dd-mmm-yy")
     MsgBox "Report No " & (rn + 1) & " started. The movement columns now compare with Report No " & rn & ".", vbInformation, APP_TITLE

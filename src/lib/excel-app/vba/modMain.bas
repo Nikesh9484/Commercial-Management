@@ -5,7 +5,7 @@ Option Explicit
 
 ' Sheets that need a signed-in user (everything except Login).
 Private Function AppSheets() As Variant
-    AppSheets = Array("Home", "Registers", "Reports", "Level 2 (view)", "Setup", "Periods", "Level 1", "Level 2", "Movement", "Changes", "Claims", "Early Warnings", "Risks", "Provisional Sums", "Bonds", "Contracts", "IPCs", "Final Accounts", "Cash Flow", "Transfers", "Actions", "Snapshots", "Users", "Activity", "Lists")
+    AppSheets = Array("Home", "Registers", "Imports", "Reports", "Level 2 (view)", "Setup", "Periods", "Level 1", "Level 2", "Movement", "Changes", "Claims", "Early Warnings", "Risks", "Provisional Sums", "Bonds", "Contracts", "IPCs", "Final Accounts", "Cash Flow", "Transfers", "Actions", "Snapshots", "Users", "Activity", "Lists")
 End Function
 
 ' Sheets a reporter may open.
@@ -196,6 +196,10 @@ nextSheet:
     modNav.ApplyViewVisibility
     modNav.WireNav
     modNav.HideTabs
+    modNav.SyncPicker
+    On Error Resume Next
+    ThisWorkbook.Worksheets("Home").ScrollArea = "A1:R" & (ThisWorkbook.Worksheets("Home").UsedRange.Rows.Count + 1)
+    On Error GoTo 0
     Application.ScreenUpdating = True
 End Sub
 
@@ -247,11 +251,6 @@ Public Sub EnsureButtons()
     AddButton ws, "ButtonsRow1d", "Recalculate", "modMain.RefreshAll", 110
     AddButton ws, "ButtonsRow1e", "Export PDF report", "modReports.ExportPdf", 130
     AddButton ws, "ButtonsRow1f", "Sign out", "modMain.SignOut", 90
-    AddButton ws, "ButtonsRow2", "Import monthly report", "modImport.ImportMonthlyReport", 150
-    AddButton ws, "ButtonsRow2b", "Import claims tracker", "modImport.ImportClaimsTracker", 150
-    AddButton ws, "ButtonsRow2c", "Import bonds & insurance", "modImportGeneric.ImportBonds", 160
-    AddButton ws, "ButtonsRow2d", "Import payment tracking", "modImportGeneric.ImportPayments", 160
-    AddButton ws, "ButtonsRow2e", "Import final accounts", "modImportGeneric.ImportFinalAccounts", 150
     AddButton ws, "ButtonsRow2f", "Change my password", "modAuth.ChangeMyPassword", 140
     AddButton ws, "ButtonsRow3", "PowerPoint presentation", "modPresentation.BuildPresentation", 170
     AddButton ws, "ButtonsRow3b", "Claim EAR (Word)", "modEar.CreateClaimEar", 150

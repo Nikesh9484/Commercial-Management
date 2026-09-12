@@ -81,6 +81,10 @@ Public Sub NavRegisters()
     GoSheet "Registers"
 End Sub
 
+Public Sub NavImports()
+    GoSheet "Imports"
+End Sub
+
 Public Sub NavPeriods()
     GoSheet "Periods"
 End Sub
@@ -168,7 +172,29 @@ Public Sub ShowSelectedPeriod()
     ShowPeriod rn
 End Sub
 
-Public Sub ShowPeriod(ByVal rn As Long)
+' The gold box on Home changed: show that report without any message.
+Public Sub PickerChanged()
+    Dim lbl As String, lo As ListObject, r As Long, rn As Long
+    If Not IsSignedIn() Then Exit Sub
+    lbl = Trim$(CStr(Nz(ThisWorkbook.Worksheets("Home").Range("ViewPicker").Value)))
+    If Len(lbl) = 0 Then Exit Sub
+    Set lo = TableOf("tblPeriods")
+    r = FindRow(lo, "Label", lbl)
+    If r = 0 Then Exit Sub
+    rn = CLng(Val(CellText(lo, r, "Report No")))
+    If rn <= 0 Then Exit Sub
+    ShowPeriod rn, True
+End Sub
+
+' Writes the label of the report shown into the gold box on Home (without firing its change event).
+Public Sub SyncPicker()
+    On Error Resume Next
+    Application.EnableEvents = False
+    ThisWorkbook.Worksheets("Home").Range("ViewPicker").Value = CStr(NamedValue("ViewPeriodLabel"))
+    Application.EnableEvents = True
+End Sub
+
+Public Sub ShowPeriod(ByVal rn As Long, Optional ByVal quiet As Boolean = False)
     Dim cur As Long
     cur = CLng(Nz(NamedValue("CurrentReportNo"), 0))
     If rn <> cur Then
@@ -181,6 +207,8 @@ Public Sub ShowPeriod(ByVal rn As Long)
     SetNamed "ViewReportNo", rn
     ApplyViewVisibility
     Application.Calculate
+    SyncPicker
+    If quiet Then Exit Sub
     If rn = cur Then
         MsgBox "Showing the current report (live data).", vbInformation, APP_TITLE
     Else
@@ -194,6 +222,7 @@ Public Sub BackToCurrent()
     SetNamed "ViewReportNo", CLng(Nz(NamedValue("CurrentReportNo"), 0))
     ApplyViewVisibility
     Application.Calculate
+    SyncPicker
     NavHome
 End Sub
 
