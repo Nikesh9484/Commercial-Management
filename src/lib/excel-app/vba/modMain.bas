@@ -159,6 +159,8 @@ Public Sub EnsureButtons()
     AddButton ws, "ButtonsRow2d", "Import payment tracking", "modImportGeneric.ImportPayments", 160
     AddButton ws, "ButtonsRow2e", "Import final accounts", "modImportGeneric.ImportFinalAccounts", 150
     AddButton ws, "ButtonsRow2f", "Change my password", "modAuth.ChangeMyPassword", 140
+    AddButton ws, "ButtonsRow3", "PowerPoint presentation", "modPresentation.BuildPresentation", 170
+    AddButton ws, "ButtonsRow3b", "Claim EAR (Word)", "modEar.CreateClaimEar", 150
     Set ws = ThisWorkbook.Worksheets("Users")
     ws.Unprotect SHEET_PWD
     AddButton ws, "UsersButtons", "Add user", "modAuth.AdminAddUser", 100

@@ -16,6 +16,8 @@ import type { RecordRow } from "../registers/types";
 import { XL, titleBlock, sectionRow, solid, colLetter } from "../xlsx-style";
 import { addChartsToXlsx, type XlsxChart } from "../xlsx-charts";
 import { buildVbaProject, type VbaModule } from "./ovba";
+import { EAR_SCHEMA } from "../ear/model";
+import { SYSTEM as EAR_SYSTEM, REVISION_RULES as EAR_REVISION_RULES, EAR_MODEL } from "../ear/generate";
 import { REGISTER_TABLES, LISTS, FORMULAS, LEVEL2, CHANGES, CLAIMS, EW, RISKS, PS, BONDS, CONTRACTS, IPC, FA, TRANSFERS, CASHFLOW, ACTIONS, PERIODS, SNAPSHOTS, USERS, ACTIVITY, type TableSpec, type Col } from "./schema";
 
 /**
@@ -289,6 +291,11 @@ function setupSheet(wb: ExcelJS.Workbook, names: Names, seed: Seed) {
   sectionRow(ws, "Rules", 5, XL.navyLight);
   put(20, "Bonds: amber when expiring within (days)", 60, "ExpiryAmberDays", "0");
   put(21, "Bonds: red when expiring within (days)", 30, "ExpiryRedDays", "0");
+  put(22, "API key for the Claim EAR (Anthropic, admin only)", "", "ApiKey");
+  put(23, "Claim EAR model", EAR_MODEL, "EarModel");
+  ws.getCell(22, 2).numFmt = ";;;";
+  ws.getCell(22, 4).value = "Type the key here; it shows as blank. The website's key works here too.";
+  ws.getCell(22, 4).font = { italic: true, size: 9, color: { argb: XL.muted } };
   ws.addRow([]);
   sectionRow(ws, "Signed in (set by the workbook)", 5, XL.navyLight);
   put(24, "User", "", "SignedInUser");
@@ -318,6 +325,20 @@ function listsSheet(wb: ExcelJS.Workbook) {
   ws.getCell(start - 1, 1).font = { bold: true, color: { argb: XL.navy } };
   ws.addTable({ name: FORMULAS.table, ref: `A${start}`, headerRow: true, totalsRow: false, style: { theme: "TableStyleLight9", showRowStripes: true }, columns: FORMULAS.cols.map((c) => ({ name: c.h, filterButton: false })), rows });
   ws.getColumn(3).width = 120;
+  // the Claim EAR drafting instructions, identical to the website's
+  ws.getCell(1, 30).value = "Claim EAR – system prompt";
+  ws.getCell(2, 30).value = EAR_SYSTEM;
+  ws.getCell(1, 31).value = "Claim EAR – revision rules";
+  ws.getCell(2, 31).value = EAR_REVISION_RULES;
+  ws.getCell(1, 32).value = "Claim EAR – required JSON shape";
+  ws.getCell(2, 32).value = JSON.stringify(EAR_SCHEMA);
+  for (const c of [30, 31, 32]) {
+    ws.getCell(1, c).font = { bold: true, color: { argb: XL.white } };
+    ws.getCell(1, c).fill = solid(XL.navy);
+    ws.getCell(2, c).alignment = { wrapText: false, vertical: "top" };
+    ws.getColumn(c).width = 40;
+  }
+  ws.getRow(2).height = 15;
 }
 
 /** Level 1 in the Excel "Level 01" layout, every figure a SUMIFS over the Level 2 table. */
@@ -463,12 +484,14 @@ function homeSheet(wb: ExcelJS.Workbook, names: Names, seed: Seed, charts: XlsxC
   sectionRow(ws, "Actions", COLS, XL.navyLight);
   ws.getRow(5).height = 26;
   ws.getRow(6).height = 26;
-  const anchors: [string, string][] = [["ButtonsRow1", "A5"], ["ButtonsRow1b", "C5"], ["ButtonsRow1c", "E5"], ["ButtonsRow1d", "G5"], ["ButtonsRow1e", "I5"], ["ButtonsRow1f", "L5"], ["ButtonsRow2", "A6"], ["ButtonsRow2b", "D6"], ["ButtonsRow2c", "G6"], ["ButtonsRow2d", "J6"], ["ButtonsRow2e", "M6"], ["ButtonsRow2f", "P6"]];
+  ws.addRow([]);
+  ws.getRow(7).height = 26;
+  const anchors: [string, string][] = [["ButtonsRow1", "A5"], ["ButtonsRow1b", "C5"], ["ButtonsRow1c", "E5"], ["ButtonsRow1d", "G5"], ["ButtonsRow1e", "I5"], ["ButtonsRow1f", "L5"], ["ButtonsRow2", "A6"], ["ButtonsRow2b", "D6"], ["ButtonsRow2c", "G6"], ["ButtonsRow2d", "J6"], ["ButtonsRow2e", "M6"], ["ButtonsRow2f", "P6"], ["ButtonsRow3", "A7"], ["ButtonsRow3b", "E7"]];
   for (const [n, cell] of anchors) names.add(n, "Home", `$${cell.replace(/(\d+)/, "$$$1")}`);
   ws.addRow([]);
   // headline tiles
   sectionRow(ws, "Cost position (SAR) – from the Level 1 sheet", COLS, XL.navy);
-  const t1 = 9;
+  const t1 = 10;
   tile(ws, t1, 1, 3, "Approved baseline budget", "L1_E", TILE.navy, WHOLE, "column E");
   tile(ws, t1, 4, 3, "Latest budget", "L1_G", TILE.teal, WHOLE, "E + transfers");
   tile(ws, t1, 7, 3, "Anticipated final account", "L1_N", TILE.orange, WHOLE, "column N");
@@ -646,6 +669,7 @@ export async function renderExcelEdition(programmeId: number): Promise<Buffer> {
     ws.state = ws.name === "Login" ? "visible" : "veryHidden";
     ws.properties.tabColor = { argb: ws.name === "Home" ? XL.accent : ws.name === "Login" ? XL.navy : XL.navyLight };
   }
+  definedNames.push(["EarSystemPrompt", "Lists", "$AD$2"], ["EarRevisionRules", "Lists", "$AE$2"], ["EarSchema", "Lists", "$AF$2"]);
   for (const [name, sheet, cell] of definedNames) wb.definedNames.add(`'${sheet}'!${cell}`, name);
   wb.calcProperties.fullCalcOnLoad = true;
   const xlsx = Buffer.from(await wb.xlsx.writeBuffer());
@@ -668,7 +692,7 @@ async function toMacroWorkbook(xlsx: Buffer, sheets: string[]): Promise<Buffer> 
   const modules: VbaModule[] = [
     { name: "ThisWorkbook", type: "document", code: "Option Explicit\r\n\r\nPrivate Sub Workbook_Open()\r\n    modMain.AppStart\r\nEnd Sub\r\n" },
     ...sheets.map((s) => ({ name: codeName(s), type: "document" as const, code: "Option Explicit\r\n" })),
-    ...["modUtil", "modAuth", "modMain", "modPeriods", "modImport", "modImportGeneric", "modReports"].map((m) => ({ name: m, type: "standard" as const, code: fs.readFileSync(path.join(dir, `${m}.bas`), "utf8") })),
+    ...["modUtil", "modJson", "modAuth", "modMain", "modPeriods", "modImport", "modImportGeneric", "modReports", "modPresentation", "modEar"].map((m) => ({ name: m, type: "standard" as const, code: fs.readFileSync(path.join(dir, `${m}.bas`), "utf8") })),
   ];
   const bin = buildVbaProject(modules, { projectName: "CommercialDashboard" });
   const zip = await JSZip.loadAsync(xlsx);
@@ -706,7 +730,7 @@ async function toMacroWorkbook(xlsx: Buffer, sheets: string[]): Promise<Buffer> 
 export async function excelEditionModulesZip(): Promise<Buffer> {
   const dir = vbaDir();
   const zip = new JSZip();
-  for (const m of ["modUtil", "modAuth", "modMain", "modPeriods", "modImport", "modImportGeneric", "modReports"]) zip.file(`${m}.bas`, `Attribute VB_Name = "${m}"\r\n` + fs.readFileSync(path.join(dir, `${m}.bas`), "utf8").replace(/\r?\n/g, "\r\n"));
+  for (const m of ["modUtil", "modJson", "modAuth", "modMain", "modPeriods", "modImport", "modImportGeneric", "modReports", "modPresentation", "modEar"]) zip.file(`${m}.bas`, `Attribute VB_Name = "${m}"\r\n` + fs.readFileSync(path.join(dir, `${m}.bas`), "utf8").replace(/\r?\n/g, "\r\n"));
   zip.file("ThisWorkbook.txt", "Option Explicit\r\n\r\nPrivate Sub Workbook_Open()\r\n    modMain.AppStart\r\nEnd Sub\r\n");
   zip.file(
     "README.txt",
