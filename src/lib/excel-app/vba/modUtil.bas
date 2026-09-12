@@ -263,13 +263,14 @@ Public Sub Busy(ByVal isBusy As Boolean, Optional ByVal msg As String = "")
 End Sub
 
 Public Function PickFile(ByVal title As String, ByVal filterDesc As String, ByVal filterExt As String) As String
-    Dim fd As Object, v As Variant
+    Dim fd As Object, v As Variant, app As Object
+    Set app = Application
     #If Mac Then
         v = Application.GetOpenFilename(, , title)
         If VarType(v) = vbBoolean Then PickFile = "" Else PickFile = CStr(v)
     #Else
         On Error GoTo plain
-        Set fd = Application.FileDialog(3)
+        Set fd = app.FileDialog(3)
         With fd
             .Title = title
             .AllowMultiSelect = False

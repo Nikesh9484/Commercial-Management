@@ -27,9 +27,10 @@ Private fileCount As Long
 ' ---- files ---------------------------------------------------------------------------------
 
 Private Function PickFolder(ByVal title As String) As String
-    Dim fd As Object
+    Dim fd As Object, app As Object
     On Error GoTo fallback
-    Set fd = Application.FileDialog(4) ' msoFileDialogFolderPicker
+    Set app = Application
+    Set fd = app.FileDialog(4) ' msoFileDialogFolderPicker
     fd.Title = title
     fd.AllowMultiSelect = False
     If fd.Show = -1 Then PickFolder = fd.SelectedItems(1)

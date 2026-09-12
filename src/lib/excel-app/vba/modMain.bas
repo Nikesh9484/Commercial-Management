@@ -209,7 +209,8 @@ End Function
 ' ---- buttons: created once, on the first sign in, so the workbook needs no drawing parts ----
 
 Private Sub AddButton(ByVal ws As Worksheet, ByVal anchor As String, ByVal caption As String, ByVal macro As String, Optional ByVal widthPt As Double = 150, Optional ByVal heightPt As Double = 22)
-    Dim b As Object, rg As Range, shp As Object
+    Dim b As Object, rg As Range, shp As Object, sheetObj As Object
+    Set sheetObj = ws ' late-bound: the legacy Buttons collection is resolved at run time on every platform
     ' the workbook ships with styled button shapes; when one exists, it only needs its macro
     On Error Resume Next
     Set shp = ws.Shapes(caption)
@@ -220,10 +221,10 @@ Private Sub AddButton(ByVal ws As Worksheet, ByVal anchor As String, ByVal capti
     End If
     Set rg = ws.Range(anchor)
     On Error Resume Next
-    Set b = ws.Buttons(caption)
+    Set b = sheetObj.Buttons(caption)
     On Error GoTo 0
     If b Is Nothing Then
-        Set b = ws.Buttons.Add(rg.Left + 2, rg.Top + 2, widthPt, heightPt)
+        Set b = sheetObj.Buttons.Add(rg.Left + 2, rg.Top + 2, widthPt, heightPt)
         b.Name = caption
     End If
     b.Caption = caption
