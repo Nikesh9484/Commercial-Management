@@ -159,3 +159,24 @@ Public Sub LibPpt()
     If Not SwitchTo(LibraryReportNo()) Then Exit Sub
     modPresentation.BuildPresentation
 End Sub
+
+Public Sub LibReplace()
+    If Not RequireEditor() Then Exit Sub
+    Dim rn As Long
+    rn = LibraryReportNo()
+    If rn <= 0 Then Exit Sub
+    If MsgBox("Replace Report No " & rn & " with a file? Choose the monthly report workbook next; the report's data is replaced by the file's.", vbOKCancel + vbQuestion, APP_TITLE) <> vbOK Then Exit Sub
+    modImport.ImportMonthlyReportFor rn
+    modNav.NavReports
+End Sub
+
+Public Sub LibEdit()
+    If Not RequireEditor() Then Exit Sub
+    modNav.EditReport LibraryReportNo()
+End Sub
+
+Public Sub LibDelete()
+    If Not RequireEditor() Then Exit Sub
+    modNav.DeleteReportNo LibraryReportNo()
+    modNav.NavReports
+End Sub

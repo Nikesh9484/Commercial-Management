@@ -34,7 +34,7 @@ const CATEGORIES = LISTS.Category;
 const SHEETS_ORDER = ["Login", "Home", "Registers", "Imports", "Periods", "Reports", "Level 1", "Level 2", "Movement", "Changes", "Claims", "Early Warnings", "Risks", "Provisional Sums", "Bonds", "Contracts", "IPCs", "Final Accounts", "Cash Flow", "Transfers", "Actions", "Setup", "Snapshots", "Users", "Activity", "Lists", "ChartData", "Undo", ...REGISTER_TABLES.filter((t) => t.register !== "cost_lines" && t.register !== "reporting_periods").map((t) => `${t.sheet} store`)];
 const REGISTER_SHEETS = ["Changes", "Claims", "Early Warnings", "Risks", "Provisional Sums", "Bonds", "Contracts", "IPCs", "Final Accounts", "Cash Flow", "Transfers", "Actions"];
 /** The navigation bar shown on every page once signed in: label, macro (wired by the workbook from the shape name "nav:<macro>"). */
-const NAV: [string, string][] = [["Home", "NavHome"], ["Level 1", "NavLevel1"], ["Level 2", "NavLevel2"], ["Movement", "NavMovement"], ["Registers", "NavRegisters"], ["Imports", "NavImports"], ["Periods", "NavPeriods"], ["Reports", "NavReports"], ["Setup", "NavSetup"], ["Users", "NavUsers"], ["Undo entry", "UndoEntry"], ["Undo step", "UndoStep"], ["Sign out", "SignOut"]];
+const NAV: [string, string][] = [["Home", "NavHome"], ["Level 1", "NavLevel1"], ["Level 2", "NavLevel2"], ["Movement", "NavMovement"], ["Registers", "NavRegisters"], ["Imports", "NavImports"], ["Periods", "NavPeriods"], ["Library", "NavReports"], ["Setup", "NavSetup"], ["Users", "NavUsers"], ["Undo entry", "UndoEntry"], ["Undo step", "UndoStep"], ["Sign out", "SignOut"]];
 /** Functions newer than Excel 2013 must carry the _xlfn. prefix in the file, or Excel shows #NAME? until the cell is re-entered. */
 export function prefixNewFunctions(xml: string): string {
   return xml.replace(/<f>([^<]*)<\/f>/g, (m, f: string) => `<f>${f.replace(/(?<![\w.])(MAXIFS|MINIFS|IFS|TEXTJOIN|CONCAT|SWITCH|XLOOKUP|XMATCH|FILTER|UNIQUE|SORT|SORTBY|SEQUENCE|LET)\(/g, "_xlfn.$1(")}</f>`);
@@ -736,8 +736,10 @@ function homeSheet(wb: ExcelJS.Workbook, names: Names, seed: Seed, charts: XlsxC
   btnRow1.forEach(([n, m, g, icon], i) => shapes.push(button(ws, n, m, g, 1 + i * 3, 3, 5, { icon })));
   shapes.push(button(ws, "act:NavImports", "NavImports", GRAD.navy, 1, 3, 6, { icon: "⬆" }));
   shapes[shapes.length - 1].text = "⬆  Imports (monthly report, claims, bonds, payments, final accounts)";
-  shapes[shapes.length - 1] = { ...shapes[shapes.length - 1], ...anchorAt(ws, colLeft(ws, 1) + 3, rowTop(ws, 6) + 2, colLeft(ws, 8) - colLeft(ws, 1) - 6, 28) };
-  shapes.push(button(ws, "PowerPoint presentation", "modPresentation.BuildPresentation", GRAD.gold, 8, 4, 6, { icon: "▶", glow: "FFD166" }));
+  shapes[shapes.length - 1] = { ...shapes[shapes.length - 1], ...anchorAt(ws, colLeft(ws, 1) + 3, rowTop(ws, 6) + 2, colLeft(ws, 5) - colLeft(ws, 1) - 6, 28) };
+  shapes[shapes.length - 1].text = "⬆  Imports";
+  shapes.push({ ...button(ws, "act:NavReports", "NavReports", GRAD.gold, 5, 3, 6, { icon: "▤" }), text: "▤  Report library" });
+  shapes.push(button(ws, "PowerPoint presentation", "modPresentation.BuildPresentation", GRAD.orange, 8, 4, 6, { icon: "▶", glow: "FFD166" }));
   shapes.push(button(ws, "Claim EAR (Word)", "modEar.CreateClaimEar", GRAD.purple, 12, 4, 6, { icon: "✎", glow: "C9B8F5" }));
   shapes.push(button(ws, "Change my password", "modAuth.ChangeMyPassword", GRAD.green, 16, 3, 6, { icon: "✱" }));
   ws.getCell(7, 1).value = "Choose the report shown in the gold box above; the summary, Level 1 and Level 2 follow it. Reports and their library are on the Reports page; every register is on the Registers page.";
@@ -977,13 +979,14 @@ function reportsSheet(wb: ExcelJS.Workbook, shapes: XlsxShape[], names: Names) {
   ws.views = [{ showGridLines: false }];
   const LIB_ROWS = 30;
   const before = (w: ExcelJS.Worksheet) => {
-    const l = w.addRow(["Report library – every report the workbook holds. Click a report, then a button: the dashboard switches to that report and the file is produced from it."]);
+    const l = w.addRow(["Report library – every report the workbook holds. Click a report, then a button: produce a file from it, replace it from a file, edit its number or cut-off, or delete it."]);
     l.font = { bold: true, color: { argb: XL.navy } };
     l.alignment = { vertical: "middle", indent: 1 };
     l.height = 22;
     for (let c = 1; c <= 6; c++) l.getCell(c).fill = gradient(["FFFFFFFF", "FFEAF1FA"], 90);
     w.mergeCells(l.number, 1, l.number, 6);
     w.addRow([]).height = 34; // buttons
+    w.addRow([]).height = 34; // buttons, second row
     const h = w.addRow(["Report No", "Report", "Cut-off", "Status", "Source file", "Files produced"]);
     h.font = { bold: true, color: { argb: XL.white } };
     h.height = 22;
@@ -1008,6 +1011,7 @@ function reportsSheet(wb: ExcelJS.Workbook, shapes: XlsxShape[], names: Names) {
       r.getCell(1).alignment = { indent: 1 };
     }
     names.add("LibraryFirstRow", "Reports", `$A$${first}`);
+    void first;
     w.addRow([]);
     const n = w.addRow(["Files produced from this workbook are listed below; click a row and 'Open selected file' to open it again."]);
     n.font = { italic: true, size: 9, color: { argb: XL.muted } };
@@ -1016,6 +1020,7 @@ function reportsSheet(wb: ExcelJS.Workbook, shapes: XlsxShape[], names: Names) {
   };
   tableSheet(wb, LIBRARY, [], { subtitle: "Every report produced from this workbook, newest first", before });
   const y1 = rowTop(ws, 5) + 4;
+  const y2 = rowTop(ws, 6) + 4;
   const btn = (label: string, macro: string, colors: readonly string[], x: number, y: number, w: number) => shapes.push(buttonAt(ws, `act:${macro}`, label, macro, colors, x, y, w, 26, 10));
   btn("▤  Cost report (PDF)", "LibPdf", GRAD.orange, 6, y1, 150);
   btn("▦  Excel copy", "LibExcel", GRAD.green, 162, y1, 120);
@@ -1023,6 +1028,11 @@ function reportsSheet(wb: ExcelJS.Workbook, shapes: XlsxShape[], names: Names) {
   btn("✎  Claim EAR (Word)", "CreateClaimEar", GRAD.purple, 414, y1, 150);
   btn("⧉  Open selected file", "OpenSelectedFile", GRAD.blue, 570, y1, 160);
   btn("▣  Reports folder", "OpenReportsFolder", GRAD.teal, 736, y1, 130);
+  btn("⬆  Replace from file", "LibReplace", GRAD.navy, 6, y2, 150);
+  btn("✎  Edit No / cut-off", "LibEdit", GRAD.blue, 162, y2, 150);
+  btn("✕  Delete report", "LibDelete", GRAD.red, 318, y2, 130);
+  btn("◆  New month", "NewMonth", GRAD.teal, 454, y2, 120);
+  btn("↩  Back to current", "BackToCurrent", GRAD.purple, 580, y2, 140);
   ws.getColumn(1).width = 11;
   ws.getColumn(2).width = 34;
   ws.getColumn(3).width = 12;

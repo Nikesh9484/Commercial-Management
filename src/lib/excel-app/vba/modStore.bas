@@ -121,3 +121,23 @@ skip:
     Next i
     FillTable store, out, k
 End Sub
+
+' Moves everything stored under one report number to another.
+Public Sub Renumber(ByVal oldNo As Long, ByVal newNo As Long)
+    Dim n As Variant
+    For Each n In StoreNames()
+        RenumberIn TableOf(CStr(n) & "Store"), oldNo, newNo
+    Next n
+    RenumberIn TableOf("tblSnapshots"), oldNo, newNo
+    RenumberIn TableOf("tblLibrary"), oldNo, newNo
+End Sub
+
+Private Sub RenumberIn(ByVal store As ListObject, ByVal oldNo As Long, ByVal newNo As Long)
+    Dim i As Long, n As Long, col As Range
+    n = RowCountOf(store)
+    If n = 0 Then Exit Sub
+    Set col = store.ListColumns(1).DataBodyRange
+    For i = 1 To n
+        If CLng(Val(CStr(Nz(col.Cells(i, 1).Value, 0)))) = oldNo Then col.Cells(i, 1).Value = newNo
+    Next i
+End Sub

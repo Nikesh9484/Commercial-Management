@@ -153,6 +153,15 @@ End Function
 
 ' ---- the monthly report --------------------------------------------------------------------
 
+Private presetReportNo As Long
+
+' Library: re-import (replace) the selected report from its file.
+Public Sub ImportMonthlyReportFor(ByVal rn As Long)
+    presetReportNo = rn
+    ImportMonthlyReport
+    presetReportNo = 0
+End Sub
+
 Public Sub ImportMonthlyReport()
     If Not RequireEditor() Then Exit Sub
     Dim path As String, wb As Workbook
@@ -197,6 +206,7 @@ Public Sub ImportMonthlyReport()
     Busy False
     Dim cur As Long, msg As String
     cur = CurrentReportNo()
+    If presetReportNo > 0 Then reportNo = presetReportNo
     s = InputBox("Report number for this import" & vbLf & "(the file says " & IIf(reportNo > 0, "No " & reportNo, "nothing") & "; the current report is No " & cur & ")", APP_TITLE, CStr(IIf(reportNo > 0, reportNo, cur + 1)))
     If Len(s) = 0 Then GoTo closeQuiet
     reportNo = CLng(Val(s))

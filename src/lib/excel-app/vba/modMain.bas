@@ -19,12 +19,12 @@ Public Sub AppStart()
     Dim trace As String
     Application.EnableEvents = True
     Err.Clear
+    ShowLoginOnly
+    Note trace, "show the Login sheet"
     SetNamed "SignedInUser", ""
     SetNamed "SignedInEmail", ""
     SetNamed "SignedInRole", ""
     Note trace, "reset the signed-in user"
-    ShowLoginOnly
-    Note trace, "show the Login sheet"
     If CLng(Nz(NamedValue("ViewReportNo"), 0)) <> CLng(Nz(NamedValue("CurrentReportNo"), 0)) Then
         modStore.LoadLive CLng(Nz(NamedValue("CurrentReportNo"), 0))
         SetNamed "ViewReportNo", CLng(Nz(NamedValue("CurrentReportNo"), 0))

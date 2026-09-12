@@ -265,6 +265,13 @@ Public Sub DeleteReport()
         End If
     End If
     If rn = 0 Then rn = CLng(Val(InputBox("Which report number do you want to delete?", APP_TITLE)))
+    DeleteReportNo rn
+End Sub
+
+Public Sub DeleteReportNo(ByVal rn As Long)
+    If Not RequireEditor() Then Exit Sub
+    Dim lo As ListObject, cur As Long, newCur As Long, i As Long, n As Long, v As Long
+    Set lo = TableOf("tblPeriods")
     If rn <= 0 Then Exit Sub
     If PeriodRow(rn) = 0 Then
         MsgBox "There is no Report No " & rn & ".", vbExclamation, APP_TITLE
@@ -303,4 +310,56 @@ Public Sub DeleteReport()
 fail:
     Busy False
     MsgBox "Could not delete the report: " & Err.Description, vbExclamation, APP_TITLE
+End Sub
+
+' Library: change the number and/or cut-off date of a report; everything stored follows the new number.
+Public Sub EditReport(ByVal rn As Long)
+    If Not RequireEditor() Then Exit Sub
+    Dim lo As ListObject, r As Long, s As String, newNo As Long, newEnd As Date, oldEnd As Variant
+    Set lo = TableOf("tblPeriods")
+    r = PeriodRow(rn)
+    If r = 0 Then
+        MsgBox "There is no Report No " & rn & ".", vbExclamation, APP_TITLE
+        Exit Sub
+    End If
+    s = InputBox("Report number (currently " & rn & "):", APP_TITLE, CStr(rn))
+    If Len(s) = 0 Then Exit Sub
+    newNo = CLng(Val(s))
+    If newNo <= 0 Then Exit Sub
+    If newNo <> rn And PeriodRow(newNo) > 0 Then
+        MsgBox "Report No " & newNo & " already exists.", vbExclamation, APP_TITLE
+        Exit Sub
+    End If
+    oldEnd = lo.DataBodyRange.Cells(r, ColIndex(lo, "Period end")).Value
+    If IsDate(oldEnd) Then newEnd = CDate(oldEnd) Else newEnd = MonthEnd(Date)
+    s = InputBox("Cut-off date (period end) of Report No " & newNo & ":", APP_TITLE, Format$(newEnd, "yyyy-mm-dd"))
+    If Len(s) = 0 Then Exit Sub
+    If Not IsDate(s) Then
+        MsgBox "That is not a date.", vbExclamation, APP_TITLE
+        Exit Sub
+    End If
+    newEnd = CDate(s)
+    LeaveViewMode
+    modUndo.Checkpoint "Edit Report No " & rn
+    Busy True, "Updating Report No " & rn & "..."
+    On Error GoTo fail
+    lo.DataBodyRange.Cells(r, ColIndex(lo, "Report No")).Value = newNo
+    lo.DataBodyRange.Cells(r, ColIndex(lo, "Label")).Value = "Monthly Report No " & newNo & " - " & Format$(newEnd, "mmm'yy")
+    lo.DataBodyRange.Cells(r, ColIndex(lo, "Period start")).Value = DateSerial(Year(newEnd), Month(newEnd), 1)
+    lo.DataBodyRange.Cells(r, ColIndex(lo, "Period end")).Value = newEnd
+    If newNo <> rn Then
+        modStore.Renumber rn, newNo
+        If CurrentReportNo() = rn Then SetNamed "CurrentReportNo", newNo
+        SetNamed "ViewReportNo", CurrentReportNo()
+    End If
+    Busy False
+    Application.Calculate
+    SyncPicker
+    LogActivity "Report edited", "Report No " & rn & " -> No " & newNo & ", cut-off " & Format$(newEnd, "dd-mmm-yy")
+    modUndo.AutoSave
+    MsgBox "Report No " & newNo & " updated.", vbInformation, APP_TITLE
+    Exit Sub
+fail:
+    Busy False
+    MsgBox "Could not update the report: " & Err.Description, vbExclamation, APP_TITLE
 End Sub

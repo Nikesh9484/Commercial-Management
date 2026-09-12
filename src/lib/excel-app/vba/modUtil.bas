@@ -234,7 +234,16 @@ Public Function NamedValue(ByVal nm As String) As Variant
 End Function
 
 Public Sub SetNamed(ByVal nm As String, ByVal v As Variant)
-    ThisWorkbook.Names(nm).RefersToRange.Value = v
+    Dim rg As Range
+    Set rg = ThisWorkbook.Names(nm).RefersToRange
+    On Error Resume Next
+    ' a sheet saved while protected loses its "macros may edit" flag; re-protect it that way first
+    If rg.Worksheet.ProtectContents Then
+        rg.Worksheet.Unprotect "marina-dashboard"
+        rg.Worksheet.Protect Password:="marina-dashboard", UserInterfaceOnly:=True
+    End If
+    On Error GoTo 0
+    rg.Value = v
 End Sub
 
 ' ---- activity log ------------------------------------------------------------------------
