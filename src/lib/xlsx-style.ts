@@ -195,7 +195,7 @@ const DAYS_HEADERS = /^(days to expiry|days remaining|days open|days|dvo days re
  * Final pass for a sheet: zebra rows, thin borders and status colours on every registered table,
  * autofilter on the first table, frozen header, tab colour, print setup and a link back to the Index.
  */
-export function finishSheet(ws: ExcelJS.Worksheet, opts: { freezeCols?: number; tabIndex?: number; indexSheet?: string } = {}) {
+export function finishSheet(ws: ExcelJS.Worksheet, opts: { freezeCols?: number; tabIndex?: number; indexSheet?: string; freeze?: boolean } = {}) {
   const list = marks.get(ws) ?? [];
   list.sort((a, b) => a.headerRow - b.headerRow);
   list.forEach((m, i) => {
@@ -234,7 +234,7 @@ export function finishSheet(ws: ExcelJS.Worksheet, opts: { freezeCols?: number; 
   const first = list[0];
   if (first && first.filter && first.lastRow && first.lastRow > first.headerRow) {
     ws.autoFilter = { from: { row: first.headerRow, column: 1 }, to: { row: first.lastRow, column: ws.getRow(first.headerRow).cellCount } };
-    ws.views = [{ state: "frozen", xSplit: opts.freezeCols ?? 0, ySplit: first.headerRow, showGridLines: true }];
+    if (opts.freeze !== false) ws.views = [{ state: "frozen", xSplit: opts.freezeCols ?? 0, ySplit: first.headerRow, showGridLines: true }];
     ws.pageSetup = { ...(ws.pageSetup ?? {}), printTitlesRow: `${first.headerRow}:${first.headerRow}` };
   }
   ws.pageSetup = { ...(ws.pageSetup ?? {}), orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9, margins: { left: 0.4, right: 0.4, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 } };
@@ -243,7 +243,7 @@ export function finishSheet(ws: ExcelJS.Worksheet, opts: { freezeCols?: number; 
   if (opts.indexSheet && ws.name !== opts.indexSheet) {
     const cell = ws.getCell(1, Math.max(ws.columnCount, 2));
     if (!cell.value) {
-      cell.value = { text: "◀ Index", hyperlink: `#'${opts.indexSheet}'!A1` };
+      cell.value = { text: `◀ ${opts.indexSheet}`, hyperlink: `#'${opts.indexSheet}'!A1` };
       cell.font = { color: { argb: "FFBFDBFE" }, underline: true, size: 10 };
       cell.alignment = { horizontal: "right", vertical: "middle" };
     }
@@ -251,8 +251,8 @@ export function finishSheet(ws: ExcelJS.Worksheet, opts: { freezeCols?: number; 
 }
 
 /** Runs finishSheet on every worksheet of the workbook. */
-export function finishWorkbook(wb: ExcelJS.Workbook, opts: { indexSheet?: string; freeze?: Record<string, number> } = {}) {
-  wb.worksheets.forEach((ws, i) => finishSheet(ws, { tabIndex: i, indexSheet: opts.indexSheet, freezeCols: opts.freeze?.[ws.name] }));
+export function finishWorkbook(wb: ExcelJS.Workbook, opts: { indexSheet?: string; freeze?: Record<string, number>; noFreeze?: string[] } = {}) {
+  wb.worksheets.forEach((ws, i) => finishSheet(ws, { tabIndex: i, indexSheet: opts.indexSheet, freezeCols: opts.freeze?.[ws.name], freeze: !opts.noFreeze?.includes(ws.name) }));
   wb.creator = APP_NAME;
   wb.lastModifiedBy = APP_NAME;
   wb.created = new Date();

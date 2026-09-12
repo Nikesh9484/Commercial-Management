@@ -8,6 +8,7 @@ import { todayIso } from "@/lib/format";
 import { buildDeck } from "@/lib/report/deck";
 import { renderDeckPptx } from "@/lib/report/deck-pptx";
 import { renderDeckPdf } from "@/lib/report/deck-pdf";
+import { renderDashboardExcel } from "@/lib/report/dashboard-excel";
 
 const NAMES: Record<string, string> = {
   exec: "Executive_Summary",
@@ -19,6 +20,7 @@ const NAMES: Record<string, string> = {
   claims_report: "Claims_Status_Report",
   fa_report: "Final_Account_Status_Report",
   deck: "Cost_Report_Presentation",
+  dashboard: "Commercial_Dashboard",
 };
 
 /** GET /api/export?section=exec|movement|level1|level2|cashflow|<schedule letter>|<register>&format=pdf|xlsx[&period=ID] */
@@ -44,6 +46,11 @@ export async function GET(req: Request, ctx: unknown) {
       }
       const buffer = await renderDeckPdf(deck);
       return new Response(new Uint8Array(buffer), { headers: { "Content-Type": "application/pdf", "Content-Disposition": `attachment; filename="${base}_slides.pdf"` } });
+    }
+    if (sections.includes("dashboard")) {
+      // the whole dashboard as one workbook: tiles, native charts and one sheet per module
+      const buffer = await renderDashboardExcel(data, { url: `${url.origin}/`, label: "Open the dashboard" });
+      return new Response(new Uint8Array(buffer), { headers: { "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "Content-Disposition": `attachment; filename="${base}.xlsx"` } });
     }
     if (format === "xlsx") {
       const origin = url.origin;

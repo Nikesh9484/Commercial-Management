@@ -14,14 +14,14 @@ import { writeLevel1, writeLevel2, type Level2Ref } from "../cost-report/excel";
 const NAVY = XL.navy;
 
 /** Coloured table header (registers the table for zebra rows, borders and filters). */
-function header(row: ExcelJS.Row) {
+export function header(row: ExcelJS.Row) {
   return headerRow(row);
 }
 /** Bold total row. */
 function bold(row: ExcelJS.Row, fill = XL.totalFill) {
   return totalRow(row, fill);
 }
-function sub(d: ReportData) {
+export function sub(d: ReportData) {
   return `${d.programme.code} · ${d.programme.name}${d.asset ? ` · ${d.asset.code} ${d.asset.name}` : ""} · ${d.period.label}${d.locked ? "" : " · DRAFT (period not locked)"} · generated ${formatDateTime(d.generatedAt)} · all amounts SAR`;
 }
 const SHEET_A = "Sch A - Cost Report Level 1";
@@ -83,7 +83,7 @@ function addSchedule(wb: ExcelJS.Workbook, s: (typeof REPORT_SCHEDULES)[number],
   }
 }
 
-function movementSheet(wb: ExcelJS.Workbook, d: ReportData) {
+export function movementSheet(wb: ExcelJS.Workbook, d: ReportData) {
   const ws = wb.addWorksheet("Movement");
   [44, 22, 22, 22, 30, 30].forEach((w, i) => (ws.getColumn(i + 1).width = w));
   const m = d.movement;
@@ -157,7 +157,7 @@ function statusAndAgeing(ws: ExcelJS.Worksheet, m: NonNullable<ReportData["movem
   for (const b of m.dvoAgeing) ws.addRow([b.bucket, pair({ prev: b.prev, now: b.now })]);
 }
 
-function paymentTrackerBlock(ws: ExcelJS.Worksheet, d: ReportData) {
+export function paymentTrackerBlock(ws: ExcelJS.Worksheet, d: ReportData) {
   const m = d.movement;
   if (!m) return;
   ws.addRow([]);
@@ -177,7 +177,7 @@ function paymentTrackerBlock(ws: ExcelJS.Worksheet, d: ReportData) {
 }
 
 
-function claimsReportSheet(wb: ExcelJS.Workbook, d: ReportData) {
+export function claimsReportSheet(wb: ExcelJS.Workbook, d: ReportData) {
   const r = buildClaimsReport(d);
   const ws = wb.addWorksheet("Claims Status Report");
   [12, 30, 60, 14, 16, 16, 16, 10, 10, 34, 22, 8, 8].forEach((w, i) => (ws.getColumn(i + 1).width = w));
@@ -239,7 +239,7 @@ function claimsReportSheet(wb: ExcelJS.Workbook, d: ReportData) {
 }
 
 
-function faReportSheet(wb: ExcelJS.Workbook, d: ReportData) {
+export function faReportSheet(wb: ExcelJS.Workbook, d: ReportData) {
   const r = buildFaReport(d);
   const ws = wb.addWorksheet("Final Account Status Report");
   [12, 40, 30, 12, 18, 18, 16, 18, 14, 8, 14, 40].forEach((w, i) => (ws.getColumn(i + 1).width = w));
@@ -371,7 +371,7 @@ function indexSheet(wb: ExcelJS.Workbook, d: ReportData) {
   for (const t of d.team) ws.addRow([t.role, t.name, t.organisation]);
 }
 
-function momSheet(wb: ExcelJS.Workbook, d: ReportData) {
+export function momSheet(wb: ExcelJS.Workbook, d: ReportData) {
   const ws = wb.addWorksheet("MoM");
   [12, 22, 40, 40, 14, 12, 12, 16].forEach((w, i) => (ws.getColumn(i + 1).width = w));
   titleBlock(ws, "Minutes of Meeting", sub(d), 8);
@@ -429,7 +429,14 @@ function execSheet(wb: ExcelJS.Workbook, d: ReportData) {
   for (const a of dash.actions) ws.addRow([a.item_no, a.topic, a.action, a.owner, a.due_date ? toDate(String(a.due_date)) : "", a.status]);
 }
 
-function cashflowSheet(ws: ExcelJS.Worksheet, d: ReportData) {
+export interface CashflowRef {
+  /** row with the monthly totals */
+  totalRow: number;
+  /** column number of the first month's Forecast cell; each month takes three columns (forecast, actual, difference) */
+  firstMonthCol: number;
+}
+
+export function cashflowSheet(ws: ExcelJS.Worksheet, d: ReportData): CashflowRef {
   const cf = d.cashflow;
   const text = ["Transaction No", "Supplier", "Line Description", "Coding", "CBS", "Programme"];
   const nCols = text.length + (cf.months.length + 1) * 3;
@@ -442,6 +449,7 @@ function cashflowSheet(ws: ExcelJS.Worksheet, d: ReportData) {
   const totals = [...cf.months.flatMap((m) => [cf.monthTotals[m.key].forecast, cf.monthTotals[m.key].actual, cf.monthTotals[m.key].difference]), cf.grand.forecast, cf.grand.actual, cf.grand.difference];
   totals.forEach((v, i) => (tot.getCell(text.length + i + 1).value = last >= first ? sumFormula(text.length + i + 1, first, last, v) : v));
   bold(tot);
+  const cfRef: CashflowRef = { totalRow: tot.number, firstMonthCol: text.length + 1 };
   [16, 22, 30, 12, 12, 12].forEach((w, i) => (ws.getColumn(i + 1).width = w));
   for (let i = text.length + 1; i <= text.length + (cf.months.length + 1) * 3; i++) {
     ws.getColumn(i).width = 15;
@@ -456,9 +464,10 @@ function cashflowSheet(ws: ExcelJS.Worksheet, d: ReportData) {
   const at = ws.addRow(["Total"]);
   [3, 4, 5].forEach((i) => (at.getCell(i).value = al >= af ? sumFormula(i, af, al, i === 5 ? cf.accruals.totalAccrued : undefined) : 0));
   bold(at);
+  return cfRef;
 }
 
-function registerBlock(ws: ExcelJS.Worksheet, def: RegisterDef, rows: RecordRow[], source: string) {
+export function registerBlock(ws: ExcelJS.Worksheet, def: RegisterDef, rows: RecordRow[], source: string): RegisterRef {
   const fields = def.fields.filter((f) => f.type !== "password");
   sectionRow(ws, `${def.title} (${rows.length}) · source: ${source}`, Math.min(fields.length, 10), XL.navyLight);
   header(ws.addRow(fields.map((f) => f.label)));
@@ -480,6 +489,16 @@ function registerBlock(ws: ExcelJS.Worksheet, def: RegisterDef, rows: RecordRow[
     if (f.type === "date") col.numFmt = "DD-MMM-YY";
   });
   ws.addRow([]);
+  const cols: Record<string, number> = {};
+  fields.forEach((f, i) => (cols[f.key] = i + 1));
+  return { first, last, cols };
+}
+
+/** Where a register block landed: data rows and the column number of each field. */
+export interface RegisterRef {
+  first: number;
+  last: number;
+  cols: Record<string, number>;
 }
 
 function cell(f: FieldDef, r: RecordRow): unknown {

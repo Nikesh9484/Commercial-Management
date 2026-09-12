@@ -1,4 +1,4 @@
-import { Presentation, FileDown } from "lucide-react";
+import { Presentation, FileDown, FileSpreadsheet } from "lucide-react";
 
 /** "PowerPoint / PDF slides" – the monthly cost report as a short, animated, fully editable presentation (see /api/export?section=deck). */
 export function DeckButtons({ size = "sm", periodId }: { size?: "sm" | "md"; periodId?: number }) {
@@ -11,6 +11,9 @@ export function DeckButtons({ size = "sm", periodId }: { size?: "sm" | "md"; per
       </a>
       <a className={`${cls} btn-pdf`} href={`/api/export?section=deck&format=pdf${pid}`} title="The same presentation as a PDF (16:9 slides)">
         <FileDown size={14} /> PDF slides
+      </a>
+      <a className={`${cls} btn-excel`} href={`/api/export?section=dashboard&format=xlsx${pid}`} title="The whole dashboard as one Excel workbook: headline tiles, native charts and one sheet per module, with live formulas">
+        <FileSpreadsheet size={14} /> Excel dashboard
       </a>
     </span>
   );

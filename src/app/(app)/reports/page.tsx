@@ -23,7 +23,8 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
     {
       heading: "Summaries",
       items: [
-        item("deck", "Cost Report Presentation", "14 slides: executive dashboard, Level 1, packages, movement, changes, early warnings, claims, payments, cash flow, bonds, provisional sums, key issues – editable PowerPoint or PDF"),
+        item("dashboard", "Commercial Dashboard (Excel)", "The whole dashboard in one workbook: headline tiles, native Excel charts and one sheet per module with live formulas over the registers"),
+        item("deck", "Cost Report Presentation", "Short animated deck: executive dashboard, Level 1, packages, movement, changes, early warnings, claims, payments, cash flow, bonds, provisional sums, key issues – editable PowerPoint or PDF"),
         item("exec", "Executive Summary", "Headline figures, open items, payment tracker, key issues and actions"),
         item("movement", "Movement since the previous report", "Cost report movement, key period movements, status counts, register changes"),
         item("claims_report", "Claims Status Report", "Executive claims report with narrative"),
@@ -90,7 +91,11 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
                       <div className="text-xs text-muted">{it.note}</div>
                     </div>
                     <span className="inline-flex gap-1.5">
-                      {it.section === "deck" ? (
+                      {it.section === "dashboard" ? (
+                        <a className="btn btn-sm btn-excel" href={`/api/export?section=dashboard&format=xlsx${pid}`}>
+                          <FileSpreadsheet size={14} /> Excel workbook
+                        </a>
+                      ) : it.section === "deck" ? (
                         <>
                           <a className="btn btn-sm btn-ppt" href={`/api/export?section=deck&format=pptx${pid}`}>
                             <Presentation size={14} /> PowerPoint

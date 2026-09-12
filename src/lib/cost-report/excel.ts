@@ -111,7 +111,18 @@ export function writeLevel2(ws: ExcelJS.Worksheet, report: CostReport, title: st
  * Committed, Anticipated Final Account, Variance …) are formulas of the rows above, so the sheet keeps
  * adding up when Level 2 is edited.
  */
-export function writeLevel1(ws: ExcelJS.Worksheet, report: CostReport, m: Level1Matrix, title: string, subtitle: string, l2?: Level2Ref) {
+export interface Level1Ref {
+  sheet: string;
+  /** row number of each report line by key (E, F, G, awards, H, committed, J, K, L, M, uncommitted, N, O, P, Q …) */
+  rows: Map<string, number>;
+  /** column number of the Total column */
+  totalCol: number;
+  /** header row (category labels run from column 2 to 1 + columns) */
+  headerRow: number;
+  columns: number;
+}
+
+export function writeLevel1(ws: ExcelJS.Worksheet, report: CostReport, m: Level1Matrix, title: string, subtitle: string, l2?: Level2Ref): Level1Ref {
   const nCols = m.columns.length;
   const TOTAL = 2 + nCols; // column number of the Total column
   const PREV = TOTAL + 1;
@@ -193,4 +204,5 @@ export function writeLevel1(ws: ExcelJS.Worksheet, report: CostReport, m: Level1
   ws.getColumn(4).width = Math.max(ws.getColumn(4).width ?? 20, 20);
   const note = ws.addRow([l2 ? `Category figures are SUMIFS formulas over the '${l2.sheet}' sheet (cost category, asset, budget hold, section); Development Budget, Committed, Anticipated Final Account and the variances are formulas of the rows above. Previous-report figures are values from the issued report.` : "Values as computed by the dashboard; the Previous and Movement columns compare with the previous issued report."]);
   note.font = { italic: true, color: { argb: XL.muted }, size: 9 };
+  return { sheet: ws.name, rows: rowNo, totalCol: TOTAL, headerRow: hdr.number, columns: nCols };
 }
