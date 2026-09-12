@@ -85,7 +85,7 @@ Private Sub Animate(ByVal shp As Object)
     End With
 End Sub
 
-Private Sub AddTile(ByVal sld As Object, ByVal i As Long, ByVal count As Long, ByVal label As String, ByVal value As String, ByVal sub As String, ByVal color As String)
+Private Sub AddTile(ByVal sld As Object, ByVal i As Long, ByVal count As Long, ByVal label As String, ByVal value As String, ByVal subText As String, ByVal color As String)
     Dim gap As Single, w As Single, x As Single, shp As Object
     gap = 10
     w = (SLIDE_W - 64 - gap * (count - 1)) / count
@@ -97,7 +97,7 @@ Private Sub AddTile(ByVal sld As Object, ByVal i As Long, ByVal count As Long, B
     Animate shp
     AddText sld, UCase$(label), x + 6, 94, w - 12, 16, 7, True, "E4ECF6", True
     AddText sld, value, x + 6, 112, w - 12, 32, IIf(Len(value) > 14, 14, 18), True, "FFFFFF", True
-    If Len(sub) > 0 Then AddText sld, sub, x + 6, 146, w - 12, 16, 7, False, "E4ECF6", True
+    If Len(subText) > 0 Then AddText sld, subText, x + 6, 146, w - 12, 16, 7, False, "E4ECF6", True
 End Sub
 
 Private Sub AddSectionTitle(ByVal sld As Object, ByVal text As String, ByVal x As Single, ByVal y As Single, ByVal w As Single)
