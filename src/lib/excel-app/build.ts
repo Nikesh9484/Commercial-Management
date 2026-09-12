@@ -31,10 +31,10 @@ const MONEY = "#,##0.00;[Red](#,##0.00)";
 const WHOLE = "#,##0;[Red](#,##0)";
 const DATE = "DD-MMM-YY";
 const CATEGORIES = LISTS.Category;
-const SHEETS_ORDER = ["Login", "Home", "Registers", "Imports", "Periods", "Reports", "Level 1", "Level 2", "Movement", "Changes", "Claims", "Early Warnings", "Risks", "Provisional Sums", "Bonds", "Contracts", "IPCs", "Final Accounts", "Cash Flow", "Transfers", "Actions", "Setup", "Snapshots", "Users", "Activity", "Lists", "ChartData", ...REGISTER_TABLES.filter((t) => t.register !== "cost_lines" && t.register !== "reporting_periods").map((t) => `${t.sheet} store`)];
+const SHEETS_ORDER = ["Login", "Home", "Registers", "Imports", "Periods", "Reports", "Level 1", "Level 2", "Movement", "Changes", "Claims", "Early Warnings", "Risks", "Provisional Sums", "Bonds", "Contracts", "IPCs", "Final Accounts", "Cash Flow", "Transfers", "Actions", "Setup", "Snapshots", "Users", "Activity", "Lists", "ChartData", "Undo", ...REGISTER_TABLES.filter((t) => t.register !== "cost_lines" && t.register !== "reporting_periods").map((t) => `${t.sheet} store`)];
 const REGISTER_SHEETS = ["Changes", "Claims", "Early Warnings", "Risks", "Provisional Sums", "Bonds", "Contracts", "IPCs", "Final Accounts", "Cash Flow", "Transfers", "Actions"];
 /** The navigation bar shown on every page once signed in: label, macro (wired by the workbook from the shape name "nav:<macro>"). */
-const NAV: [string, string][] = [["Home", "NavHome"], ["Level 1", "NavLevel1"], ["Level 2", "NavLevel2"], ["Movement", "NavMovement"], ["Registers", "NavRegisters"], ["Imports", "NavImports"], ["Periods", "NavPeriods"], ["Reports", "NavReports"], ["Setup", "NavSetup"], ["Users", "NavUsers"], ["Sign out", "SignOut"]];
+const NAV: [string, string][] = [["Home", "NavHome"], ["Level 1", "NavLevel1"], ["Level 2", "NavLevel2"], ["Movement", "NavMovement"], ["Registers", "NavRegisters"], ["Imports", "NavImports"], ["Periods", "NavPeriods"], ["Reports", "NavReports"], ["Setup", "NavSetup"], ["Users", "NavUsers"], ["Undo entry", "UndoEntry"], ["Undo step", "UndoStep"], ["Sign out", "SignOut"]];
 /** Functions newer than Excel 2013 must carry the _xlfn. prefix in the file, or Excel shows #NAME? until the cell is re-entered. */
 export function prefixNewFunctions(xml: string): string {
   return xml.replace(/<f>([^<]*)<\/f>/g, (m, f: string) => `<f>${f.replace(/(?<![\w.])(MAXIFS|MINIFS|IFS|TEXTJOIN|CONCAT|SWITCH|XLOOKUP|XMATCH|FILTER|UNIQUE|SORT|SORTBY|SEQUENCE|LET)\(/g, "_xlfn.$1(")}</f>`);
@@ -129,7 +129,7 @@ function navBar(ws: ExcelJS.Worksheet, shapes: XlsxShape[], current: string) {
   for (const [label, macro] of NAV) {
     const w = label.length <= 6 ? 54 : label.length <= 8 ? 66 : 74;
     const active = label === current;
-    shapes.push(buttonAt(ws, `nav:${macro}`, label, macro, active ? GRAD.gold : label === "Sign out" ? GRAD.red : GRAD.bandLight, x, 34, w, 22, 9));
+    shapes.push(buttonAt(ws, `nav:${macro}`, label, macro, active ? GRAD.gold : label === "Sign out" ? GRAD.red : label.startsWith("Undo") ? GRAD.purple : GRAD.bandLight, x, 34, w, 22, 9));
     x += w + 4;
   }
 }
@@ -511,6 +511,8 @@ function setupSheet(wb: ExcelJS.Workbook, names: Names, seed: Seed) {
   side(15, "Label", { formula: `IFERROR(INDEX(tblPeriods[Label],MATCH(ViewReportNo,tblPeriods[Report No],0)),"Report No "&ViewReportNo)`, result: undefined }, "ViewPeriodLabel");
   side(16, "Cut-off date", { formula: `IFERROR(INDEX(tblPeriods[Period end],MATCH(ViewReportNo,tblPeriods[Report No],0)),"")`, result: undefined }, "ViewPeriodEnd", DATE);
   side(17, "Status", { formula: `IF(ViewReportNo=CurrentReportNo,"Current (live)","Issued copy – read only")`, result: undefined }, "ViewMode");
+  names.add("RestoreTarget", "Setup", "$E$32");
+  names.add("RestoreSource", "Setup", "$E$33");
   const note = ws.getCell(30, 1);
   note.value = "Change the programme, asset, client and location here. The report number moves on with 'New month' or when a later monthly report is imported.";
   note.font = { italic: true, size: 9, color: { argb: XL.muted } };
@@ -876,6 +878,16 @@ function storeSheet(wb: ExcelJS.Workbook, spec: TableSpec, rows: ExcelJS.CellVal
   });
 }
 
+/** Undo: the hidden log of the copies kept before each step. */
+function undoSheet(wb: ExcelJS.Workbook) {
+  const ws = sheet(wb, "Undo");
+  ws.getCell("A1").value = "Copies kept before each step (hidden; written by the workbook)";
+  ws.getCell("A1").font = { bold: true, color: { argb: XL.navy } };
+  ws.addTable({ name: "tblUndo", ref: "A3", headerRow: true, totalsRow: false, style: { theme: "TableStyleLight9", showRowStripes: true }, columns: ["Step", "Action", "When", "By", "File"].map((h) => ({ name: h, filterButton: false })), rows: [[null, null, null, null, null]] });
+  [8, 36, 18, 22, 90].forEach((w, i) => (ws.getColumn(i + 1).width = w));
+  ws.getColumn(3).numFmt = "dd-mmm-yy hh:mm";
+}
+
 /** Registers: the menu page with a tile per register, as on the website. */
 function registersSheet(wb: ExcelJS.Workbook, shapes: XlsxShape[]) {
   const ws = sheet(wb, "Registers");
@@ -1046,6 +1058,7 @@ export async function renderExcelEdition(programmeId: number): Promise<Buffer> {
   tableSheet(wb, LEVEL2, costLines.map((r) => LEVEL2.cols.map((c) => cellValue(c, r, seed))), { subtitle, before: (ws) => ws.addRow(["Money columns F to S are formulas over the other sheets (transfers, changes, early warnings, claims, contracts, stored copies). Enter E and Opening transfers; everything else calculates."]).font = { italic: true, size: 9, color: { argb: XL.muted } } });
   movementSheet(wb, names, l1, Math.max(1, costLines.length));
   registersSheet(wb, shapes.Registers);
+  undoSheet(wb);
   importsSheet(wb, shapes.Imports);
   reportsSheet(wb, shapes.Reports, names);
   // registers
@@ -1086,7 +1099,7 @@ export async function renderExcelEdition(programmeId: number): Promise<Buffer> {
   homeSheet(wb, names, seed, charts, shapes.Home, l1);
   // the navigation bar on every page except Login
   for (const n of SHEETS_ORDER) {
-    if (n === "Login" || n === "ChartData" || n.endsWith(" store")) continue;
+    if (n === "Login" || n === "ChartData" || n === "Undo" || n.endsWith(" store")) continue;
     const ws = wb.getWorksheet(n)!;
     shapes[n] = shapes[n] ?? [];
     navBar(ws, shapes[n], n === "Home" ? "Home" : REGISTER_SHEETS.includes(n) ? "Registers" : n);
@@ -1119,9 +1132,9 @@ async function toMacroWorkbook(xlsx: Buffer, sheets: string[]): Promise<Buffer> 
   const dir = vbaDir();
   const modules: VbaModule[] = [
     { name: "ThisWorkbook", type: "document", code: "Option Explicit\r\n\r\nPrivate Sub Workbook_Open()\r\n    modMain.AppStart\r\nEnd Sub\r\n\r\nPrivate Sub Workbook_BeforeClose(Cancel As Boolean)\r\n    On Error Resume Next\r\n    modNav.LeaveViewMode\r\nEnd Sub\r\n" },
-    ...sheets.map((s) => ({ name: codeName(s), type: "document" as const, code: s === "Home" ? "Option Explicit\r\n\r\nPrivate Sub Worksheet_Change(ByVal Target As Range)\r\n    On Error Resume Next\r\n    If Not Intersect(Target, Me.Range(\"ViewPicker\")) Is Nothing Then modNav.PickerChanged\r\nEnd Sub\r\n" : "Option Explicit\r\n" })),
+    ...sheets.map((s) => ({ name: codeName(s), type: "document" as const, code: s === "Home" ? "Option Explicit\r\n\r\nPrivate Sub Worksheet_Change(ByVal Target As Range)\r\n    On Error Resume Next\r\n    If Not Intersect(Target, Me.Range(\"ViewPicker\")) Is Nothing Then modNav.PickerChanged Else modUndo.EntryChanged\r\nEnd Sub\r\n" : s === "Login" || s === "ChartData" || s === "Undo" || s.endsWith(" store") ? "Option Explicit\r\n" : "Option Explicit\r\n\r\nPrivate Sub Worksheet_Change(ByVal Target As Range)\r\n    On Error Resume Next\r\n    modUndo.EntryChanged\r\nEnd Sub\r\n" })),
     { name: "Dict", type: "class" as const, code: fs.readFileSync(path.join(dir, "Dict.cls"), "utf8") },
-    ...["modUtil", "modJson", "modAuth", "modMain", "modNav", "modStore", "modPeriods", "modImport", "modImportGeneric", "modReports", "modPresentation", "modEar"].map((m) => ({ name: m, type: "standard" as const, code: fs.readFileSync(path.join(dir, `${m}.bas`), "utf8") })),
+    ...["modUtil", "modJson", "modAuth", "modMain", "modNav", "modStore", "modUndo", "modPeriods", "modImport", "modImportGeneric", "modReports", "modPresentation", "modEar"].map((m) => ({ name: m, type: "standard" as const, code: fs.readFileSync(path.join(dir, `${m}.bas`), "utf8") })),
   ];
   return packageMacroWorkbook(xlsx, modules, "CommercialDashboard");
 }
@@ -1164,7 +1177,7 @@ export async function packageMacroWorkbook(xlsx: Buffer, modules: VbaModule[], p
 export async function excelEditionModulesZip(): Promise<Buffer> {
   const dir = vbaDir();
   const zip = new JSZip();
-  for (const m of ["modUtil", "modJson", "modAuth", "modMain", "modNav", "modStore", "modPeriods", "modImport", "modImportGeneric", "modReports", "modPresentation", "modEar"]) zip.file(`${m}.bas`, `Attribute VB_Name = "${m}"\r\n` + fs.readFileSync(path.join(dir, `${m}.bas`), "utf8").replace(/\r?\n/g, "\r\n"));
+  for (const m of ["modUtil", "modJson", "modAuth", "modMain", "modNav", "modStore", "modUndo", "modPeriods", "modImport", "modImportGeneric", "modReports", "modPresentation", "modEar"]) zip.file(`${m}.bas`, `Attribute VB_Name = "${m}"\r\n` + fs.readFileSync(path.join(dir, `${m}.bas`), "utf8").replace(/\r?\n/g, "\r\n"));
   zip.file("Dict.cls", `VERSION 1.0 CLASS\r\nBEGIN\r\n  MultiUse = -1  'True\r\nEND\r\nAttribute VB_Name = "Dict"\r\nAttribute VB_GlobalNameSpace = False\r\nAttribute VB_Creatable = False\r\nAttribute VB_PredeclaredId = False\r\nAttribute VB_Exposed = False\r\n` + fs.readFileSync(path.join(dir, "Dict.cls"), "utf8").replace(/\r?\n/g, "\r\n"));
   zip.file("ThisWorkbook.txt", "Option Explicit\r\n\r\nPrivate Sub Workbook_Open()\r\n    modMain.AppStart\r\nEnd Sub\r\n");
   zip.file(

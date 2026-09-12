@@ -95,6 +95,14 @@ Public Sub NavSetup()
     GoSheet "Setup"
 End Sub
 
+Public Sub UndoStep()
+    modUndo.UndoStep
+End Sub
+
+Public Sub UndoEntry()
+    modUndo.UndoEntry
+End Sub
+
 Public Sub NavUsers()
     GoSheet "Users"
 End Sub
@@ -216,6 +224,7 @@ Public Sub ShowPeriod(ByVal rn As Long, Optional ByVal quiet As Boolean = False)
     modMain.ApplyRole
     Application.Calculate
     SyncPicker
+    modUndo.AutoSave
     If quiet Then Exit Sub
     If rn = cur Then
         MsgBox "Showing the current report (live data).", vbInformation, APP_TITLE
@@ -273,6 +282,7 @@ Public Sub DeleteReport()
     End If
     If MsgBox("Delete Report No " & rn & " and everything stored for it (cost report, registers, library entries)? This cannot be undone." & IIf(rn = cur, vbLf & vbLf & "It is the current report: Report No " & newCur & " becomes current.", ""), vbYesNo + vbExclamation, APP_TITLE) <> vbYes Then Exit Sub
     LeaveViewMode
+    modUndo.Checkpoint "Delete Report No " & rn
     Busy True, "Deleting Report No " & rn & "..."
     On Error GoTo fail
     modStore.DeleteStored rn
@@ -287,6 +297,7 @@ Public Sub DeleteReport()
     Application.Calculate
     SyncPicker
     LogActivity "Report deleted", "Report No " & rn
+    modUndo.AutoSave
     MsgBox "Report No " & rn & " deleted.", vbInformation, APP_TITLE
     Exit Sub
 fail:

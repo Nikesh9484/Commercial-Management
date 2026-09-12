@@ -70,6 +70,7 @@ Public Sub LockCurrentPeriod()
         Exit Sub
     End If
     If MsgBox("Lock Report No " & CurrentReportNo() & "? Its cost report is stored as the issued copy and becomes the 'previous report' for the next month's movement.", vbOKCancel + vbQuestion, APP_TITLE) <> vbOK Then Exit Sub
+    modUndo.Checkpoint "Lock Report No " & CurrentReportNo()
     Busy True, "Locking..."
     modStore.SaveLive CurrentReportNo()
     lo.DataBodyRange.Cells(r, ColIndex(lo, "Status")).Value = "Locked"
@@ -77,6 +78,7 @@ Public Sub LockCurrentPeriod()
     lo.DataBodyRange.Cells(r, ColIndex(lo, "Locked by")).Value = CStr(NamedValue("SignedInUser"))
     Busy False
     LogActivity "Period locked", "Report No " & CurrentReportNo()
+    modUndo.AutoSave
     MsgBox "Report No " & CurrentReportNo() & " is locked. Use 'New month' to start the next report.", vbInformation, APP_TITLE
 End Sub
 
@@ -88,8 +90,10 @@ Public Sub UnlockCurrentPeriod()
     r = PeriodRow(CurrentReportNo())
     If r = 0 Then Exit Sub
     If MsgBox("Unlock Report No " & CurrentReportNo() & " so it can be changed again?", vbOKCancel + vbQuestion, APP_TITLE) <> vbOK Then Exit Sub
+    modUndo.Checkpoint "Unlock Report No " & CurrentReportNo()
     lo.DataBodyRange.Cells(r, ColIndex(lo, "Status")).Value = "Open"
     LogActivity "Period unlocked", "Report No " & CurrentReportNo()
+    modUndo.AutoSave
 End Sub
 
 ' Starts the next monthly report: the current report is stored (locked if it was still open), a new
@@ -123,6 +127,7 @@ Public Sub NewMonth()
     End If
     newEnd = CDate(s)
     If MsgBox("Start Report No " & newNo & " (cut-off " & Format$(newEnd, "dd-mmm-yy") & ")? Report No " & rn & " is stored as an issued report and the new report starts from its data.", vbOKCancel + vbQuestion, APP_TITLE) <> vbOK Then Exit Sub
+    modUndo.Checkpoint "New month (Report No " & newNo & ")"
     Busy True, "Starting the new month..."
     If r > 0 Then
         modStore.SaveLive rn
@@ -145,6 +150,7 @@ Public Sub NewMonth()
     Busy False
     Application.Calculate
     LogActivity "New month", "Report No " & newNo & " - cut-off " & Format$(newEnd, "dd-mmm-yy")
+    modUndo.AutoSave
     MsgBox "Report No " & newNo & " started. The movement columns now compare with Report No " & rn & ".", vbInformation, APP_TITLE
 End Sub
 

@@ -156,6 +156,7 @@ Private Function ImportInto(ByVal tableName As String, ByVal keyColumn As String
     Dim r As Long, key As String, existing As Long, lr As ListRow, col As Variant, v As Variant, n As Long, colType As String, colIdx As Long
     path = PickFile(title, "Excel workbooks", "*.xlsx;*.xlsm;*.xls")
     If Len(path) = 0 Then Exit Function
+    modUndo.Checkpoint "Import " & title
     Busy True, "Reading " & path & "..."
     On Error GoTo fail
     Set wb = Workbooks.Open(path, ReadOnly:=True, UpdateLinks:=0)
@@ -217,6 +218,7 @@ Private Function ImportInto(ByVal tableName As String, ByVal keyColumn As String
     ApplyAllFormulas
     Busy False
     LogActivity "Import - " & title, path & " - " & n & " rows from sheet '" & bestWs.Name & "'"
+    modUndo.AutoSave
     MsgBox n & " rows imported from sheet '" & bestWs.Name & "' of " & vbCrLf & path, vbInformation, APP_TITLE
     ImportInto = n
     Exit Function

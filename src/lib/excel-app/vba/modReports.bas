@@ -72,6 +72,7 @@ Public Sub AddToLibrary(ByVal kind As String, ByVal path As String)
     lr.Range.Cells(1, 3).Value = path
     lr.Range.Cells(1, 4).Value = Now
     lr.Range.Cells(1, 5).Value = CStr(NamedValue("SignedInUser"))
+    modUndo.AutoSave
 End Sub
 
 Private Function SelectedLibraryRow(ByRef lo As ListObject) As Long
@@ -110,7 +111,9 @@ Public Sub RemoveLibraryRow()
         Exit Sub
     End If
     If MsgBox("Remove this entry from the library? (The file itself is not deleted.)", vbQuestion + vbYesNo, APP_TITLE) <> vbYes Then Exit Sub
+    modUndo.Checkpoint "Remove library entry"
     lo.ListRows(r).Delete
+    modUndo.AutoSave
 End Sub
 
 Public Sub OpenReportsFolder()

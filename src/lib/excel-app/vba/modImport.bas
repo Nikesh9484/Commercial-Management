@@ -217,6 +217,7 @@ Public Sub ImportMonthlyReport()
     End If
     If MsgBox(msg, vbOKCancel + vbQuestion, APP_TITLE) <> vbOK Then GoTo closeQuiet
     modNav.EnsureCurrentView
+    modUndo.Checkpoint "Import monthly report No " & reportNo
     Busy True, "Importing Report No " & reportNo & "..."
     On Error GoTo fail
     If cur > 0 Then modStore.SaveLive cur
@@ -257,6 +258,7 @@ Public Sub ImportMonthlyReport()
     Busy False
     Application.Calculate
     LogActivity "Monthly report imported", "Report No " & reportNo & " from " & path
+    modUndo.AutoSave
     MsgBox "Report No " & reportNo & " imported and stored." & vbCrLf & vbCrLf & summary & IIf(reportNo < cur, vbCrLf & vbCrLf & "Choose it in the gold box on Home or on the Periods page to see it.", ""), vbInformation, APP_TITLE
     Exit Sub
 closeQuiet:
@@ -1015,6 +1017,7 @@ Public Sub ImportClaimsTracker()
     If Len(path) = 0 Then Exit Sub
     prog = NormCode(CStr(Nz(NamedValue("ProgrammeCode"))))
     asset = NormCode(CStr(Nz(NamedValue("AssetCode"))))
+    modUndo.Checkpoint "Import claims tracker"
     Busy True, "Reading the Claims Tracker..."
     On Error GoTo fail
     Set wb = Workbooks.Open(path, ReadOnly:=True, UpdateLinks:=0)
@@ -1131,6 +1134,7 @@ nextWs:
     Busy False
     Application.Calculate
     LogActivity "Claims Tracker imported", path & " - " & n & " of " & total & " claims"
+    modUndo.AutoSave
     MsgBox n & " claims imported (of " & total & " in the tracker" & IIf(IsEmpty(asOf), "", ", as of " & Format$(CDate(asOf), "dd-mmm-yy")) & "). Pending claims are not carried in column M; approved claims feed it through their determined amount.", vbInformation, APP_TITLE
     Exit Sub
 fail:

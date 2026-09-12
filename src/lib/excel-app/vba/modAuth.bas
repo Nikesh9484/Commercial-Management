@@ -145,6 +145,7 @@ End Function
 
 Public Sub ChangeMyPassword()
     If Not IsSignedIn() Then Exit Sub
+    modUndo.Checkpoint "Change my password"
     Dim lo As ListObject, r As Long, np As String
     Set lo = TableOf("tblUsers")
     r = FindRow(lo, "Email", CStr(NamedValue("SignedInEmail")))
@@ -155,10 +156,12 @@ Public Sub ChangeMyPassword()
     lo.DataBodyRange.Cells(r, ColIndex(lo, "Must change")).Value = "No"
     LogActivity "Password changed", CStr(NamedValue("SignedInEmail"))
     MsgBox "Your password has been changed.", vbInformation, APP_TITLE
+    modUndo.AutoSave
 End Sub
 
 Public Sub AdminSetPassword()
     If Not RequireAdmin() Then Exit Sub
+    modUndo.Checkpoint "Set a user's password"
     Dim lo As ListObject, r As Long, email As String, np As String
     Set lo = TableOf("tblUsers")
     email = InputBox("Email of the user whose password you want to set:", APP_TITLE)
@@ -176,10 +179,12 @@ Public Sub AdminSetPassword()
     If Len(CellText(lo, r, "Role")) = 0 Then lo.DataBodyRange.Cells(r, ColIndex(lo, "Role")).Value = "editor"
     LogActivity "Password set", email
     MsgBox "Password set for " & email & ".", vbInformation, APP_TITLE
+    modUndo.AutoSave
 End Sub
 
 Public Sub AdminAddUser()
     If Not RequireAdmin() Then Exit Sub
+    modUndo.Checkpoint "Add user"
     Dim lo As ListObject, nm As String, email As String, role As String, np As String, lr As ListRow
     Set lo = TableOf("tblUsers")
     nm = InputBox("Full name of the new user:", APP_TITLE)
@@ -203,4 +208,5 @@ Public Sub AdminAddUser()
     lr.Range.Cells(1, ColIndex(lo, "Must change")).Value = "Yes"
     LogActivity "User added", email & " (" & role & ")"
     MsgBox "User added. They sign in with " & email & " and the starting password, then choose their own.", vbInformation, APP_TITLE
+    modUndo.AutoSave
 End Sub
