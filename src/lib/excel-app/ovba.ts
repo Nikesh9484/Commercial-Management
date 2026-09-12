@@ -37,37 +37,53 @@ export function compressContainer(data: Buffer): Buffer {
 
 function compressChunk(chunk: Buffer): number[] {
   const out: number[] = [];
+  // positions of every 3-byte sequence seen so far (most recent first), so matches are found without a full scan
+  const seen = new Map<number, number[]>();
+  const key = (i: number) => (chunk[i] << 16) | (chunk[i + 1] << 8) | chunk[i + 2];
+  const remember = (i: number) => {
+    if (i + 2 >= chunk.length) return;
+    const k = key(i);
+    const list = seen.get(k);
+    if (list) {
+      list.unshift(i);
+      if (list.length > 64) list.length = 64;
+    } else seen.set(k, [i]);
+  };
   let pos = 0;
   while (pos < chunk.length) {
     const flagIndex = out.length;
     out.push(0);
     let flags = 0;
     for (let bit = 0; bit < 8 && pos < chunk.length; bit++) {
-      // copy-token geometry depends on the position within the chunk
+      // copy-token geometry depends on the position within the chunk (MS-OVBA 2.4.1.3.19.4)
       let bitCount = 4;
       while (1 << bitCount < pos) bitCount++;
       const lengthMask = 0xffff >> bitCount;
       const maxLength = lengthMask + 3;
-      const maxOffset = 1 << (16 - bitCount);
+      const maxOffset = 1 << bitCount;
       let bestLen = 0;
       let bestOff = 0;
-      const earliest = Math.max(0, pos - maxOffset);
-      for (let cand = pos - 1; cand >= earliest; cand--) {
-        let len = 0;
-        while (len < maxLength && pos + len < chunk.length && chunk[cand + len] === chunk[pos + len]) len++;
-        if (len > bestLen) {
-          bestLen = len;
-          bestOff = pos - cand;
-          if (len === maxLength) break;
+      if (pos + 2 < chunk.length) {
+        for (const cand of seen.get(key(pos)) ?? []) {
+          if (pos - cand > maxOffset) break;
+          let len = 0;
+          while (len < maxLength && pos + len < chunk.length && chunk[cand + len] === chunk[pos + len]) len++;
+          if (len > bestLen) {
+            bestLen = len;
+            bestOff = pos - cand;
+            if (len === maxLength) break;
+          }
         }
       }
       if (bestLen >= 3) {
         const token = ((bestOff - 1) << (16 - bitCount)) | (bestLen - 3);
         out.push(token & 0xff, token >> 8);
         flags |= 1 << bit;
+        for (let i = 0; i < bestLen; i++) remember(pos + i);
         pos += bestLen;
       } else {
         out.push(chunk[pos]);
+        remember(pos);
         pos++;
       }
     }
@@ -223,7 +239,7 @@ function projectWmStream(modules: VbaModule[]): Buffer {
 
 /* ------------------------------------------------------------------ the compound file */
 
-const DOC_BASE: Record<string, string> = { workbook: "0{00020819-0000-0000-C000-000000000046}", sheet: "0{00020820-0000-0000-C000-000000000046}" };
+const DOC_BASE: Record<string, string> = { workbook: "0{00020819-0000-0000-C000-000000000046}", sheet: "0{00020820-0000-0000-C000-000000000046}", class: "0{FCFB3D2A-A0FA-1068-A738-08002B3371B5}" };
 
 /** Source text of a module as VBA stores it: attribute lines first, CRLF line ends. */
 function moduleSource(m: VbaModule): string {
@@ -240,7 +256,16 @@ function moduleSource(m: VbaModule): string {
       "Attribute VB_Customizable = True",
     );
   } else if (m.type === "class") {
-    attrs.push("Attribute VB_GlobalNameSpace = False", "Attribute VB_Creatable = False", "Attribute VB_PredeclaredId = False", "Attribute VB_Exposed = False");
+    // as Excel stores a class module: the class base GUID and the full attribute set
+    attrs.push(
+      `Attribute VB_Base = "${DOC_BASE.class}"`,
+      "Attribute VB_GlobalNameSpace = False",
+      "Attribute VB_Creatable = False",
+      "Attribute VB_PredeclaredId = False",
+      "Attribute VB_Exposed = False",
+      "Attribute VB_TemplateDerived = False",
+      "Attribute VB_Customizable = False",
+    );
   }
   return attrs.join("\r\n") + "\r\n" + body + (body.endsWith("\r\n") ? "" : "\r\n");
 }
