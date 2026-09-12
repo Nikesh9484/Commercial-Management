@@ -6,9 +6,9 @@ Option Explicit
 Public Sub ExportPdf()
     If Not IsSignedIn() Then Exit Sub
     Dim names As Variant, path As String, base As String, i As Long, vis() As String, n As Long
-    names = Array("Home", "Level 1", "Level 2", "Movement", "Changes", "Claims", "Early Warnings", "Risks", "Provisional Sums", "Bonds", "Contracts", "Cash Flow", "Transfers", "Actions")
+    names = Array("Home", "Level 1", IIf(modNav.IsViewingPast(), "Level 2 (view)", "Level 2"), "Movement", "Changes", "Claims", "Early Warnings", "Risks", "Provisional Sums", "Bonds", "Contracts", "Cash Flow", "Transfers", "Actions")
     base = DefaultFolder()
-    path = SaveAsName(base & PathSep() & "Monthly Cost Report No " & CStr(NamedValue("CurrentReportNo")) & ".pdf", "PDF (*.pdf), *.pdf", "Save the report as PDF")
+    path = SaveAsName(base & PathSep() & "Cost Report No " & CStr(NamedValue("ViewReportNo")) & " - " & FileSafe(CStr(NamedValue("ViewPeriodLabel"))) & ".pdf", "PDF (*.pdf), *.pdf", "Save the report as PDF")
     If Len(path) = 0 Then Exit Sub
     ' only the sheets this role can see
     ReDim vis(0 To UBound(names))
@@ -30,6 +30,7 @@ Public Sub ExportPdf()
     ThisWorkbook.Worksheets("Home").Select
     Busy False
     LogActivity "PDF exported", path
+    AddToLibrary "Cost report (PDF)", path
     Exit Sub
 fail:
     Busy False
@@ -46,5 +47,74 @@ Public Sub SaveIssuedCopy()
     If Len(CStr(path)) = 0 Then Exit Sub
     ThisWorkbook.SaveCopyAs CStr(path)
     LogActivity "Issued copy saved", CStr(path)
+    AddToLibrary "Issued copy (Excel)", CStr(path)
     MsgBox "Issued copy saved:" & vbCrLf & path, vbInformation, APP_TITLE
+End Sub
+
+' ---- the report library (as the website's Reports & downloads page) -----------------------
+
+Public Function FileSafe(ByVal s As String) As String
+    Dim i As Long, ch As String
+    For i = 1 To Len(s)
+        ch = Mid$(s, i, 1)
+        If InStr("\/:*?""<>|'", ch) > 0 Then ch = "-"
+        FileSafe = FileSafe & ch
+    Next i
+End Function
+
+Public Sub AddToLibrary(ByVal kind As String, ByVal path As String)
+    On Error Resume Next
+    Dim lo As ListObject, lr As ListRow
+    Set lo = TableOf("tblLibrary")
+    Set lr = lo.ListRows.Add(1)
+    lr.Range.Cells(1, 1).Value = CLng(Nz(NamedValue("ViewReportNo"), 0))
+    lr.Range.Cells(1, 2).Value = kind
+    lr.Range.Cells(1, 3).Value = path
+    lr.Range.Cells(1, 4).Value = Now
+    lr.Range.Cells(1, 5).Value = CStr(NamedValue("SignedInUser"))
+End Sub
+
+Private Function SelectedLibraryRow(ByRef lo As ListObject) As Long
+    Set lo = TableOf("tblLibrary")
+    If lo.DataBodyRange Is Nothing Then Exit Function
+    If ActiveSheet.Name <> "Reports" Then Exit Function
+    If Intersect(ActiveCell, lo.DataBodyRange) Is Nothing Then Exit Function
+    SelectedLibraryRow = ActiveCell.Row - lo.DataBodyRange.Row + 1
+End Function
+
+Public Sub OpenSelectedFile()
+    If Not IsSignedIn() Then Exit Sub
+    Dim lo As ListObject, r As Long, p As String
+    r = SelectedLibraryRow(lo)
+    If r = 0 Then
+        MsgBox "Click a row of the report library first, then this button.", vbInformation, APP_TITLE
+        Exit Sub
+    End If
+    p = CStr(Nz(lo.DataBodyRange.Cells(r, 3).Value))
+    If Len(p) = 0 Then Exit Sub
+    If Len(Dir(p)) = 0 Then
+        MsgBox "The file is no longer where it was saved:" & vbCrLf & p, vbExclamation, APP_TITLE
+        Exit Sub
+    End If
+    On Error Resume Next
+    ThisWorkbook.FollowHyperlink p
+    If Err.Number <> 0 Then MsgBox "Could not open the file: " & Err.Description, vbExclamation, APP_TITLE
+End Sub
+
+Public Sub RemoveLibraryRow()
+    If Not RequireEditor() Then Exit Sub
+    Dim lo As ListObject, r As Long
+    r = SelectedLibraryRow(lo)
+    If r = 0 Then
+        MsgBox "Click a row of the report library first, then this button.", vbInformation, APP_TITLE
+        Exit Sub
+    End If
+    If MsgBox("Remove this entry from the library? (The file itself is not deleted.)", vbQuestion + vbYesNo, APP_TITLE) <> vbYes Then Exit Sub
+    lo.ListRows(r).Delete
+End Sub
+
+Public Sub OpenReportsFolder()
+    On Error Resume Next
+    ThisWorkbook.FollowHyperlink DefaultFolder()
+    If Err.Number <> 0 Then MsgBox "The reports are saved next to this workbook: " & DefaultFolder(), vbInformation, APP_TITLE
 End Sub

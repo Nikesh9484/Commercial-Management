@@ -287,6 +287,7 @@ Public Sub BuildPresentation()
     Application.DisplayAlerts = True
     Busy False
     LogActivity "Presentation built", CStr(path)
+    modReports.AddToLibrary "PowerPoint presentation", CStr(path)
     MsgBox "Presentation saved:" & vbCrLf & path & vbCrLf & "(and the same slides as a PDF next to it)", vbInformation, APP_TITLE
     Exit Sub
 fail:

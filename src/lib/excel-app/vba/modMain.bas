@@ -5,12 +5,12 @@ Option Explicit
 
 ' Sheets that need a signed-in user (everything except Login).
 Private Function AppSheets() As Variant
-    AppSheets = Array("Home", "Setup", "Periods", "Level 1", "Level 2", "Movement", "Changes", "Claims", "Early Warnings", "Risks", "Provisional Sums", "Bonds", "Contracts", "IPCs", "Final Accounts", "Cash Flow", "Transfers", "Actions", "Snapshots", "Users", "Activity", "Lists")
+    AppSheets = Array("Home", "Registers", "Reports", "Level 2 (view)", "Setup", "Periods", "Level 1", "Level 2", "Movement", "Changes", "Claims", "Early Warnings", "Risks", "Provisional Sums", "Bonds", "Contracts", "IPCs", "Final Accounts", "Cash Flow", "Transfers", "Actions", "Snapshots", "Users", "Activity", "Lists")
 End Function
 
 ' Sheets a reporter may open.
 Private Function ReporterSheets() As Variant
-    ReporterSheets = Array("Home", "Level 1", "Level 2", "Movement")
+    ReporterSheets = Array("Home", "Level 1", "Level 2", "Level 2 (view)", "Movement", "Periods", "Reports")
 End Function
 
 ' Runs when the workbook opens: everything hidden until someone signs in.
@@ -26,6 +26,7 @@ Public Sub AppStart()
     ShowLoginOnly
     Note trace, "show the Login sheet"
     FitLogin
+    modNav.HideTabs
     Note trace, "fit the Login sheet"
     If Len(trace) > 0 Then ThisWorkbook.Worksheets("Login").Range("LoginMessage").Value = "Start-up notes: " & trace
 End Sub
@@ -151,8 +152,7 @@ Public Sub SignIn()
     wsL.Range("LoginMessage").Value = ""
     ApplyRole
     EnsureButtons
-    ThisWorkbook.Worksheets("Home").Activate
-    ThisWorkbook.Worksheets("Home").Range("A1").Select
+    modNav.NavHome
     Exit Sub
 fail:
     msg = "Sign in stopped with error " & Err.Number & " in " & IIf(Len(Err.Source) > 0, Err.Source, "SignIn") & ": " & Err.Description
@@ -193,6 +193,9 @@ Public Sub ApplyRole()
 nextSheet:
     Next n
     ThisWorkbook.Worksheets("Login").Visible = xlSheetVisible
+    modNav.ApplyViewVisibility
+    modNav.WireNav
+    modNav.HideTabs
     Application.ScreenUpdating = True
 End Sub
 

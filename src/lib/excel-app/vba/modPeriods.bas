@@ -117,6 +117,8 @@ Public Sub NewMonth()
     lr.Range.Cells(1, ColIndex(lo, "Period end")).Value = newEnd
     lr.Range.Cells(1, ColIndex(lo, "Status")).Value = "Open"
     SetNamed "CurrentReportNo", rn + 1
+    SetNamed "ViewReportNo", rn + 1
+    modNav.ApplyViewVisibility
     Busy False
     LogActivity "New month", "Report No " & (rn + 1) & " – cut-off " & Format$(newEnd, "dd-mmm-yy")
     MsgBox "Report No " & (rn + 1) & " started. The movement columns now compare with Report No " & rn & ".", vbInformation, APP_TITLE
