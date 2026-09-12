@@ -16,13 +16,68 @@ End Function
 ' Runs when the workbook opens: everything hidden until someone signs in.
 Public Sub AppStart()
     On Error Resume Next
+    Dim trace As String
     Application.EnableEvents = True
+    Err.Clear
     SetNamed "SignedInUser", ""
     SetNamed "SignedInEmail", ""
     SetNamed "SignedInRole", ""
+    Note trace, "reset the signed-in user"
     ShowLoginOnly
+    Note trace, "show the Login sheet"
     FitLogin
+    Note trace, "fit the Login sheet"
+    If Len(trace) > 0 Then ThisWorkbook.Worksheets("Login").Range("LoginMessage").Value = "Start-up notes: " & trace
 End Sub
+
+' Records the last error (if any) against a start-up step.
+Private Sub Note(ByRef trace As String, ByVal stepName As String)
+    If Err.Number <> 0 Then trace = trace & stepName & " - error " & Err.Number & " " & Err.Description & " | "
+    Err.Clear
+End Sub
+
+' Tools > Macro > Macros > SelfTest: checks the workbook's parts one by one and reports.
+Public Sub SelfTest()
+    On Error Resume Next
+    Dim r As String, lo As ListObject, d As Object, shp As Object, v As Variant
+    r = "Excel " & Application.Version & " on " & Application.OperatingSystem & vbLf
+    Err.Clear
+    Set lo = TableOf("tblUsers")
+    r = r & Check("Users table", RowCountOf(lo) & " users")
+    Set d = New Dict
+    d("a") = 1
+    d.Add "B", "two"
+    r = r & Check("Dictionary class", d.Count & " items, exists a=" & d.Exists("a"))
+    v = HashPassword("test")
+    r = r & Check("Password hashing", Left$(CStr(v), 12) & "...")
+    v = NamedValue("ProgrammeCode")
+    r = r & Check("Named cells", CStr(v))
+    Set shp = ThisWorkbook.Worksheets("Login").Shapes("Sign in")
+    r = r & Check("Sign in button", "macro = " & shp.OnAction)
+    v = ThisWorkbook.Worksheets("Login").Range("LoginEmail").Address
+    r = r & Check("Login cells", CStr(v))
+    ThisWorkbook.Worksheets("Login").Unprotect SHEET_PWD
+    ThisWorkbook.Worksheets("Login").Protect Password:=SHEET_PWD, UserInterfaceOnly:=True
+    r = r & Check("Sheet protection", "ok")
+    ThisWorkbook.Worksheets("Login").Range("LoginMessage").Value = ""
+    r = r & Check("Write to Login sheet", "ok")
+    ActiveWindow.Zoom = 100
+    r = r & Check("Window zoom", "ok")
+    Set lo = TableOf("tblActivity")
+    LogActivity "Self test", "ok"
+    r = r & Check("Activity log", RowCountOf(lo) & " rows")
+    ThisWorkbook.Worksheets("Login").Range("LoginMessage").Value = Replace(r, vbLf, "  ")
+    MsgBox r, vbInformation, "Self test"
+End Sub
+
+Private Function Check(ByVal what As String, ByVal detail As String) As String
+    If Err.Number <> 0 Then
+        Check = "FAIL " & what & ": error " & Err.Number & " " & Err.Description & vbLf
+    Else
+        Check = "ok   " & what & ": " & detail & vbLf
+    End If
+    Err.Clear
+End Function
 
 ' Shows the sign-in page filling the window, whatever the screen size.
 Private Sub FitLogin()

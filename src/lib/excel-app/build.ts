@@ -840,7 +840,7 @@ function vbaDir(): string {
   throw new Error("VBA modules not found");
 }
 
-const codeName = (sheet: string) => "sht" + sheet.replace(/[^A-Za-z0-9]/g, "");
+export const codeName = (sheet: string) => "sht" + sheet.replace(/[^A-Za-z0-9]/g, "");
 
 async function toMacroWorkbook(xlsx: Buffer, sheets: string[]): Promise<Buffer> {
   const dir = vbaDir();
@@ -850,7 +850,12 @@ async function toMacroWorkbook(xlsx: Buffer, sheets: string[]): Promise<Buffer> 
     { name: "Dict", type: "class" as const, code: fs.readFileSync(path.join(dir, "Dict.cls"), "utf8") },
     ...["modUtil", "modJson", "modAuth", "modMain", "modPeriods", "modImport", "modImportGeneric", "modReports", "modPresentation", "modEar"].map((m) => ({ name: m, type: "standard" as const, code: fs.readFileSync(path.join(dir, `${m}.bas`), "utf8") })),
   ];
-  const bin = buildVbaProject(modules, { projectName: "CommercialDashboard" });
+  return packageMacroWorkbook(xlsx, modules, "CommercialDashboard");
+}
+
+/** Turns an .xlsx buffer into an .xlsm carrying the given VBA modules (document modules must be named after the sheets' code names). */
+export async function packageMacroWorkbook(xlsx: Buffer, modules: VbaModule[], projectName: string): Promise<Buffer> {
+  const bin = buildVbaProject(modules, { projectName });
   const zip = await JSZip.loadAsync(xlsx);
   // content types
   let ct = await zip.file("[Content_Types].xml")!.async("string");
