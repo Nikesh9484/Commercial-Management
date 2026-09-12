@@ -355,3 +355,60 @@ Public Function FileBaseName(ByVal path As String) As String
     If InStrRev(path, "/") > p Then p = InStrRev(path, "/")
     FileBaseName = Mid$(path, p + 1)
 End Function
+
+' ---- the Commercial Dashboard folder on the Desktop ------------------------------------------
+
+Private Function DesktopPath() As String
+    #If Mac Then
+        DesktopPath = Environ$("HOME") & "/Desktop"
+    #Else
+        On Error Resume Next
+        DesktopPath = CreateObject("WScript.Shell").SpecialFolders("Desktop")
+        On Error GoTo 0
+        If Len(DesktopPath) = 0 Then DesktopPath = Environ$("USERPROFILE") & "\Desktop"
+    #End If
+End Function
+
+Public Sub EnsureFolder(ByVal folder As String)
+    On Error Resume Next
+    If Len(Dir(folder, vbDirectory)) = 0 Then MkDir folder
+End Sub
+
+' "Commercial Dashboard" on the Desktop, created when first needed (falls back to the workbook's folder).
+Public Function DashboardFolder() As String
+    Dim f As String
+    f = DesktopPath() & PathSep() & "Commercial Dashboard"
+    EnsureFolder f
+    If Len(Dir(f, vbDirectory)) = 0 Then f = DefaultFolder()
+    DashboardFolder = f
+End Function
+
+Public Function ReportsFolder() As String
+    ReportsFolder = DashboardFolder() & PathSep() & "Reports"
+    EnsureFolder ReportsFolder
+End Function
+
+Public Function ImportsFolder() As String
+    ImportsFolder = DashboardFolder() & PathSep() & "Imported reports"
+    EnsureFolder ImportsFolder
+End Function
+
+Public Function BackupsFolder() As String
+    BackupsFolder = DashboardFolder() & PathSep() & "Backups"
+    EnsureFolder BackupsFolder
+End Function
+
+' A file name that does not exist yet in a folder (adds a time stamp when it does).
+Public Function FreshName(ByVal folder As String, ByVal base As String, ByVal ext As String) As String
+    FreshName = folder & PathSep() & base & ext
+    If Len(Dir(FreshName)) > 0 Then FreshName = folder & PathSep() & base & " " & Format$(Now, "yyyy-mm-dd hhnn") & ext
+End Function
+
+' Keeps a copy of an imported file in the Imported reports folder.
+Public Sub KeepImportedFile(ByVal path As String, ByVal label As String)
+    On Error Resume Next
+    Dim target As String
+    target = FreshName(ImportsFolder(), label & " - " & FileBaseName(path), "")
+    FileCopy path, target
+    LogActivity "Import file kept", target
+End Sub

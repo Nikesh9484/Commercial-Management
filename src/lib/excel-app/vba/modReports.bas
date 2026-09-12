@@ -7,9 +7,8 @@ Public Sub ExportPdf()
     If Not IsSignedIn() Then Exit Sub
     Dim names As Variant, path As String, base As String, i As Long, vis() As String, n As Long
     names = Array("Home", "Level 1", "Level 2", "Movement", "Changes", "Claims", "Early Warnings", "Risks", "Provisional Sums", "Bonds", "Contracts", "Cash Flow", "Transfers", "Actions")
-    base = DefaultFolder()
-    path = SaveAsName(base & PathSep() & "Cost Report No " & CStr(NamedValue("ViewReportNo")) & " - " & FileSafe(CStr(NamedValue("ViewPeriodLabel"))) & ".pdf", "PDF (*.pdf), *.pdf", "Save the report as PDF")
-    If Len(path) = 0 Then Exit Sub
+    base = ReportsFolder()
+    path = FreshName(base, "Cost Report No " & CStr(NamedValue("ViewReportNo")) & " - " & FileSafe(CStr(NamedValue("ViewPeriodLabel"))), ".pdf")
     ' only the sheets this role can see
     ReDim vis(0 To UBound(names))
     n = 0
@@ -31,6 +30,7 @@ Public Sub ExportPdf()
     Busy False
     LogActivity "PDF exported", path
     AddToLibrary "Cost report (PDF)", path
+    MsgBox "Saved to the Commercial Dashboard folder on the Desktop:" & vbCrLf & path, vbInformation, APP_TITLE
     Exit Sub
 fail:
     Busy False
@@ -42,9 +42,8 @@ End Sub
 Public Sub SaveIssuedCopy()
     If Not IsSignedIn() Then Exit Sub
     Dim path As Variant, base As String
-    base = DefaultFolder()
-    path = SaveAsName(base & PathSep() & "Commercial Dashboard - Report No " & CStr(NamedValue("CurrentReportNo")) & " (issued copy).xlsm", "Excel macro-enabled workbook (*.xlsm), *.xlsm", "Save an issued copy")
-    If Len(CStr(path)) = 0 Then Exit Sub
+    base = ReportsFolder()
+    path = FreshName(base, "Commercial Dashboard - Report No " & CStr(NamedValue("ViewReportNo")) & " (issued copy)", ".xlsm")
     ThisWorkbook.SaveCopyAs CStr(path)
     LogActivity "Issued copy saved", CStr(path)
     AddToLibrary "Issued copy (Excel)", CStr(path)
@@ -118,8 +117,8 @@ End Sub
 
 Public Sub OpenReportsFolder()
     On Error Resume Next
-    ThisWorkbook.FollowHyperlink DefaultFolder()
-    If Err.Number <> 0 Then MsgBox "The reports are saved next to this workbook: " & DefaultFolder(), vbInformation, APP_TITLE
+    ThisWorkbook.FollowHyperlink DashboardFolder()
+    If Err.Number <> 0 Then MsgBox "The reports are saved in: " & DashboardFolder(), vbInformation, APP_TITLE
 End Sub
 
 ' ---- the library buttons: act on the report selected in the library block (else the report shown) --

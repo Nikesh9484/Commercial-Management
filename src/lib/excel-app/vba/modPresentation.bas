@@ -248,9 +248,8 @@ End Function
 Public Sub BuildPresentation()
     If Not IsSignedIn() Then Exit Sub
     Dim path As Variant, base As String
-    base = DefaultFolder()
-    path = SaveAsName(base & PathSep() & "Cost Report Presentation No " & CStr(NamedValue("CurrentReportNo")) & ".pptx", "PowerPoint (*.pptx), *.pptx", "Save the presentation")
-    If Len(CStr(path)) = 0 Then Exit Sub
+    base = ReportsFolder()
+    path = FreshName(base, "Cost Report Presentation No " & CStr(NamedValue("ViewReportNo")) & " - " & modReports.FileSafe(CStr(NamedValue("ViewPeriodLabel"))), ".pptx")
     On Error GoTo fail
     Set pptApp = CreateObject("PowerPoint.Application")
     On Error GoTo fail2

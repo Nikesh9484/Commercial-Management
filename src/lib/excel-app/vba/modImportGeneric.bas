@@ -218,6 +218,7 @@ Private Function ImportInto(ByVal tableName As String, ByVal keyColumn As String
     ApplyAllFormulas
     Busy False
     LogActivity "Import - " & title, path & " - " & n & " rows from sheet '" & bestWs.Name & "'"
+    KeepImportedFile path, title
     modUndo.AutoSave
     MsgBox n & " rows imported from sheet '" & bestWs.Name & "' of " & vbCrLf & path, vbInformation, APP_TITLE
     ImportInto = n

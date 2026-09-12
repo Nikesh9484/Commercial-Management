@@ -15,10 +15,8 @@ Private savePending As Boolean
 ' Keeps a copy of the workbook as it is now, so the step about to run can be undone.
 Public Sub Checkpoint(ByVal action As String)
     On Error GoTo quiet
-    If Len(ThisWorkbook.Path) = 0 Then Exit Sub
     Dim folder As String, file As String, lo As ListObject, lr As ListRow, stepNo As Long
-    folder = BackupFolder()
-    If Len(Dir(folder, vbDirectory)) = 0 Then MkDir folder
+    folder = BackupsFolder()
     Set lo = TableOf("tblUndo")
     stepNo = 1
     If RowCountOf(lo) > 0 Then stepNo = CLng(Val(CellText(lo, 1, "Step"))) + 1
@@ -38,12 +36,6 @@ quiet:
     Application.DisplayAlerts = True
 End Sub
 
-Private Function BackupFolder() As String
-    Dim base As String
-    base = ThisWorkbook.Name
-    If InStrRev(base, ".") > 0 Then base = Left$(base, InStrRev(base, ".") - 1)
-    BackupFolder = ThisWorkbook.Path & PathSep() & base & " backups"
-End Function
 
 Private Sub TrimBackups(ByVal lo As ListObject)
     On Error Resume Next

@@ -268,6 +268,7 @@ Public Sub ImportMonthlyReport()
     Busy False
     Application.Calculate
     LogActivity "Monthly report imported", "Report No " & reportNo & " from " & path
+    KeepImportedFile path, "Report No " & reportNo
     modUndo.AutoSave
     MsgBox "Report No " & reportNo & " imported and stored." & vbCrLf & vbCrLf & summary & IIf(reportNo < cur, vbCrLf & vbCrLf & "Choose it in the gold box on Home or on the Periods page to see it.", ""), vbInformation, APP_TITLE
     Exit Sub
@@ -1144,6 +1145,7 @@ nextWs:
     Busy False
     Application.Calculate
     LogActivity "Claims Tracker imported", path & " - " & n & " of " & total & " claims"
+    KeepImportedFile path, "Claims tracker"
     modUndo.AutoSave
     MsgBox n & " claims imported (of " & total & " in the tracker" & IIf(IsEmpty(asOf), "", ", as of " & Format$(CDate(asOf), "dd-mmm-yy")) & "). Pending claims are not carried in column M; approved claims feed it through their determined amount.", vbInformation, APP_TITLE
     Exit Sub

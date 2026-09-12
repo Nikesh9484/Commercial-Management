@@ -743,6 +743,9 @@ Public Sub CreateClaimEar()
     doc.Activate
     LogActivity "Claim EAR drafted", outPath & " - " & fileCount & " files - " & Format$((Timer - t0) / 60, "0") & " min"
     modReports.AddToLibrary "Claim EAR (Word)", outPath
+    On Error Resume Next
+    FileCopy outPath, FreshName(ReportsFolder(), FileBaseName(Left$(outPath, Len(outPath) - 5)), ".docx")
+    On Error GoTo 0
     MsgBox "The Employer's Assessment Report is ready:" & vbCrLf & outPath & vbCrLf & vbCrLf & "It is open in Word for review." & IIf(revised, " Changes against the previous report are shown as tracked changes by 'Commercial Manager'.", ""), vbInformation, APP_TITLE
     Exit Sub
 fail:
