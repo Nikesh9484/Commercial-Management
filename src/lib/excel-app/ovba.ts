@@ -264,8 +264,98 @@ export function buildVbaProject(modules: VbaModule[], opts: { projectName?: stri
   lib.find = (c, p) => (p === marker ? ({} as CFB.CFB$Entry) : origFind(c, p));
   try {
     const out = CFB.write(cfb, { type: "buffer" });
-    return Buffer.isBuffer(out) ? out : Buffer.from(out as Uint8Array);
+    return rebuildDirectoryTree(Buffer.isBuffer(out) ? out : Buffer.from(out as Uint8Array));
   } finally {
     lib.find = origFind;
   }
+}
+
+/* ------------------------------------------------------------------ directory tree */
+
+/**
+ * cfb links the entries of each storage as one right-leaning chain sorted case-sensitively. MS-CFB requires a
+ * red-black tree ordered by name length, then by upper-case comparison; strict readers (Excel for Mac) search
+ * the tree and cannot find entries that sit on the wrong side. This rewrites the sibling links of every storage
+ * as a balanced, correctly ordered tree.
+ */
+function rebuildDirectoryTree(buf: Buffer): Buffer {
+  const sectorSize = 1 << buf.readUInt16LE(0x1e);
+  const firstDir = buf.readUInt32LE(0x30);
+  const fatSectors: number[] = [];
+  for (let i = 0; i < 109; i++) {
+    const v = buf.readUInt32LE(0x4c + i * 4);
+    if (v >= 0xfffffffc) break;
+    fatSectors.push(v);
+  }
+  const fat = (n: number) => {
+    const per = sectorSize / 4;
+    const sec = fatSectors[Math.floor(n / per)];
+    return buf.readUInt32LE((sec + 1) * sectorSize + (n % per) * 4);
+  };
+  const dirSectors: number[] = [];
+  for (let sec = firstDir; sec < 0xfffffffa && dirSectors.length < 100000; sec = fat(sec)) dirSectors.push(sec);
+  const perSector = sectorSize / 128;
+  const entryOffset = (i: number) => (dirSectors[Math.floor(i / perSector)] + 1) * sectorSize + (i % perSector) * 128;
+  const NONE = 0xffffffff;
+  interface Entry { i: number; name: string; type: number; L: number; R: number; C: number }
+  const entries: Entry[] = [];
+  for (let i = 0; i < dirSectors.length * perSector; i++) {
+    const o = entryOffset(i);
+    const nameLen = buf.readUInt16LE(o + 0x40);
+    const type = buf[o + 0x42];
+    if (type === 0) continue;
+    entries.push({ i, name: buf.subarray(o, o + Math.max(0, nameLen - 2)).toString("utf16le"), type, L: buf.readUInt32LE(o + 0x44), R: buf.readUInt32LE(o + 0x48), C: buf.readUInt32LE(o + 0x4c) });
+  }
+  const byIndex = new Map(entries.map((e) => [e.i, e]));
+  const children = (root: number): Entry[] => {
+    const out: Entry[] = [];
+    const walk = (n: number) => {
+      if (n === NONE || n >= 0xfffffffa) return;
+      const e = byIndex.get(n);
+      if (!e) return;
+      out.push(e);
+      walk(e.L);
+      walk(e.R);
+    };
+    walk(root);
+    return out;
+  };
+  const compare = (a: string, b: string) => {
+    if (a.length !== b.length) return a.length - b.length;
+    const ua = a.toUpperCase();
+    const ub = b.toUpperCase();
+    for (let k = 0; k < ua.length; k++) if (ua.charCodeAt(k) !== ub.charCodeAt(k)) return ua.charCodeAt(k) - ub.charCodeAt(k);
+    return 0;
+  };
+  const setLinks = (e: Entry, L: number, R: number, color: number) => {
+    const o = entryOffset(e.i);
+    buf[o + 0x43] = color;
+    buf.writeUInt32LE(L, o + 0x44);
+    buf.writeUInt32LE(R, o + 0x48);
+  };
+  const build = (sorted: Entry[], depth: number, depths: Map<number, number>): number => {
+    if (!sorted.length) return NONE;
+    const mid = Math.floor(sorted.length / 2);
+    const node = sorted[mid];
+    depths.set(node.i, depth);
+    const L = build(sorted.slice(0, mid), depth + 1, depths);
+    const R = build(sorted.slice(mid + 1), depth + 1, depths);
+    setLinks(node, L, R, 1);
+    return node.i;
+  };
+  const relink = (storage: Entry) => {
+    if (storage.C === NONE) return;
+    const kids = children(storage.C).sort((a, b) => compare(a.name, b.name));
+    const depths = new Map<number, number>();
+    const root = build(kids, 0, depths);
+    buf.writeUInt32LE(root, entryOffset(storage.i) + 0x4c);
+    // colours: black everywhere, red on the deepest level when the tree is not perfect (keeps every path's black count equal)
+    const maxDepth = Math.max(...depths.values());
+    const perfect = kids.length === (1 << (maxDepth + 1)) - 1;
+    for (const k of kids) buf[entryOffset(k.i) + 0x43] = !perfect && depths.get(k.i) === maxDepth ? 0 : 1;
+    for (const k of kids) if (k.type === 1) relink(k);
+  };
+  const rootEntry = byIndex.get(0);
+  if (rootEntry) relink(rootEntry);
+  return buf;
 }
