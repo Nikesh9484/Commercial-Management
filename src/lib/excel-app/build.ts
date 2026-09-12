@@ -72,7 +72,7 @@ function button(ws: ExcelJS.Worksheet, name: string, macro: string, colors: read
   const m = 28000;
   const lastRow = row + (opts.rows ?? 1) - 1;
   return {
-    kind: "roundRect", name, macro, text: opts.icon ? `${opts.icon}  ${name}` : name, textColor: "FFFFFF", fontSize: opts.fontSize ?? 10, bold: true,
+    kind: "roundRect", name, macro: macro.split(".").pop(), text: opts.icon ? `${opts.icon}  ${name}` : name, textColor: "FFFFFF", fontSize: opts.fontSize ?? 10, bold: true,
     colors: colors.map((c) => c.slice(-6)), angle: 90, shadow: true, bevel: true, glow: opts.glow, radius: 0.35,
     from: { col: col - 1, row: row - 1, colOff: m, rowOff: m }, to: { col: col + span - 2, row: lastRow - 1, colOff: Math.max(m, colEmu(ws, col + span - 1) - m), rowOff: Math.max(m, rowEmu(ws, lastRow) - m) },
   };

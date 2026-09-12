@@ -16,12 +16,11 @@ End Function
 ' Runs when the workbook opens: everything hidden until someone signs in.
 Public Sub AppStart()
     On Error Resume Next
-    Application.EnableEvents = False
+    Application.EnableEvents = True
     SetNamed "SignedInUser", ""
     SetNamed "SignedInEmail", ""
     SetNamed "SignedInRole", ""
     ShowLoginOnly
-    Application.EnableEvents = True
     FitLogin
 End Sub
 
@@ -74,7 +73,13 @@ End Sub
 ' The Sign in button on the Login sheet.
 Public Sub SignIn()
     Dim wsL As Worksheet, email As String, pwd As String, msg As String
+    On Error GoTo fail
+    Application.EnableEvents = True
     Set wsL = ThisWorkbook.Worksheets("Login")
+    On Error Resume Next
+    wsL.Unprotect SHEET_PWD
+    wsL.Protect Password:=SHEET_PWD, UserInterfaceOnly:=True
+    On Error GoTo fail
     email = Trim$(CStr(Nz(wsL.Range("LoginEmail").Value)))
     pwd = CStr(Nz(wsL.Range("LoginPassword").Value))
     wsL.Range("LoginMessage").Value = ""
@@ -93,6 +98,12 @@ Public Sub SignIn()
     EnsureButtons
     ThisWorkbook.Worksheets("Home").Activate
     ThisWorkbook.Worksheets("Home").Range("A1").Select
+    Exit Sub
+fail:
+    msg = "Sign in stopped with error " & Err.Number & " in " & IIf(Len(Err.Source) > 0, Err.Source, "SignIn") & ": " & Err.Description
+    On Error Resume Next
+    wsL.Range("LoginMessage").Value = msg
+    MsgBox msg & vbCrLf & vbCrLf & "Please send this message to the administrator.", vbExclamation, APP_TITLE
 End Sub
 
 Public Sub SignOut()
