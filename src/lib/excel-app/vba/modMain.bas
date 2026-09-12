@@ -22,8 +22,24 @@ Public Sub AppStart()
     SetNamed "SignedInRole", ""
     ShowLoginOnly
     Application.EnableEvents = True
-    ThisWorkbook.Worksheets("Login").Activate
-    ThisWorkbook.Worksheets("Login").Range("LoginEmail").Select
+    FitLogin
+End Sub
+
+' Shows the sign-in page filling the window, whatever the screen size.
+Private Sub FitLogin()
+    On Error Resume Next
+    Dim ws As Worksheet
+    Set ws = ThisWorkbook.Worksheets("Login")
+    ws.Activate
+    ActiveWindow.DisplayHeadings = False
+    ActiveWindow.DisplayGridlines = False
+    ActiveWindow.ScrollRow = 1
+    ActiveWindow.ScrollColumn = 1
+    ws.Range("A1:O44").Select
+    ActiveWindow.Zoom = True
+    ActiveWindow.ScrollRow = 1
+    ActiveWindow.ScrollColumn = 1
+    ws.Range("LoginEmail").Select
 End Sub
 
 Private Sub ShowLoginOnly()

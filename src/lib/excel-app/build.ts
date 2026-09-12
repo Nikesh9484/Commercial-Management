@@ -290,18 +290,20 @@ function tile(ws: ExcelJS.Worksheet, row: number, col: number, span: number, lab
 
 function loginSheet(wb: ExcelJS.Workbook, names: Names, seed: Seed, shapes: XlsxShape[]) {
   const ws = sheet(wb, "Login");
-  ws.views = [{ showGridLines: false, zoomScale: 110 }];
+  ws.views = [{ showGridLines: false, showRowColHeaders: false, zoomScale: 125 }];
   const widths = [4, 38, 3, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6];
   widths.forEach((w, i) => (ws.getColumn(i + 1).width = w));
-  const COLS = widths.length;
-  const ROWS = 42;
+  // the backdrop runs far beyond the card so a large monitor never shows bare cells; the workbook zooms A1:O44 to fit
+  const COLS = 70;
+  const ROWS = 130;
+  for (let c = widths.length + 1; c <= COLS; c++) ws.getColumn(c).width = 6;
   // a smooth colour ramp, navy at the top to teal at the bottom, with a warm glow towards the right
   const mix = (a: string, b: string, t: number) => {
     const ch = (o: number) => Math.round(parseInt(a.slice(o, o + 2), 16) * (1 - t) + parseInt(b.slice(o, o + 2), 16) * t).toString(16).padStart(2, "0");
     return `${ch(0)}${ch(2)}${ch(4)}`.toUpperCase();
   };
   // (a cell gradient repeats in every cell, so only a top-to-bottom ramp row by row reads as one smooth sweep)
-  const ramp = (r: number) => `FF${mix("0F2B4C", "12A090", Math.min(1, Math.max(0, (r - 1) / (ROWS - 1))))}`;
+  const ramp = (r: number) => `FF${mix("0F2B4C", "12A090", Math.min(1, Math.max(0, (r - 1) / 55)))}`;
   for (let r = 1; r <= ROWS; r++) for (let c = 1; c <= COLS; c++) ws.getCell(r, c).fill = gradient([ramp(r), ramp(r + 1)], 90);
   ws.getRow(1).height = 10;
   // the wordmark and welcome text on the right
@@ -366,6 +368,10 @@ function loginSheet(wb: ExcelJS.Workbook, names: Names, seed: Seed, shapes: Xlsx
     blob("Glow 2", "ellipse", "FFD166", 0.16, { col: 4, row: 30 }, { col: 8, row: 41 }, 135),
     blob("Glow 3", "ellipse", "9FD3FF", 0.14, { col: 12, row: 0 }, { col: 14, row: 4 }),
     blob("Ring", "ellipse", "FFFFFF", 0.06, { col: 6, row: 24 }, { col: 12, row: 42 }),
+    blob("Glow 4", "ellipse", "FFFFFF", 0.08, { col: 18, row: 6 }, { col: 30, row: 34 }, 60),
+    blob("Glow 5", "ellipse", "FFD166", 0.1, { col: 34, row: 44 }, { col: 48, row: 80 }, 120),
+    blob("Glow 6", "ellipse", "9FD3FF", 0.1, { col: 50, row: 2 }, { col: 66, row: 28 }),
+    blob("Ring 2", "ellipse", "FFFFFF", 0.05, { col: 14, row: 50 }, { col: 30, row: 96 }),
   );
   for (let r = 22; r <= ROWS; r++) ws.getRow(r).height = 15;
   names.add("LoginEmail", "Login", "$B$8");
