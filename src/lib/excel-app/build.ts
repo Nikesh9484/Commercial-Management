@@ -863,7 +863,7 @@ function homeSheet(wb: ExcelJS.Workbook, names: Names, seed: Seed, charts: XlsxC
 }
 
 
-const LIBRARY: TableSpec = { sheet: "Reports", table: "tblLibrary", title: "Files produced", cols: [{ h: "Report No", type: "number", width: 10 }, { h: "Report", width: 34 }, { h: "File", width: 70 }, { h: "Created", type: "date", width: 16 }, { h: "By", width: 22 }] };
+const LIBRARY: TableSpec = { sheet: "Reports", table: "tblLibrary", title: "Report library", cols: [{ h: "Report No", type: "number", width: 10 }, { h: "Report", width: 34 }, { h: "File", width: 70 }, { h: "Created", type: "date", width: 16 }, { h: "By", width: 22 }] };
 
 /** A hidden store sheet: the rows of one register for every report (Report No + the register's columns, as values). */
 function storeSheet(wb: ExcelJS.Workbook, spec: TableSpec, rows: ExcelJS.CellValue[][]) {
@@ -1018,7 +1018,7 @@ function reportsSheet(wb: ExcelJS.Workbook, shapes: XlsxShape[], names: Names) {
     w.mergeCells(n.number, 1, n.number, 6);
     w.addRow([]);
   };
-  tableSheet(wb, LIBRARY, [], { subtitle: "Every report produced from this workbook, newest first", before });
+  tableSheet(wb, LIBRARY, [], { subtitle: "Every report the workbook holds, and every file produced from it", before });
   const y1 = rowTop(ws, 5) + 4;
   const y2 = rowTop(ws, 6) + 4;
   const btn = (label: string, macro: string, colors: readonly string[], x: number, y: number, w: number) => shapes.push(buttonAt(ws, `act:${macro}`, label, macro, colors, x, y, w, 26, 10));
