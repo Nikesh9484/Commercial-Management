@@ -24,6 +24,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
       heading: "Summaries",
       items: [
         item("dashboard", "Commercial Dashboard (Excel)", "The whole dashboard in one workbook: headline tiles, native Excel charts and one sheet per module with live formulas over the registers"),
+        item("excel-app", "Commercial Dashboard – Excel edition (.xlsm)", "Work entirely in Excel: sign in with the same users and roles, import the monthly report and stand-alone workbooks, lock periods, export PDF – loaded with today's data"),
         item("deck", "Cost Report Presentation", "Short animated deck: executive dashboard, Level 1, packages, movement, changes, early warnings, claims, payments, cash flow, bonds, provisional sums, key issues – editable PowerPoint or PDF"),
         item("exec", "Executive Summary", "Headline figures, open items, payment tracker, key issues and actions"),
         item("movement", "Movement since the previous report", "Cost report movement, key period movements, status counts, register changes"),
@@ -91,7 +92,16 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
                       <div className="text-xs text-muted">{it.note}</div>
                     </div>
                     <span className="inline-flex gap-1.5">
-                      {it.section === "dashboard" ? (
+                      {it.section === "excel-app" ? (
+                        <>
+                          <a className="btn btn-sm btn-excel" href={`/api/export?section=excel-app&format=xlsx`}>
+                            <FileSpreadsheet size={14} /> Excel edition (.xlsm)
+                          </a>
+                          <a className="btn btn-sm btn-secondary" href={`/api/export?section=excel-app-modules`} title="The macro source files, only needed if Excel refuses the macros in the .xlsm">
+                            <FileDown size={14} /> VBA modules
+                          </a>
+                        </>
+                      ) : it.section === "dashboard" ? (
                         <a className="btn btn-sm btn-excel" href={`/api/export?section=dashboard&format=xlsx${pid}`}>
                           <FileSpreadsheet size={14} /> Excel workbook
                         </a>
