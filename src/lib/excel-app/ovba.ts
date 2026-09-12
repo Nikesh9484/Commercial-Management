@@ -7,8 +7,8 @@ import CFB from "cfb";
  */
 export interface VbaModule {
   name: string;
-  /** standard = .bas module; document = ThisWorkbook / a worksheet code-behind module */
-  type: "standard" | "document";
+  /** standard = .bas module; class = .cls class module; document = ThisWorkbook / a worksheet code-behind module */
+  type: "standard" | "class" | "document";
   code: string;
 }
 
@@ -117,7 +117,19 @@ export function decompressContainer(buf: Buffer): Buffer {
 
 const u16 = (v: number) => Buffer.from([v & 0xff, (v >> 8) & 0xff]);
 const u32 = (v: number) => Buffer.from([v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >>> 24) & 0xff]);
-const mbcs = (s: string) => Buffer.from(s, "latin1");
+/** Windows-1252, the code page the project declares; characters outside it get an ASCII stand-in (never a stray control byte). */
+const CP1252: Record<number, number> = { 0x20ac: 0x80, 0x201a: 0x82, 0x0192: 0x83, 0x201e: 0x84, 0x2026: 0x85, 0x2020: 0x86, 0x2021: 0x87, 0x02c6: 0x88, 0x2030: 0x89, 0x0160: 0x8a, 0x2039: 0x8b, 0x0152: 0x8c, 0x017d: 0x8e, 0x2018: 0x91, 0x2019: 0x92, 0x201c: 0x93, 0x201d: 0x94, 0x2022: 0x95, 0x2013: 0x96, 0x2014: 0x97, 0x02dc: 0x98, 0x2122: 0x99, 0x0161: 0x9a, 0x203a: 0x9b, 0x0153: 0x9c, 0x017e: 0x9e, 0x0178: 0x9f };
+const ASCII_STAND_IN: Record<string, string> = { "→": "->", "←": "<-", "✱": "*", "✓": "OK", "✔": "OK", "✦": "*", "≥": ">=", "≤": "<=", "≠": "<>", "−": "-", "‑": "-", "▸": ">", "◆": "*", "★": "*", "☐": "[ ]", "☑": "[x]" };
+export function mbcs(s: string): Buffer {
+  const out: number[] = [];
+  for (const ch of s) {
+    const cp = ch.codePointAt(0)!;
+    if (cp < 0x80 || (cp >= 0xa0 && cp <= 0xff)) out.push(cp);
+    else if (CP1252[cp] !== undefined) out.push(CP1252[cp]);
+    else for (const c of ASCII_STAND_IN[ch] ?? "?") out.push(c.charCodeAt(0));
+  }
+  return Buffer.from(out);
+}
 const utf16 = (s: string) => Buffer.from(s, "utf16le");
 const rec = (id: number, payload: Buffer) => Buffer.concat([u16(id), u32(payload.length), payload]);
 
@@ -154,7 +166,7 @@ function dirStream(modules: VbaModule[], projectName: string): Buffer {
     parts.push(rec(0x0031, u32(0))); // OFFSET: source starts at byte 0 of the module stream
     parts.push(rec(0x001e, u32(0))); // HELPCONTEXT
     parts.push(rec(0x002c, u16(0xffff))); // COOKIE
-    parts.push(Buffer.concat([u16(m.type === "document" ? 0x0022 : 0x0021), u32(0)])); // TYPE
+    parts.push(Buffer.concat([u16(m.type === "standard" ? 0x0021 : 0x0022), u32(0)])); // TYPE: procedural, or document/class
     parts.push(Buffer.concat([u16(0x002b), u32(0)])); // terminator
   }
   parts.push(Buffer.concat([u16(0x0010), u32(0)]));
@@ -192,7 +204,7 @@ function encryptProperty(data: Buffer, projKey: number, seed: number): string {
 function projectStream(modules: VbaModule[], projectName: string, projectId: string): Buffer {
   const projKey = Buffer.from(projectId, "latin1").reduce((s, b) => (s + b) & 0xff, 0);
   const lines = [`ID="${projectId}"`];
-  for (const m of modules) lines.push(m.type === "document" ? `Document=${m.name}/&H00000000` : `Module=${m.name}`);
+  for (const m of modules) lines.push(m.type === "document" ? `Document=${m.name}/&H00000000` : m.type === "class" ? `Class=${m.name}` : `Module=${m.name}`);
   lines.push(`Name="${projectName}"`, `HelpContextID="0"`, `VersionCompatible32="393222000"`);
   lines.push(`CMG="${encryptProperty(Buffer.from([0, 0, 0, 0]), projKey, 0xf1)}"`);
   lines.push(`DPB="${encryptProperty(Buffer.from([0]), projKey, 0x8f)}"`);
@@ -227,6 +239,8 @@ function moduleSource(m: VbaModule): string {
       "Attribute VB_TemplateDerived = False",
       "Attribute VB_Customizable = True",
     );
+  } else if (m.type === "class") {
+    attrs.push("Attribute VB_GlobalNameSpace = False", "Attribute VB_Creatable = False", "Attribute VB_PredeclaredId = False", "Attribute VB_Exposed = False");
   }
   return attrs.join("\r\n") + "\r\n" + body + (body.endsWith("\r\n") ? "" : "\r\n");
 }
@@ -242,8 +256,16 @@ export function buildVbaProject(modules: VbaModule[], opts: { projectName?: stri
   add("/VBA/_VBA_PROJECT", Buffer.from([0xcc, 0x61, 0xff, 0xff, 0x00, 0x00, 0x00]));
   add("/VBA/dir", compressContainer(dirStream(modules, projectName)));
   for (const m of modules) add(`/VBA/${m.name}`, compressContainer(mbcs(moduleSource(m))));
-  // cfb adds a placeholder stream on creation; remove it
-  CFB.utils.cfb_del(cfb, "/\u0001Sh33tJ5");
-  const out = CFB.write(cfb, { type: "buffer" });
-  return Buffer.isBuffer(out) ? out : Buffer.from(out as Uint8Array);
+  // cfb seeds a marker stream on every rebuild; hide it from the seeding check while writing so the project holds only VBA streams
+  const marker = "/\u0001Sh33tJ5";
+  CFB.utils.cfb_del(cfb, marker);
+  const lib = CFB as unknown as { find: (c: CFB.CFB$Container, p: string) => CFB.CFB$Entry | null };
+  const origFind = lib.find;
+  lib.find = (c, p) => (p === marker ? ({} as CFB.CFB$Entry) : origFind(c, p));
+  try {
+    const out = CFB.write(cfb, { type: "buffer" });
+    return Buffer.isBuffer(out) ? out : Buffer.from(out as Uint8Array);
+  } finally {
+    lib.find = origFind;
+  }
 }

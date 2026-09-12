@@ -7,10 +7,9 @@ Public Sub ExportPdf()
     If Not IsSignedIn() Then Exit Sub
     Dim names As Variant, path As String, base As String, i As Long, vis() As String, n As Long
     names = Array("Home", "Level 1", "Level 2", "Movement", "Changes", "Claims", "Early Warnings", "Risks", "Provisional Sums", "Bonds", "Contracts", "Cash Flow", "Transfers", "Actions")
-    base = ThisWorkbook.Path
-    If Len(base) = 0 Then base = Environ$("USERPROFILE") & "\Documents"
-    path = Application.GetSaveAsFilename(base & "\Monthly Cost Report No " & CStr(NamedValue("CurrentReportNo")) & ".pdf", "PDF (*.pdf), *.pdf", , "Save the report as PDF")
-    If VarType(path) = vbBoolean Or Len(path) = 0 Then Exit Sub
+    base = DefaultFolder()
+    path = SaveAsName(base & PathSep() & "Monthly Cost Report No " & CStr(NamedValue("CurrentReportNo")) & ".pdf", "PDF (*.pdf), *.pdf", "Save the report as PDF")
+    If Len(path) = 0 Then Exit Sub
     ' only the sheets this role can see
     ReDim vis(0 To UBound(names))
     n = 0
@@ -42,10 +41,9 @@ End Sub
 Public Sub SaveIssuedCopy()
     If Not IsSignedIn() Then Exit Sub
     Dim path As Variant, base As String
-    base = ThisWorkbook.Path
-    If Len(base) = 0 Then base = Environ$("USERPROFILE") & "\Documents"
-    path = Application.GetSaveAsFilename(base & "\Commercial Dashboard – Report No " & CStr(NamedValue("CurrentReportNo")) & " (issued copy).xlsm", "Excel macro-enabled workbook (*.xlsm), *.xlsm", , "Save an issued copy")
-    If VarType(path) = vbBoolean Or Len(CStr(path)) = 0 Then Exit Sub
+    base = DefaultFolder()
+    path = SaveAsName(base & PathSep() & "Commercial Dashboard - Report No " & CStr(NamedValue("CurrentReportNo")) & " (issued copy).xlsm", "Excel macro-enabled workbook (*.xlsm), *.xlsm", "Save an issued copy")
+    If Len(CStr(path)) = 0 Then Exit Sub
     ThisWorkbook.SaveCopyAs CStr(path)
     LogActivity "Issued copy saved", CStr(path)
     MsgBox "Issued copy saved:" & vbCrLf & path, vbInformation, APP_TITLE

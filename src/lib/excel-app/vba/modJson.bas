@@ -1,6 +1,6 @@
 Option Explicit
 ' ------------------------------------------------------------------------------------------
-' A small JSON reader / writer (objects -> Scripting.Dictionary, arrays -> Collection)
+' A small JSON reader / writer (objects -> Dict, arrays -> Collection)
 ' ------------------------------------------------------------------------------------------
 
 Private jsonText As String
@@ -47,7 +47,7 @@ End Sub
 
 Private Function ParseObject() As Object
     Dim d As Object, key As String, v As Variant
-    Set d = CreateObject("Scripting.Dictionary")
+    Set d = New Dict
     jsonPos = jsonPos + 1
     SkipWs
     If Mid$(jsonText, jsonPos, 1) = "}" Then
@@ -147,7 +147,7 @@ End Function
 
 Public Function JGet(ByVal d As Variant, ByVal key As String, Optional ByVal dflt As Variant = "") As Variant
     If IsObject(d) Then
-        If TypeName(d) = "Dictionary" Then
+        If TypeName(d) = "Dict" Then
             If d.Exists(key) Then
                 If IsObject(d(key)) Then
                     Set JGet = d(key)
@@ -178,7 +178,7 @@ End Function
 Public Function JArr(ByVal d As Variant, ByVal key As String) As Collection
     Dim v As Variant
     If IsObject(d) Then
-        If TypeName(d) = "Dictionary" Then
+        If TypeName(d) = "Dict" Then
             If d.Exists(key) Then
                 If TypeName(d(key)) = "Collection" Then
                     Set JArr = d(key)

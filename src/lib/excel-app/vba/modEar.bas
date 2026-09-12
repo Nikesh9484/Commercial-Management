@@ -28,14 +28,24 @@ Private fileCount As Long
 
 Private Function PickFolder(ByVal title As String) As String
     Dim fd As Object
+    On Error GoTo fallback
     Set fd = Application.FileDialog(4) ' msoFileDialogFolderPicker
     fd.Title = title
     fd.AllowMultiSelect = False
     If fd.Show = -1 Then PickFolder = fd.SelectedItems(1)
+    Exit Function
+fallback:
+    #If Mac Then
+        On Error Resume Next
+        PickFolder = MacScript("POSIX path of (choose folder with prompt """ & Replace(title, """", "'") & """)")
+        If Len(PickFolder) > 1 And Right$(PickFolder, 1) = "/" Then PickFolder = Left$(PickFolder, Len(PickFolder) - 1)
+    #End If
 End Function
 
+' Base64 of a file: the fast Windows components when they exist, otherwise plain VBA (Mac).
 Private Function Base64File(ByVal path As String) As String
     Dim stm As Object, bytes() As Byte, dom As Object, node As Object
+    On Error GoTo pure
     Set stm = CreateObject("ADODB.Stream")
     stm.Type = 1
     stm.Open
@@ -47,6 +57,111 @@ Private Function Base64File(ByVal path As String) As String
     node.DataType = "bin.base64"
     node.nodeTypedValue = bytes
     Base64File = Replace(Replace(node.Text, vbLf, ""), vbCr, "")
+    Exit Function
+pure:
+    On Error GoTo 0
+    bytes = ReadBytes(path)
+    Base64File = Base64Bytes(bytes)
+End Function
+
+Private Function ReadBytes(ByVal path As String) As Byte()
+    Dim f As Integer, b() As Byte, n As Long
+    f = FreeFile
+    Open path For Binary Access Read As #f
+    n = LOF(f)
+    If n > 0 Then
+        ReDim b(0 To n - 1)
+        Get #f, , b
+    Else
+        b = ""
+    End If
+    Close #f
+    ReadBytes = b
+End Function
+
+Private Function Base64Bytes(ByRef b() As Byte) As String
+    Const T As String = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    Dim n As Long, i As Long, o As Long, out() As Byte, v As Long, tb(0 To 63) As Byte, k As Long
+    n = UBound(b) - LBound(b) + 1
+    If n <= 0 Then Exit Function
+    For k = 0 To 63
+        tb(k) = Asc(Mid$(T, k + 1, 1))
+    Next k
+    ReDim out(0 To ((n + 2) \ 3) * 4 - 1)
+    i = LBound(b)
+    o = 0
+    Do While i + 2 <= UBound(b)
+        v = CLng(b(i)) * 65536 + CLng(b(i + 1)) * 256 + b(i + 2)
+        out(o) = tb(v \ 262144)
+        out(o + 1) = tb((v \ 4096) And 63)
+        out(o + 2) = tb((v \ 64) And 63)
+        out(o + 3) = tb(v And 63)
+        i = i + 3
+        o = o + 4
+    Loop
+    Select Case UBound(b) - i + 1
+        Case 1
+            v = CLng(b(i)) * 65536
+            out(o) = tb(v \ 262144)
+            out(o + 1) = tb((v \ 4096) And 63)
+            out(o + 2) = 61
+            out(o + 3) = 61
+        Case 2
+            v = CLng(b(i)) * 65536 + CLng(b(i + 1)) * 256
+            out(o) = tb(v \ 262144)
+            out(o + 1) = tb((v \ 4096) And 63)
+            out(o + 2) = tb((v \ 64) And 63)
+            out(o + 3) = 61
+    End Select
+    Base64Bytes = StrConv(out, vbUnicode)
+End Function
+
+' UTF-8 bytes to text (used where the Windows text components are not available).
+Private Function Utf8Decode(ByRef b() As Byte) As String
+    Dim i As Long, hi As Long, c As Long, cp As Long, extra As Long, out As String, k As Long
+    If UBound(b) < LBound(b) Then Exit Function
+    hi = UBound(b)
+    out = String$(hi - LBound(b) + 1, " ")
+    k = 1
+    i = LBound(b)
+    If hi - i >= 2 Then
+        If b(i) = &HEF And b(i + 1) = &HBB And b(i + 2) = &HBF Then i = i + 3
+    End If
+    Do While i <= hi
+        c = b(i)
+        If c < &H80 Then
+            cp = c
+            extra = 0
+        ElseIf c >= &HC0 And c < &HE0 Then
+            cp = c And &H1F
+            extra = 1
+        ElseIf c >= &HE0 And c < &HF0 Then
+            cp = c And &HF
+            extra = 2
+        ElseIf c >= &HF0 Then
+            cp = c And &H7
+            extra = 3
+        Else
+            cp = &HFFFD&
+            extra = 0
+        End If
+        Do While extra > 0 And i < hi
+            i = i + 1
+            cp = cp * 64 + (b(i) And &H3F)
+            extra = extra - 1
+        Loop
+        If cp > &HFFFF& Then
+            cp = cp - &H10000
+            Mid$(out, k, 1) = ChrW$(&HD800& + (cp \ 1024))
+            k = k + 1
+            Mid$(out, k, 1) = ChrW$(&HDC00& + (cp And 1023))
+        Else
+            Mid$(out, k, 1) = ChrW$(cp)
+        End If
+        k = k + 1
+        i = i + 1
+    Loop
+    Utf8Decode = Left$(out, k - 1)
 End Function
 
 Private Function FileSize(ByVal path As String) As Double
@@ -61,7 +176,7 @@ Private Function ExtOf(ByVal path As String) As String
 End Function
 
 Private Function BaseName(ByVal path As String) As String
-    BaseName = Mid$(path, InStrRev(path, "\") + 1)
+    BaseName = FileBaseName(path)
 End Function
 
 Private Sub AddTextBlock(ByVal text As String)
@@ -141,7 +256,7 @@ Private Function Clip(ByVal s As String, ByVal maxLen As Long) As String
 End Function
 
 Private Function TextFile(ByVal path As String) As String
-    On Error Resume Next
+    On Error GoTo pure
     Dim stm As Object
     Set stm = CreateObject("ADODB.Stream")
     stm.Type = 2
@@ -150,6 +265,12 @@ Private Function TextFile(ByVal path As String) As String
     stm.LoadFromFile path
     TextFile = stm.ReadText
     stm.Close
+    Exit Function
+pure:
+    On Error Resume Next
+    Dim raw() As Byte
+    raw = ReadBytes(path)
+    TextFile = Utf8Decode(raw)
 End Function
 
 Private Function WordText(ByVal wordApp As Object, ByVal path As String) As String
@@ -197,20 +318,21 @@ End Function
 
 ' Adds every file of a folder (and its sub-folders) as content blocks.
 Private Sub AddFolder(ByVal wordApp As Object, ByVal folder As String, ByVal rel As String, ByVal depth As Long)
-    Dim fso As Object, f As Object, sub_ As Object
-    Set fso = CreateObject("Scripting.FileSystemObject")
-    If Not fso.FolderExists(folder) Then Exit Sub
-    For Each f In fso.GetFolder(folder).Files
-        If Left$(f.Name, 1) <> "~" And Left$(f.Name, 1) <> "." Then
-            Application.StatusBar = "Reading " & rel & f.Name & "…"
+    Dim f As Variant, nm As String
+    If Len(folder) = 0 Then Exit Sub
+    For Each f In FolderEntries(folder, False)
+        nm = FileBaseName(CStr(f))
+        If Left$(nm, 1) <> "~" And Left$(nm, 1) <> "." Then
+            Application.StatusBar = "Reading " & rel & nm & "…"
             DoEvents
-            AddFile wordApp, f.path, rel & f.Name
+            AddFile wordApp, CStr(f), rel & nm
         End If
     Next f
     If depth < 4 Then
-        For Each sub_ In fso.GetFolder(folder).SubFolders
-            AddFolder wordApp, sub_.path, rel & sub_.Name & "/", depth + 1
-        Next sub_
+        For Each f In FolderEntries(folder, True)
+            nm = FileBaseName(CStr(f))
+            If Left$(nm, 1) <> "." Then AddFolder wordApp, CStr(f), rel & nm & "/", depth + 1
+        Next f
     End If
 End Sub
 
@@ -244,22 +366,26 @@ Private Function CallClaude(ByVal apiKey As String, ByVal model As String, ByVal
     Dim http As Object, body As String, t0 As Single, resp As String, status As Long
     body = "{""model"":" & JsonStr(model) & ",""max_tokens"":40000,""stream"":true,""thinking"":{""type"":""adaptive""},""system"":" & JsonStr(system) & _
            ",""messages"":[{""role"":""user"",""content"":[" & userBlocks & "]}],""output_config"":{""format"":{""type"":""json_schema"",""schema"":" & schema & "}}}"
-    Set http = CreateObject("MSXML2.ServerXMLHTTP.6.0")
-    http.setTimeouts 30000, 60000, 600000, 3600000
-    http.Open "POST", API_URL, True
-    http.setRequestHeader "Content-Type", "application/json"
-    http.setRequestHeader "x-api-key", apiKey
-    http.setRequestHeader "anthropic-version", "2023-06-01"
-    http.setRequestHeader "Accept", "text/event-stream"
-    http.send body
-    t0 = Timer
-    Do While http.readyState <> 4
-        Application.StatusBar = "Drafting the Employer's Assessment Report… " & Format$((Timer - t0) / 86400, "nn:ss") & " elapsed (usually 3–10 minutes)"
-        DoEvents
-        Application.Wait Now + TimeSerial(0, 0, 1)
-    Loop
-    status = http.Status
-    resp = http.responseText
+    #If Mac Then
+        resp = CurlPost(apiKey, body, status)
+    #Else
+        Set http = CreateObject("MSXML2.ServerXMLHTTP.6.0")
+        http.setTimeouts 30000, 60000, 600000, 3600000
+        http.Open "POST", API_URL, True
+        http.setRequestHeader "Content-Type", "application/json"
+        http.setRequestHeader "x-api-key", apiKey
+        http.setRequestHeader "anthropic-version", "2023-06-01"
+        http.setRequestHeader "Accept", "text/event-stream"
+        http.send body
+        t0 = Timer
+        Do While http.readyState <> 4
+            Application.StatusBar = "Drafting the Employer's Assessment Report… " & Format$((Timer - t0) / 86400, "nn:ss") & " elapsed (usually 3–10 minutes)"
+            DoEvents
+            Application.Wait Now + TimeSerial(0, 0, 1)
+        Loop
+        status = http.Status
+        resp = http.responseText
+    #End If
     Application.StatusBar = False
     If status <> 200 Then
         Dim errMsg As String
@@ -270,6 +396,42 @@ Private Function CallClaude(ByVal apiKey As String, ByVal model As String, ByVal
     End If
     CallClaude = AssembleStream(resp)
 End Function
+
+#If Mac Then
+' On the Mac the request goes through curl (the Windows network component does not exist there).
+Private Function CurlPost(ByVal apiKey As String, ByVal body As String, ByRef status As Long) As String
+    Dim tmp As String, reqFile As String, respFile As String, f As Integer, b() As Byte, cmd As String, code As String
+    tmp = Environ$("TMPDIR")
+    If Len(tmp) = 0 Then tmp = Environ$("HOME") & "/"
+    If Right$(tmp, 1) <> "/" Then tmp = tmp & "/"
+    reqFile = tmp & "marina_ear_request.json"
+    respFile = tmp & "marina_ear_response.txt"
+    On Error Resume Next
+    Kill reqFile
+    Kill respFile
+    On Error GoTo 0
+    b = StrConv(body, vbFromUnicode)
+    f = FreeFile
+    Open reqFile For Binary Access Write As #f
+    Put #f, , b
+    Close #f
+    Application.StatusBar = "Drafting the Employer's Assessment Report… this usually takes 3–10 minutes"
+    DoEvents
+    cmd = "curl -s -S -m 3600 -X POST " & API_URL & " -H 'Content-Type: application/json' -H 'x-api-key: " & apiKey & "' -H 'anthropic-version: 2023-06-01' -H 'Accept: text/event-stream' --data-binary @'" & reqFile & "' -o '" & respFile & "' -w '%{http_code}'"
+    On Error GoTo noShell
+    code = MacScript("do shell script """ & cmd & """")
+    On Error GoTo 0
+    status = Val(code)
+    b = ReadBytes(respFile)
+    CurlPost = Utf8Decode(b)
+    On Error Resume Next
+    Kill reqFile
+    Kill respFile
+    Exit Function
+noShell:
+    Err.Raise vbObjectError + 305, "CallClaude", "Excel for Mac could not run the network request (" & Err.Description & "). Use the website's Claim EAR page, or Excel for Windows."
+End Function
+#End If
 
 ' Joins the text deltas of a server-sent-events stream into the final text.
 Private Function AssembleStream(ByVal resp As String) As String

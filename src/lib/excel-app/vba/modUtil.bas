@@ -263,13 +263,85 @@ Public Sub Busy(ByVal isBusy As Boolean, Optional ByVal msg As String = "")
 End Sub
 
 Public Function PickFile(ByVal title As String, ByVal filterDesc As String, ByVal filterExt As String) As String
-    Dim fd As Object
-    Set fd = Application.FileDialog(3)
-    With fd
-        .Title = title
-        .AllowMultiSelect = False
-        .Filters.Clear
-        .Filters.Add filterDesc, filterExt
-        If .Show = -1 Then PickFile = .SelectedItems(1) Else PickFile = ""
-    End With
+    Dim fd As Object, v As Variant
+    #If Mac Then
+        v = Application.GetOpenFilename(, , title)
+        If VarType(v) = vbBoolean Then PickFile = "" Else PickFile = CStr(v)
+    #Else
+        On Error GoTo plain
+        Set fd = Application.FileDialog(3)
+        With fd
+            .Title = title
+            .AllowMultiSelect = False
+            .Filters.Clear
+            .Filters.Add filterDesc, filterExt
+            If .Show = -1 Then PickFile = .SelectedItems(1) Else PickFile = ""
+        End With
+        Exit Function
+plain:
+        v = Application.GetOpenFilename(filterDesc & " (" & filterExt & ")," & filterExt, , title)
+        If VarType(v) = vbBoolean Then PickFile = "" Else PickFile = CStr(v)
+    #End If
+End Function
+
+' ---- platform ------------------------------------------------------------------------------
+
+Public Function IsMac() As Boolean
+    #If Mac Then
+        IsMac = True
+    #End If
+End Function
+
+Public Function PathSep() As String
+    PathSep = Application.PathSeparator
+End Function
+
+' The folder a save dialog starts in: next to this workbook, else the user's Documents folder.
+Public Function DefaultFolder() As String
+    DefaultFolder = ThisWorkbook.Path
+    If Len(DefaultFolder) > 0 Then Exit Function
+    #If Mac Then
+        DefaultFolder = Environ$("HOME") & "/Documents"
+    #Else
+        DefaultFolder = Environ$("USERPROFILE") & "\Documents"
+    #End If
+End Function
+
+' A "save as" dialog that works on both platforms (the Windows file filter is not understood on the Mac).
+Public Function SaveAsName(ByVal initial As String, ByVal filter As String, ByVal title As String) As String
+    Dim v As Variant
+    #If Mac Then
+        v = Application.GetSaveAsFilename(initial, , , title)
+    #Else
+        v = Application.GetSaveAsFilename(initial, filter, , title)
+    #End If
+    If VarType(v) = vbBoolean Then SaveAsName = "" Else SaveAsName = CStr(v)
+End Function
+
+' The files of a folder (full paths), then its sub-folders, without the Windows-only FileSystemObject.
+Public Function FolderEntries(ByVal folder As String, ByVal subFolders As Boolean) As Collection
+    Dim out As New Collection, n As String, full As String, attr As Long
+    If Right$(folder, 1) <> PathSep() Then folder = folder & PathSep()
+    On Error Resume Next
+    n = Dir(folder, vbDirectory Or vbNormal)
+    On Error GoTo 0
+    Do While Len(n) > 0
+        If n <> "." And n <> ".." Then
+            full = folder & n
+            attr = 0
+            On Error Resume Next
+            attr = GetAttr(full)
+            On Error GoTo 0
+            If ((attr And vbDirectory) <> 0) = subFolders Then out.Add full
+        End If
+        n = Dir()
+    Loop
+    Set FolderEntries = out
+End Function
+
+Public Function FileBaseName(ByVal path As String) As String
+    Dim p As Long
+    p = InStrRev(path, "\")
+    If InStrRev(path, "/") > p Then p = InStrRev(path, "/")
+    FileBaseName = Mid$(path, p + 1)
 End Function

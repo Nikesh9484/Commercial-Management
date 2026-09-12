@@ -8,7 +8,7 @@ Option Explicit
 
 Private Function Synonyms(ByVal tableName As String) As Object
     Dim d As Object
-    Set d = CreateObject("Scripting.Dictionary")
+    Set d = New Dict
     Select Case tableName
         Case "tblBonds"
             d.Add "Ref", "ref|no|srno|reference"
@@ -117,8 +117,8 @@ End Function
 Private Function MapColumns(ByRef a As Variant, ByVal hdr As Long, ByVal cols As Long, ByVal tableName As String) As Object
     Dim syn As Object, map As Object, used As Object, col As Variant, c As Long, n As String, parts() As String, p As Long, score As Long, bestC As Long, bestS As Long
     Set syn = Synonyms(tableName)
-    Set map = CreateObject("Scripting.Dictionary")
-    Set used = CreateObject("Scripting.Dictionary")
+    Set map = New Dict
+    Set used = New Dict
     For Each col In syn.Keys
         bestC = 0
         bestS = 0

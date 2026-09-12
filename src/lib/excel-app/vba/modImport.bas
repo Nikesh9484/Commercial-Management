@@ -304,7 +304,7 @@ Private Function ImportCostLines(ByVal wb As Workbook, ByVal asset As String) As
         ImportCostLines = "Schedule B not found – cost lines unchanged."
         Exit Function
     End If
-    Set seen = CreateObject("Scripting.Dictionary")
+    Set seen = New Dict
     a = Grid(ws)
     hdr = HeaderRowWith(a, 12, "code", "package", "approved baseline budget")
     cols = lo.ListColumns.Count
@@ -426,9 +426,9 @@ Private Function ImportContractsAndIpcs(ByVal wb As Workbook, ByVal periodEnd As
     Set H = SheetNamed(wb, "Schedule H")
     ReDim outC(1 To 400, 1 To loC.ListColumns.Count)
     Dim paramsBy As Object, fragBy As Object, engFragBy As Object
-    Set paramsBy = CreateObject("Scripting.Dictionary")
-    Set fragBy = CreateObject("Scripting.Dictionary")
-    Set engFragBy = CreateObject("Scripting.Dictionary")
+    Set paramsBy = New Dict
+    Set fragBy = New Dict
+    Set engFragBy = New Dict
     ' the per-contract IPC sheets and their layout
     Set ipcSheets = New Collection
     For Each ws In wb.Worksheets
@@ -457,7 +457,7 @@ Private Function ImportContractsAndIpcs(ByVal wb As Workbook, ByVal periodEnd As
     Next s
     ' contracts
     Dim contractByFrag As Object
-    Set contractByFrag = CreateObject("Scripting.Dictionary")
+    Set contractByFrag = New Dict
     If Not H Is Nothing Then
         a = Grid(H)
         hdr = HeaderRowWith(a, 11, "sr nr", "name", "original contract")
@@ -565,7 +565,7 @@ nextL:
         End If
         prevCum = 0
         cnt = 0
-        Set seenApp = CreateObject("Scripting.Dictionary")
+        Set seenApp = New Dict
         For r = ih + 3 To UBound(ia, 1)
             If StartsWith(UCase$(Txt(ia, r, 1)), "TOTAL") Then Exit For
             If Not IsNum(ia, r, 1) Or Not IsNum(ia, r, 6) Then GoTo nextI
@@ -710,7 +710,7 @@ Private Function ImportChanges(ByVal wb As Workbook, ByVal asset As String) As S
         ImportChanges = "Schedule C not found – changes unchanged."
         Exit Function
     End If
-    Set seen = CreateObject("Scripting.Dictionary")
+    Set seen = New Dict
     a = Grid(ws)
     hdr = HeaderRowWith(a, 16, "item", "description of change")
     ReDim out(1 To UBound(a, 1) + 1, 1 To lo.ListColumns.Count)
@@ -847,7 +847,7 @@ Private Function ImportEarlyWarnings(ByVal wb As Workbook, ByVal periodEnd As Da
         ImportEarlyWarnings = "Early Warning sheet not found – early warnings unchanged."
         Exit Function
     End If
-    Set seen = CreateObject("Scripting.Dictionary")
+    Set seen = New Dict
     a = Grid(ws)
     ReDim out(1 To UBound(a, 1) + 1, 1 To lo.ListColumns.Count)
     For r = 1 To UBound(a, 1)
@@ -956,7 +956,7 @@ Private Function ImportTransfers(ByVal wb As Workbook, ByVal periodEnd As Date) 
         ImportTransfers = "Schedule J not found – budget transfers unchanged."
         Exit Function
     End If
-    Set seen = CreateObject("Scripting.Dictionary")
+    Set seen = New Dict
     a = Grid(ws)
     hdr = HeaderRowWith(a, 11, "item", "from package")
     ReDim out(1 To UBound(a, 1) + 1, 1 To lo.ListColumns.Count)

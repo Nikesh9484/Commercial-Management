@@ -840,6 +840,7 @@ async function toMacroWorkbook(xlsx: Buffer, sheets: string[]): Promise<Buffer> 
   const modules: VbaModule[] = [
     { name: "ThisWorkbook", type: "document", code: "Option Explicit\r\n\r\nPrivate Sub Workbook_Open()\r\n    modMain.AppStart\r\nEnd Sub\r\n" },
     ...sheets.map((s) => ({ name: codeName(s), type: "document" as const, code: "Option Explicit\r\n" })),
+    { name: "Dict", type: "class" as const, code: fs.readFileSync(path.join(dir, "Dict.cls"), "utf8") },
     ...["modUtil", "modJson", "modAuth", "modMain", "modPeriods", "modImport", "modImportGeneric", "modReports", "modPresentation", "modEar"].map((m) => ({ name: m, type: "standard" as const, code: fs.readFileSync(path.join(dir, `${m}.bas`), "utf8") })),
   ];
   const bin = buildVbaProject(modules, { projectName: "CommercialDashboard" });
@@ -879,6 +880,7 @@ export async function excelEditionModulesZip(): Promise<Buffer> {
   const dir = vbaDir();
   const zip = new JSZip();
   for (const m of ["modUtil", "modJson", "modAuth", "modMain", "modPeriods", "modImport", "modImportGeneric", "modReports", "modPresentation", "modEar"]) zip.file(`${m}.bas`, `Attribute VB_Name = "${m}"\r\n` + fs.readFileSync(path.join(dir, `${m}.bas`), "utf8").replace(/\r?\n/g, "\r\n"));
+  zip.file("Dict.cls", `VERSION 1.0 CLASS\r\nBEGIN\r\n  MultiUse = -1  'True\r\nEND\r\nAttribute VB_Name = "Dict"\r\nAttribute VB_GlobalNameSpace = False\r\nAttribute VB_Creatable = False\r\nAttribute VB_PredeclaredId = False\r\nAttribute VB_Exposed = False\r\n` + fs.readFileSync(path.join(dir, "Dict.cls"), "utf8").replace(/\r?\n/g, "\r\n"));
   zip.file("ThisWorkbook.txt", "Option Explicit\r\n\r\nPrivate Sub Workbook_Open()\r\n    modMain.AppStart\r\nEnd Sub\r\n");
   zip.file(
     "README.txt",
@@ -887,7 +889,7 @@ export async function excelEditionModulesZip(): Promise<Buffer> {
       "",
       "Only needed if Excel says the macros in the downloaded .xlsm cannot be read.",
       "1. Open the .xlsm, press Alt+F11 to open the VBA editor.",
-      "2. File > Import File… and import each .bas file (modUtil first).",
+      "2. File > Import File… and import Dict.cls, then each .bas file (modUtil first).",
       "3. Double-click ThisWorkbook in the project tree and paste the contents of ThisWorkbook.txt.",
       "4. Save as .xlsm, close and reopen the file, then sign in.",
     ].join("\r\n"),
