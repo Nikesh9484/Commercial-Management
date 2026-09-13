@@ -277,10 +277,10 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo, progres
       return o;
     };
 
-    // rows go in batches of 50, each its own transaction, with a breather for other requests in between
+    // rows go in batches of 10, each its own transaction, with a breather for other requests in between
     const rowNos: number[] = [];
     for (let r = m.headerRow + 1; r <= ws.rowCount; r++) if (ws.rows.get(r)) rowNos.push(r);
-    const BATCH = 50;
+    const BATCH = 10;
     const sheetLabel = `${m.sheet} → ${def.title}`;
     progress(sheetLabel, 0, rowNos.length);
     for (let b = 0; b < rowNos.length; b += BATCH) {
