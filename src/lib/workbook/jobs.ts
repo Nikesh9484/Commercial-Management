@@ -3,6 +3,7 @@ import { importWorkbook, type ImportRequest, type ImportResult } from "./import"
 import { withHeavyLock } from "./heavy";
 import { ValidationError } from "../registers/engine";
 import { getDb, getSetting, setSetting } from "../db";
+import { putTrace, getTrace } from "../cloud-backup";
 
 /** The last step an import reached, kept in the database so it survives a restart of the server. */
 export interface ImportTrace {
@@ -24,6 +25,17 @@ export function lastImportTrace(): ImportTrace | null {
   } catch {
     return null;
   }
+}
+
+/** The trace of a job: the local one when it matches, else the copy kept in the backup store. */
+export async function traceFor(jobId: string): Promise<(ImportTrace & { ended?: string }) | null> {
+  const local = lastImportTrace();
+  const remote = (await getTrace()) as (ImportTrace & { ended?: string }) | null;
+  const r = remote && remote.jobId === jobId ? remote : null;
+  const l = local && local.jobId === jobId ? local : null;
+  if (!l && !r) return null;
+  // the store's copy carries how the process ended; the local copy may be the more recent step
+  return { ...(r ?? {}), ...(l ?? {}), ended: r?.ended ?? l?.ended } as ImportTrace & { ended?: string };
 }
 
 /**
@@ -64,7 +76,14 @@ export function startImportJob(req: ImportRequest, user: UserInfo): ImportJob {
     } catch {
       /* the trace is best effort */
     }
+    // mirrored to the backup store (survives a wiped disk), at most every 8 seconds while running
+    (globalThis as { __cdImportTrace?: Record<string, unknown> }).__cdImportTrace = status === "running" ? { ...t } : undefined;
+    if (status !== "running" || Date.now() - lastRemote > 8000) {
+      lastRemote = Date.now();
+      void putTrace(t as unknown as Record<string, unknown>);
+    }
   };
+  let lastRemote = 0;
   const progress = (phase: string, done?: number, total?: number) => {
     job.phase = phase;
     job.done = done;

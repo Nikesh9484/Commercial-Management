@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -191,6 +192,51 @@ function changeSignature(): string {
   return parts.join("|");
 }
 
+const TRACE_KEY = "import-trace.json";
+
+/**
+ * A small note about the running import (step reached, memory, how the process ended) kept in the
+ * backup store, because the server's disk – and with it the database – is wiped when the host restarts
+ * the instance, taking the local trace with it.
+ */
+export async function putTrace(obj: Record<string, unknown>): Promise<void> {
+  if (!isConfigured()) return;
+  try {
+    await store().put(TRACE_KEY, Buffer.from(JSON.stringify({ ...obj, savedAt: new Date().toISOString() }, null, 1)));
+  } catch (e) {
+    console.error("[backup] trace not saved:", e instanceof Error ? e.message : String(e));
+  }
+}
+
+/**
+ * The same note written synchronously through a child process: used when the process is being stopped
+ * or is crashing, when nothing asynchronous would get the chance to finish (Next.js exits on SIGTERM).
+ */
+export function putTraceSync(obj: Record<string, unknown>): void {
+  if (!isConfigured()) return;
+  try {
+    const r = spawnSync(process.execPath, [path.join(process.cwd(), "scripts", "put-trace.cjs")], { input: JSON.stringify({ ...obj, savedAt: new Date().toISOString() }, null, 1), stdio: ["pipe", "inherit", "inherit"], timeout: 20_000 });
+    if (r.status !== 0) console.error(`[backup] trace note not saved (exit ${r.status ?? r.signal})`);
+  } catch (e) {
+    console.error("[backup] trace note failed:", e instanceof Error ? e.message : String(e));
+  }
+}
+
+export async function getTrace(): Promise<Record<string, unknown> | null> {
+  if (!isConfigured()) return null;
+  try {
+    const b = await store().get(TRACE_KEY);
+    return b ? (JSON.parse(b.toString("utf8")) as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The import currently running (set by the job runner) so a shutdown can note where it got to. */
+export function currentImportTrace(): Record<string, unknown> | null {
+  return (globalThis as { __cdImportTrace?: Record<string, unknown> }).__cdImportTrace ?? null;
+}
+
 /** Upload now (used by the timer, the shutdown hook and the Settings button). */
 export async function backupNow(reason = "manual", opts: { force?: boolean } = {}): Promise<void> {
   const status = backupStatus();
@@ -242,9 +288,21 @@ export function startBackupLoop(): void {
   g.__cdBackupTimer.unref();
   const onExit = (signal: string) => {
     console.log(`[backup] ${signal} received – final upload`);
+    const running = currentImportTrace();
+    if (running && running.status === "running") putTraceSync({ ...running, ended: `${signal} received by the process while the import was running (the host stopped the instance – a restart, a deploy, or a failed health check)` });
     backupNow("shutdown").finally(() => process.exit(0));
   };
   process.once("SIGTERM", () => onExit("SIGTERM"));
   process.once("SIGINT", () => onExit("SIGINT"));
+  // a crash is noted with its reason before the process goes down
+  const onCrash = (kind: string) => (e: unknown) => {
+    const msg = e instanceof Error ? `${e.name}: ${e.message}\n${e.stack ?? ""}` : String(e);
+    console.error(`[crash] ${kind}: ${msg}`);
+    const running = currentImportTrace();
+    putTraceSync({ ...(running ?? {}), ended: `${kind}: ${msg.slice(0, 1500)}`, rssMb: Math.round(process.memoryUsage().rss / 1048576) });
+    process.exit(1);
+  };
+  process.on("uncaughtException", onCrash("uncaught exception"));
+  process.on("unhandledRejection", onCrash("unhandled rejection"));
   console.log(`[backup] cloud backup enabled -> ${store().label}/${KEY}`);
 }
