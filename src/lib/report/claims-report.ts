@@ -1,6 +1,6 @@
 import type { ReportData } from "./data";
 import type { RecordRow } from "../registers/types";
-import { claimCostReportAmount } from "../registers/defs/claims";
+import { claimCostReportAmount, ASSESSMENT_PARTIES, EAR_STEPS, NOTICE_LIMIT_DAYS, DETAIL_LIMIT_DAYS } from "../registers/defs/claims";
 import { formatMoney, formatDate } from "../format";
 
 /**
@@ -25,6 +25,64 @@ export interface ClaimLine {
   stage: string;
   actionWith: string;
   inCostReport: boolean;
+  /** Every tracker column, grouped for the claim-by-claim detail pages. */
+  detail: ClaimDetail;
+}
+
+export interface KV {
+  label: string;
+  value: string;
+}
+
+export interface ClaimDetail {
+  contractNo: string;
+  assessmentType: string;
+  trackerItem: string;
+  scope: string;
+  notice: KV[];
+  particulars: KV[];
+  parties: { party: string; eot: string; compensable: string; sar: string; ref: string; date: string }[];
+  ear: KV[];
+  actions: KV[];
+  kpi: KV[];
+  project: KV[];
+  lastAction: string;
+  remark: string;
+}
+
+export interface AgeBucket {
+  bucket: string;
+  n: number;
+  sar: number;
+  refs: string[];
+}
+
+export interface ActionLine {
+  actionWith: string;
+  n: number;
+  sar: number;
+  refs: string[];
+}
+
+export interface EarLine {
+  claim_no: string;
+  contractor: string;
+  assessmentType: string;
+  start: string;
+  steps: { label: string; days: string; done: string; state: string }[];
+  status: string;
+}
+
+export interface EscalationLine {
+  claim_no: string;
+  contractor: string;
+  description: string;
+  rejection: string;
+  nod: string;
+  dispute: string;
+  assessmentReport: string;
+  eiDvo: string;
+  closure: string;
 }
 
 export interface ContractorLine {
@@ -61,6 +119,14 @@ export interface ClaimsReport {
   attention: string[];
   claims: ClaimLine[];
   byContractor: ContractorLine[];
+  /** Open claims by days since the (detailed) claim was received – the Claims Tracker's response-time bands. */
+  ageing: AgeBucket[];
+  /** Open claims by the party the next action rests with. */
+  byAction: ActionLine[];
+  /** Claims with an EAR / HLEAR timetable on the tracker. */
+  ear: EarLine[];
+  /** Rejections, notices of dissatisfaction and disputes. */
+  escalations: EscalationLine[];
 }
 
 const num = (v: unknown) => (v === null || v === undefined || v === "" ? 0 : Number(v));
@@ -79,7 +145,7 @@ function stageOf(r: RecordRow): { stage: string; actionWith: string } {
   const status = String(r.status ?? "");
   const note = String(r.notes ?? "");
   const m = /Action with:\s*([^·|\n]+)/i.exec(note);
-  let actionWith = m ? m[1].trim().slice(0, 40) : "";
+  let actionWith = String(r.action_with ?? "").trim().slice(0, 40) || (m ? m[1].trim().slice(0, 40) : "");
   if (/^(closed|n\/?a|none|-)$/i.test(actionWith)) actionWith = "";
   if (status === "Rejected") return { stage: "Rejected / not to proceed", actionWith: actionWith || "Closed" };
   if (status.startsWith("Approved")) return { stage: has(r.determination_ref) || has(r.determination_cost) || has(r.determination_eot_days) ? "Determined / agreed" : "Approved", actionWith: actionWith || "Closed" };
@@ -89,6 +155,100 @@ function stageOf(r: RecordRow): { stage: string; actionWith: string } {
   if (has(r.engineer_ref) || has(r.engineer_date) || has(r.engineer_cost) || has(r.engineer_eot_days)) return { stage: "Engineer's recommendation issued – Employer's assessment due", actionWith: actionWith || "Employer's Representative" };
   if (has(r.resubmission_date)) return { stage: "Resubmitted – under assessment", actionWith: actionWith || "Engineer's Representative" };
   return { stage: "Detailed claim received – under assessment", actionWith: actionWith || "Engineer's Representative" };
+}
+
+const txt = (v: unknown) => (v === null || v === undefined ? "" : String(v).trim());
+const dt = (v: unknown) => (has(v) ? formatDate(String(v)) : "");
+const n0 = (v: unknown) => (has(v) ? String(Number(v)) : "");
+const sarTxt = (v: unknown) => (has(v) ? formatMoney(Number(v)) : "");
+const yn = (v: unknown) => (v === true || v === 1 ? "Yes" : v === false || v === 0 ? "No" : "");
+const kv = (pairs: [string, string][]): KV[] => pairs.filter(([, v]) => v !== "").map(([label, value]) => ({ label, value }));
+
+/** Adds calendar days to an ISO date. */
+function addDays(iso: string, days: number): string {
+  const d = new Date(iso);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+/** EAR / HLEAR timetable of a claim: each step's allowance, completion and state at the cut-off. */
+function earSteps(r: RecordRow, asOf: string): EarLine["steps"] {
+  const start = r.ear_start_date as string | null;
+  let from = start;
+  return EAR_STEPS.map((st) => {
+    const days = r[`${st.prefix}_days`];
+    const done = r[`${st.prefix}_date`] as string | null;
+    const due = from && has(days) ? addDays(from, Number(days)) : null;
+    let state = "";
+    if (done) state = due && done > due ? `done ${daysBetween(due, done)}d late` : "done";
+    else if (due) state = due < asOf ? `overdue ${daysBetween(due, asOf)}d` : `due ${formatDate(due)}`;
+    else if (has(days)) state = "not started";
+    from = done ?? due;
+    return { label: st.label, days: n0(days), done: dt(done), state };
+  });
+}
+
+function claimDetail(r: RecordRow, asOf: string): ClaimDetail {
+  const parties = ASSESSMENT_PARTIES.map((p) => ({
+    party: p.label,
+    eot: n0(r[`${p.prefix}_eot_days`]),
+    compensable: n0(r[`${p.prefix}_compensable_days`]),
+    sar: sarTxt(r[`${p.prefix}_cost`]),
+    ref: txt(r[`${p.prefix}_ref`]),
+    date: dt(r[`${p.prefix}_date`]),
+  }));
+  const steps = earSteps(r, asOf);
+  return {
+    contractNo: txt(r.contract_no),
+    assessmentType: txt(r.assessment_type),
+    trackerItem: n0(r.tracker_item),
+    scope: txt(r.scope),
+    notice: kv([
+      ["(A) Contractor became aware", dt(r.notice_aware_date)],
+      ["Notice letter", txt(r.notice_letter_ref)],
+      ["(B) Received by RSG", dt(r.notice_received_date)],
+      ["Business days A → B", has(r.notice_business_days) ? `${r.notice_business_days} (limit ${NOTICE_LIMIT_DAYS}) – ${r.notice_complies === "No" ? "late" : "within time"}` : ""],
+      ["Per tracker (20 business days)", [n0(r.notice_days_tracker), txt(r.notice_complies_tracker)].filter(Boolean).join(" – ")],
+      ["Engineer / Employer response", [txt(r.notice_response_ref), dt(r.notice_response_date)].filter(Boolean).join(", ")],
+    ]),
+    particulars: kv([
+      ["Detailed claim letter", txt(r.detail_letter_ref)],
+      ["(C) Received by RSG", dt(r.detail_received_date)],
+      ["Business days A → C", has(r.detail_business_days) ? `${r.detail_business_days} (limit ${DETAIL_LIMIT_DAYS}) – ${r.detail_complies === "No" ? "late" : "within time"}` : ""],
+      ["Per tracker (30 business days)", [n0(r.detail_days_tracker), txt(r.detail_complies_tracker)].filter(Boolean).join(" – ")],
+      ["Engineer / Employer detailed response", [txt(r.detail_response_ref), dt(r.detail_response_date)].filter(Boolean).join(", ")],
+      ["High-level EAR RFA", [txt(r.hlear_rfa_ref), dt(r.hlear_rfa_date) ? `approved ${dt(r.hlear_rfa_date)}` : ""].filter(Boolean).join(", ")],
+      ["Resubmission / further particulars", [txt(r.resubmission_ref), dt(r.resubmission_date)].filter(Boolean).join(", ")],
+    ]),
+    parties,
+    ear: kv([
+      ["EAR / HLEAR start (trigger)", dt(r.ear_start_date)],
+      ...steps.map<[string, string]>((st) => [st.label, [st.days ? `${st.days} days` : "", st.done ? `completed ${st.done}` : "", st.state && !st.done ? st.state : st.state.includes("late") ? st.state : ""].filter(Boolean).join(" – ")]),
+    ]),
+    actions: kv([
+      ["Assessment report", txt(r.assessment_report)],
+      ["EI (time) / DVO (cost)", txt(r.ei_dvo)],
+      ["Action with", txt(r.action_with)],
+      ["Discretionary EOT", txt(r.discretionary_eot)],
+      ["Rejected on merit / revise & resubmit", txt(r.rejection)],
+      ["Notice of Dissatisfaction", yn(r.nod_issued)],
+      ["Notice of Dispute", yn(r.nod_dispute)],
+      ["Carried in cost report (M)", claimCostReportAmount(r) > 0 ? `Yes – SAR ${formatMoney(claimCostReportAmount(r))}` : "No"],
+    ]),
+    kpi: kv([
+      ["Assessment report closure month", txt(r.closure_month_report)],
+      ["Discretionary EOT closure month", txt(r.closure_month_eot)],
+      ["DVO closure month", txt(r.closure_month_dvo)],
+    ]),
+    project: kv([
+      ["Project start", dt(r.project_start_date)],
+      ["Project completion", dt(r.project_completion_date)],
+      ["Revised completion", dt(r.revised_completion_date)],
+      ["Late entry in tracker", dt(r.late_entry_date)],
+    ]),
+    lastAction: txt(r.last_action),
+    remark: txt(r.remark),
+  };
 }
 
 export function buildClaimsReport(data: ReportData): ClaimsReport {
@@ -118,6 +278,7 @@ export function buildClaimsReport(data: ReportData): ClaimsReport {
       stage: st.stage,
       actionWith: st.actionWith,
       inCostReport: claimCostReportAmount(r) > 0,
+      detail: claimDetail(r, asOf),
     };
   });
   const order: Record<string, number> = { Pending: 0 };
@@ -135,7 +296,59 @@ export function buildClaimsReport(data: ReportData): ClaimsReport {
   const costReportM = rows.reduce((t, r) => t + claimCostReportAmount(r), 0);
   const noticeLate = rows.filter((r) => r.notice_complies === "No").length;
   const detailLate = rows.filter((r) => r.detail_complies === "No").length;
-  const disputes = rows.filter((r) => /Notice of (Dissatisfaction|Dispute): Yes/i.test(String(r.notes ?? "")) || r.type_other_text === "Notice of Dissatisfaction").length;
+  const disputes = rows.filter((r) => r.nod_issued === true || r.nod_issued === 1 || r.nod_dispute === true || r.nod_dispute === 1 || /Notice of (Dissatisfaction|Dispute): Yes/i.test(String(r.notes ?? "")) || r.type_other_text === "Notice of Dissatisfaction").length;
+
+  // ageing of open claims (the tracker's response-time bands, days since receipt)
+  const bands: [string, number, number][] = [["1 to 7 days", 1, 7], ["8 to 14 days", 8, 14], ["15 to 21 days", 15, 21], ["Exceeding 21 days", 22, Infinity]];
+  const ageing: AgeBucket[] = bands.map(([bucket, lo, hi]) => {
+    const inBand = pending.filter((c) => c.daysSinceReceipt !== null && c.daysSinceReceipt >= lo && c.daysSinceReceipt <= hi);
+    return { bucket, n: inBand.length, sar: inBand.reduce((t, c) => t + c.claimedSar, 0), refs: inBand.map((c) => c.claim_no) };
+  });
+  const noDate = pending.filter((c) => c.daysSinceReceipt === null);
+  if (noDate.length) ageing.push({ bucket: "No receipt date", n: noDate.length, sar: noDate.reduce((t, c) => t + c.claimedSar, 0), refs: noDate.map((c) => c.claim_no) });
+
+  // who holds the next action on the open claims
+  const byA = new Map<string, ActionLine>();
+  for (const c of pending) {
+    const k = c.actionWith || "(not stated)";
+    const row = byA.get(k) ?? { actionWith: k, n: 0, sar: 0, refs: [] };
+    row.n++;
+    row.sar += c.claimedSar;
+    row.refs.push(c.claim_no);
+    byA.set(k, row);
+  }
+  const byAction = [...byA.values()].sort((a, b) => b.n - a.n || b.sar - a.sar);
+
+  // EAR / HLEAR timetable
+  const ear: EarLine[] = rows
+    .filter((r) => has(r.ear_start_date) || EAR_STEPS.some((st) => has(r[`${st.prefix}_days`]) || has(r[`${st.prefix}_date`])))
+    .map((r) => {
+      const steps = earSteps(r, asOf);
+      const open = steps.find((st) => st.state && !st.done);
+      return {
+        claim_no: String(r.claim_no ?? ""),
+        contractor: String(r.contractor_id__label ?? ""),
+        assessmentType: txt(r.assessment_type),
+        start: dt(r.ear_start_date),
+        steps,
+        status: steps.every((st) => st.done || !st.days) ? (steps.some((st) => st.done) ? "Complete" : "") : open ? `${open.label.split(" – ")[0]}: ${open.state}` : "In progress",
+      };
+    });
+
+  // rejections, notices of dissatisfaction and disputes
+  const escalations: EscalationLine[] = rows
+    .filter((r) => has(r.rejection) || r.nod_issued === true || r.nod_issued === 1 || r.nod_dispute === true || r.nod_dispute === 1 || r.status === "Rejected")
+    .map((r) => ({
+      claim_no: String(r.claim_no ?? ""),
+      contractor: String(r.contractor_id__label ?? ""),
+      description: String(r.description ?? ""),
+      rejection: txt(r.rejection) || (r.status === "Rejected" ? "Rejected" : ""),
+      nod: yn(r.nod_issued) || "No",
+      dispute: yn(r.nod_dispute) || "No",
+      assessmentReport: txt(r.assessment_report),
+      eiDvo: txt(r.ei_dvo),
+      closure: [txt(r.closure_month_report) && `report ${txt(r.closure_month_report)}`, txt(r.closure_month_eot) && `EOT ${txt(r.closure_month_eot)}`, txt(r.closure_month_dvo) && `DVO ${txt(r.closure_month_dvo)}`].filter(Boolean).join(", "),
+    }));
 
   // by contractor
   const byC = new Map<string, ContractorLine>();
@@ -174,6 +387,8 @@ export function buildClaimsReport(data: ReportData): ClaimsReport {
   if (stale.length) attention.push(`${plural(stale.length, "pending claim")} received more than 90 days ago (${list(stale.map((c) => c.claim_no))}) – assessment overdue against the contract timetable.`);
   if (noticeLate) attention.push(`${plural(noticeLate, "claim")} notified later than the contractual notice period – a time-bar defence is available and should be preserved in the response.`);
   if (disputes) attention.push(`${plural(disputes, "claim")} carry a Notice of Dissatisfaction or Dispute – escalation risk; legal / senior review recommended.`);
+  const earLate = ear.filter((e) => e.steps.some((st) => st.state.startsWith("overdue")));
+  if (earLate.length) attention.push(`${plural(earLate.length, "assessment report")} (EAR / HLEAR) ${earLate.length === 1 ? "is" : "are"} past the tracker's timetable (${list(earLate.map((e) => e.claim_no))}) – the draft, TIA or final report is overdue.`);
   const unlinked = rows.filter((r) => !r.cost_line_id).length;
   if (unlinked) attention.push(`${plural(unlinked, "claim")} not yet linked to a cost report line – link them so the cost report reflects any determination.`);
 
@@ -255,5 +470,9 @@ export function buildClaimsReport(data: ReportData): ClaimsReport {
     attention,
     claims,
     byContractor,
+    ageing,
+    byAction,
+    ear,
+    escalations,
   };
 }

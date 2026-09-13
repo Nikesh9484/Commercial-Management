@@ -24,9 +24,9 @@ export const MAX_ROWS_PER_SHEET = 20000;
 export async function readWorkbookValues(filePath: string): Promise<SheetValues[]> {
   const script = path.join(process.cwd(), "scripts", "read-workbook.cjs");
   const outFile = `${filePath}.values.json`;
-  const heapMb = Number(process.env.WORKBOOK_READER_HEAP_MB || 200);
+  const heapMb = Number(process.env.WORKBOOK_READER_HEAP_MB || 112);
   const result = await new Promise<{ code: number | null; signal: NodeJS.Signals | null; stderr: string }>((resolve, reject) => {
-    const child = execFile(process.execPath, [`--max-old-space-size=${heapMb}`, script, filePath, outFile], { timeout: 120_000, maxBuffer: 1 << 20 }, (error, _stdout, stderr) => {
+    const child = execFile(process.execPath, [`--max-old-space-size=${heapMb}`, "--max-semi-space-size=8", "--expose-gc", script, filePath, outFile], { timeout: 120_000, maxBuffer: 1 << 20 }, (error, _stdout, stderr) => {
       const err = error as (Error & { code?: number | string; signal?: NodeJS.Signals; killed?: boolean }) | null;
       if (err && typeof err.code !== "number" && !err.signal && !err.killed) return reject(err); // could not start node at all
       resolve({ code: err ? (typeof err.code === "number" ? err.code : null) : 0, signal: err?.signal ?? null, stderr: String(stderr ?? "") });

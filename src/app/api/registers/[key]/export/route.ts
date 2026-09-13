@@ -1,3 +1,4 @@
+import { withHeavyLock } from "@/lib/workbook/heavy";
 import { withUser } from "@/lib/api";
 import { requireDef, assertCanView } from "@/lib/registers/engine";
 import { exportRegister } from "@/lib/excel";
@@ -5,7 +6,7 @@ import { todayIso } from "@/lib/format";
 
 type Ctx = { params: Promise<{ key: string }> };
 
-export async function GET(req: Request, ctx: Ctx) {
+async function heavyGET(req: Request, ctx: Ctx) {
   return withUser<Ctx>(async (user, { params }) => {
   const { key } = await params;
   const def = requireDef(key);
@@ -21,3 +22,6 @@ export async function GET(req: Request, ctx: Ctx) {
   });
   })(req, ctx);
 }
+
+/** Heavy work runs one request at a time and hands memory back afterwards (small hosting plan). */
+export const GET: typeof heavyGET = (...args) => withHeavyLock(() => heavyGET(...args));

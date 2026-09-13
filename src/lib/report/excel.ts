@@ -236,6 +236,57 @@ export function claimsReportSheet(wb: ExcelJS.Workbook, d: ReportData) {
     const row = ws.addRow([c.contractor, c.claims, c.pending, c.claimedSar, c.determinedSar, c.eotClaimed, c.eotGranted]);
     [4, 5].forEach((i) => (row.getCell(i).numFmt = MONEY_FMT));
   }
+  ws.addRow([]);
+  ws.addRow(["Ageing of open claims (days since receipt)"]).font = { bold: true, size: 12, color: { argb: NAVY } };
+  header(ws.addRow(["Days since receipt", "Claims", "Claimed SAR", "References"]));
+  for (const a of r.ageing) {
+    const row = ws.addRow([a.bucket, a.n, a.sar, a.refs.join(", ")]);
+    row.getCell(3).numFmt = MONEY_FMT;
+  }
+  if (r.byAction.length) {
+    ws.addRow([]);
+    ws.addRow(["Open claims by action holder"]).font = { bold: true, size: 12, color: { argb: NAVY } };
+    header(ws.addRow(["Action with", "Claims", "Claimed SAR", "References"]));
+    for (const a of r.byAction) {
+      const row = ws.addRow([a.actionWith, a.n, a.sar, a.refs.join(", ")]);
+      row.getCell(3).numFmt = MONEY_FMT;
+    }
+  }
+  if (r.ear.length) {
+    ws.addRow([]);
+    ws.addRow(["EAR / HLEAR progress against the tracker timetable"]).font = { bold: true, size: 12, color: { argb: NAVY } };
+    header(ws.addRow(["Ref", "Contractor", "Assessment", "Trigger date", "Draft (pre-TIA) days", "Draft completed / state", "TIA days", "TIA completed / state", "Finalisation days", "Finalisation completed / state", "Status"]));
+    for (const e of r.ear) ws.addRow([e.claim_no, e.contractor, e.assessmentType, e.start, e.steps[0].days, e.steps[0].done || e.steps[0].state, e.steps[1].days, e.steps[1].done || e.steps[1].state, e.steps[2].days, e.steps[2].done || e.steps[2].state, e.status]);
+  }
+  if (r.escalations.length) {
+    ws.addRow([]);
+    ws.addRow(["Rejections, notices of dissatisfaction and disputes"]).font = { bold: true, size: 12, color: { argb: "FF7C2D12" } };
+    header(ws.addRow(["Ref", "Contractor", "Claim", "Rejected / revise & resubmit", "Notice of Dissatisfaction", "Notice of Dispute", "Assessment report", "EI / DVO", "Closure months"]));
+    for (const e of r.escalations) ws.addRow([e.claim_no, e.contractor, e.description, e.rejection, e.nod, e.dispute, e.assessmentReport, e.eiDvo, e.closure]);
+  }
+
+  // Every column of every claim on its own sheet
+  const reg = d.registers.claims;
+  if (reg) {
+    const ws2 = wb.addWorksheet("Claims detail (all columns)");
+    const fields = reg.def.fields.filter((f) => !f.hideInForm || f.virtual).filter((f) => f.key !== "programme_id");
+    titleBlock(ws2, "Claims & Disputes – every column of the Claims Tracker", `${sub(d)} · as at ${formatDate(r.asOf)}`, Math.min(fields.length, 20));
+    header(ws2.addRow(fields.map((f) => f.label)));
+    fields.forEach((f, i) => (ws2.getColumn(i + 1).width = f.type === "textarea" ? 50 : f.type === "date" || f.type === "number" ? 12 : f.type === "money" ? 16 : 22));
+    for (const row of reg.rows) {
+      const cells = fields.map((f) => {
+        const v = f.type === "lookup" ? row[`${f.key}__label`] : row[f.key];
+        if (f.type === "boolean") return v === true || v === 1 ? "Yes" : v === false || v === 0 ? "No" : "";
+        return v === null || v === undefined ? "" : (v as string | number);
+      });
+      const out = ws2.addRow(cells);
+      fields.forEach((f, i) => {
+        if (f.type === "money" && typeof cells[i] === "number") out.getCell(i + 1).numFmt = MONEY_FMT;
+      });
+      out.alignment = { vertical: "top", wrapText: false };
+    }
+    ws2.views = [{ state: "frozen", xSplit: 1, ySplit: ws2.rowCount - reg.rows.length }];
+  }
 }
 
 

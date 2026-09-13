@@ -1,3 +1,4 @@
+import { withHeavyLock } from "@/lib/workbook/heavy";
 import { NextResponse } from "next/server";
 import { withUser } from "@/lib/api";
 import { getAppContext } from "@/lib/context";
@@ -6,7 +7,7 @@ import { getCashflow } from "@/lib/cashflow/compute";
 import { exportCashflow } from "@/lib/cashflow/excel";
 import { todayIso } from "@/lib/format";
 
-export const GET = withUser(async () => {
+const heavyGET = withUser(async () => {
   const ctx = getAppContext();
   if (!ctx.programme) return NextResponse.json({ error: "Select a programme first." }, { status: 400 });
   const buffer = await exportCashflow(getCashflow(getDb(), ctx.programme.id), `${ctx.programme.code} ${ctx.programme.name}`);
@@ -17,3 +18,6 @@ export const GET = withUser(async () => {
     },
   });
 });
+
+/** Heavy work runs one request at a time and hands memory back afterwards (small hosting plan). */
+export const GET: typeof heavyGET = (...args) => withHeavyLock(() => heavyGET(...args));

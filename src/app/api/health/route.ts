@@ -2,7 +2,9 @@ import { NextResponse } from "next/server";
 
 /** GET /api/health – plain status page for troubleshooting (no secrets, no login needed). */
 export async function GET() {
-  const out: Record<string, unknown> = { ok: true, time: new Date().toISOString(), node: process.version, memory_mb: Math.round(process.memoryUsage().rss / 1048576), cwd: process.cwd() };
+  const mu = process.memoryUsage();
+  const mb = (n: number) => Math.round(n / 1048576);
+  const out: Record<string, unknown> = { ok: true, time: new Date().toISOString(), node: process.version, memory_mb: mb(mu.rss), memory: { rss: mb(mu.rss), heapUsed: mb(mu.heapUsed), heapTotal: mb(mu.heapTotal), external: mb(mu.external), arrayBuffers: mb(mu.arrayBuffers) }, cwd: process.cwd() };
   try {
     const { getDb } = await import("@/lib/db");
     const db = getDb();

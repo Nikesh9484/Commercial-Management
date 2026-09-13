@@ -37,6 +37,51 @@ function assessment(prefix: string, label: string, refLabel: string): FieldDef[]
   ];
 }
 
+const EAR = "EAR / assessment progress";
+const ACTIONS = "Status, actions and notices";
+const KPI = "KPI – closure months";
+const PROJECT = "Project dates (per tracker)";
+
+/** Extension Assessment Report (EAR / HLEAR) timetable as tracked on the Claims Tracker. */
+export const EAR_STEPS = [
+  { prefix: "ear_pretia", label: "Draft report – merit & chronology (pre-TIA)" },
+  { prefix: "ear_tia", label: "TIA assessment" },
+  { prefix: "ear_final", label: "Finalisation (EAR / HLEAR / COST EAR)" },
+] as const;
+
+const EAR_FIELDS: FieldDef[] = [
+  { key: "last_action", label: "Last action / type of discussion", type: "textarea", section: EAR, hideInTable: true, help: "Last action date and the type of discussion between Employer, Engineer and Contractor." },
+  { key: "ear_start_date", label: "EAR / HLEAR start (trigger date)", type: "date", section: EAR, hideInTable: true, help: "Fully detailed claim received, or receipt of the RFA." },
+  ...EAR_STEPS.flatMap<FieldDef>((st) => [
+    { key: `${st.prefix}_days`, label: `${st.label} – days allowed`, type: "number", section: EAR, hideInTable: true },
+    { key: `${st.prefix}_date`, label: `${st.label} – completed`, type: "date", section: EAR, hideInTable: true },
+  ]),
+];
+
+const STATUS_FIELDS: FieldDef[] = [
+  { key: "discretionary_eot", label: "Discretionary EOT", type: "text", section: ACTIONS, hideInTable: true },
+  { key: "assessment_report", label: "Assessment report status", type: "text", section: ACTIONS, hideInTable: true, filter: true },
+  { key: "ei_dvo", label: "EI (time) / DVO (cost) status", type: "text", section: ACTIONS, hideInTable: true, filter: true },
+  { key: "action_with", label: "Action with", type: "text", section: ACTIONS, hideInTable: true, filter: true, chip: true },
+  { key: "remark", label: "Remark", type: "textarea", section: ACTIONS, hideInTable: true },
+  { key: "rejection", label: "Rejected on merit / revise & resubmit", type: "text", section: ACTIONS, hideInTable: true },
+  { key: "nod_issued", label: "Notice of Dissatisfaction issued", type: "boolean", defaultValue: false, section: ACTIONS, hideInTable: true, filter: true },
+  { key: "nod_dispute", label: "Notice of Dispute issued", type: "boolean", defaultValue: false, section: ACTIONS, hideInTable: true, filter: true },
+];
+
+const KPI_FIELDS: FieldDef[] = [
+  { key: "closure_month_report", label: "Assessment report closure month", type: "text", section: KPI, hideInTable: true, help: "MM-YY as on the tracker." },
+  { key: "closure_month_eot", label: "Discretionary EOT closure month", type: "text", section: KPI, hideInTable: true },
+  { key: "closure_month_dvo", label: "DVO closure month", type: "text", section: KPI, hideInTable: true },
+];
+
+const PROJECT_FIELDS: FieldDef[] = [
+  { key: "project_start_date", label: "Project start date", type: "date", section: PROJECT, hideInTable: true },
+  { key: "project_completion_date", label: "Project completion date", type: "date", section: PROJECT, hideInTable: true },
+  { key: "revised_completion_date", label: "Revised completion date", type: "date", section: PROJECT, hideInTable: true },
+  { key: "late_entry_date", label: "Entry date of late claim in the tracker", type: "date", section: PROJECT, hideInTable: true },
+];
+
 export const claims: RegisterDef = {
   key: "claims",
   table: "claims",
@@ -90,6 +135,20 @@ export const claims: RegisterDef = {
     { key: "determination_cost_view", label: "SAR determined", type: "money", virtual: true, readonly: true, hideInForm: true },
     { key: "cost_report_amount", label: "Cost report amount (M)", type: "money", virtual: true, readonly: true, hideInForm: true, help: "Determination, else Employer's assessment, else Engineer's recommendation, else Contractor's claim. Zero when Rejected or included in the lump sum." },
     { key: "notes", label: "Notes", type: "textarea", section: "Assessment – Determination / Agreement", hideInTable: true },
+
+    // Claims Tracker columns not covered above (every column of the AMAALA tracker is kept)
+    { key: "assessment_type", label: "Assessment type", type: "text", section: HEADER, hideInTable: true, filter: true, help: "As on the Claims Tracker: FULL TIA EAR (time), COST EAR (cost), HLEAR …" },
+    { key: "tracker_item", label: "Claims Tracker item No", type: "number", section: HEADER, hideInTable: true },
+    { key: "notice_days_tracker", label: "(B−A) business days per tracker", type: "number", section: NOTICE, hideInTable: true },
+    { key: "notice_complies_tracker", label: "Complies per tracker (20 business days)", type: "text", section: NOTICE, hideInTable: true },
+    { key: "detail_days_tracker", label: "(C−A) business days per tracker", type: "number", section: DETAIL, hideInTable: true },
+    { key: "detail_complies_tracker", label: "Complies per tracker (30 business days)", type: "text", section: DETAIL, hideInTable: true },
+    { key: "hlear_rfa_ref", label: "High-level EAR RFA reference", type: "text", section: DETAIL, hideInTable: true, help: "Pre-approved RFA from management, where one exists." },
+    { key: "hlear_rfa_date", label: "High-level EAR RFA approved", type: "date", section: DETAIL, hideInTable: true },
+    ...EAR_FIELDS,
+    ...STATUS_FIELDS,
+    ...KPI_FIELDS,
+    ...PROJECT_FIELDS,
   ],
 };
 

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { withHeavyLock } from "@/lib/workbook/heavy";
 import { withUser, readJson } from "@/lib/api";
 import { ask, askConfigured, type AskTurn } from "@/lib/ask/answer";
 import { buildPack } from "@/lib/ask/pack";
@@ -15,7 +16,7 @@ export async function GET(req: Request, ctx: unknown) {
   })(req, ctx);
 }
 
-export async function POST(req: Request, ctx: unknown) {
+async function heavyPOST(req: Request, ctx: unknown) {
   return withUser(async (user) => {
     const body = await readJson(req);
     const history = Array.isArray(body.history) ? (body.history as AskTurn[]).filter((t) => t && (t.role === "user" || t.role === "assistant") && typeof t.text === "string") : [];
@@ -23,3 +24,6 @@ export async function POST(req: Request, ctx: unknown) {
     return NextResponse.json(result);
   })(req, ctx);
 }
+
+/** Heavy work runs one request at a time and hands memory back afterwards (small hosting plan). */
+export const POST: typeof heavyPOST = (...args) => withHeavyLock(() => heavyPOST(...args));

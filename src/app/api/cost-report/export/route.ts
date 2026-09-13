@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { withHeavyLock } from "@/lib/workbook/heavy";
 import { withUser } from "@/lib/api";
 import { getAppContext } from "@/lib/context";
 import { computeCostReport } from "@/lib/cost-report/compute";
@@ -8,7 +9,7 @@ import { getMovement } from "@/lib/dashboard/movement";
 import { getDb } from "@/lib/db";
 import { todayIso } from "@/lib/format";
 
-export async function GET(req: Request, c: unknown) {
+async function heavyGET(req: Request, c: unknown) {
   return withUser(async () => {
   const ctx = getAppContext();
   if (!ctx.programme) return NextResponse.json({ error: "Select a programme in the top bar first." }, { status: 400 });
@@ -26,3 +27,6 @@ export async function GET(req: Request, c: unknown) {
   });
   })(req, c);
 }
+
+/** Heavy work runs one request at a time and hands memory back afterwards (small hosting plan). */
+export const GET: typeof heavyGET = (...args) => withHeavyLock(() => heavyGET(...args));

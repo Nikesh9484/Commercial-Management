@@ -664,8 +664,136 @@ function claimsStatusReport(ctx: Ctx) {
     r.byContractor as unknown as Record<string, unknown>[],
     { zebra: true },
   );
+
+  // Ageing and action holders (the Claims Tracker's "Required actions" view)
+  subheading(ctx, "Ageing of open claims", "Days since the (detailed) claim was received, pending claims only – the tracker's response-time bands.");
+  table(
+    ctx,
+    [
+      { key: "bucket", label: "Days since receipt", width: 2 },
+      { key: "n", label: "Claims", width: 0.8, align: "right" },
+      { key: "sar", label: "Claimed SAR", width: 1.5, align: "right", format: money },
+      { key: "refsTxt", label: "References", width: 5 },
+    ],
+    r.ageing.map((a) => ({ ...a, refsTxt: a.refs.join(", ") })) as unknown as Record<string, unknown>[],
+    { zebra: true },
+  );
+  if (r.byAction.length) {
+    subheading(ctx, "Open claims by action holder", "Who the next step rests with, from the tracker's \"Action with\" column.");
+    table(
+      ctx,
+      [
+        { key: "actionWith", label: "Action with", width: 2 },
+        { key: "n", label: "Claims", width: 0.8, align: "right" },
+        { key: "sar", label: "Claimed SAR", width: 1.5, align: "right", format: money },
+        { key: "refsTxt", label: "References", width: 5 },
+      ],
+      r.byAction.map((a) => ({ ...a, refsTxt: a.refs.join(", ") })) as unknown as Record<string, unknown>[],
+      { zebra: true },
+    );
+  }
+
+  // EAR / HLEAR timetable
+  if (r.ear.length) {
+    subheading(ctx, "Extension assessment reports (EAR / HLEAR) – progress against the tracker timetable", "Days = days allowed for the step from the trigger date (or the previous step); state at the cut-off date.");
+    table(
+      ctx,
+      [
+        { key: "claim_no", label: "Ref", width: 0.8 },
+        { key: "contractor", label: "Contractor", width: 1.8 },
+        { key: "assessmentType", label: "Assessment", width: 1 },
+        { key: "start", label: "Trigger date", width: 0.9 },
+        { key: "s1", label: "Draft (pre-TIA)", width: 1.6 },
+        { key: "s2", label: "TIA assessment", width: 1.6 },
+        { key: "s3", label: "Finalisation", width: 1.6 },
+        { key: "status", label: "Status", width: 1.6 },
+      ],
+      r.ear.map((e) => ({
+        ...e,
+        s1: [e.steps[0].days && `${e.steps[0].days}d`, e.steps[0].done || e.steps[0].state].filter(Boolean).join(" · "),
+        s2: [e.steps[1].days && `${e.steps[1].days}d`, e.steps[1].done || e.steps[1].state].filter(Boolean).join(" · "),
+        s3: [e.steps[2].days && `${e.steps[2].days}d`, e.steps[2].done || e.steps[2].state].filter(Boolean).join(" · "),
+      })) as unknown as Record<string, unknown>[],
+      { zebra: true },
+    );
+  }
+
+  // Rejections, notices of dissatisfaction and disputes
+  if (r.escalations.length) {
+    subheading(ctx, "Rejections, notices of dissatisfaction and disputes");
+    table(
+      ctx,
+      [
+        { key: "claim_no", label: "Ref", width: 0.8 },
+        { key: "contractor", label: "Contractor", width: 1.6 },
+        { key: "description", label: "Claim", width: 2.6 },
+        { key: "rejection", label: "Rejected / revise & resubmit", width: 1.4 },
+        { key: "nod", label: "NoD", width: 0.5 },
+        { key: "dispute", label: "Dispute", width: 0.6 },
+        { key: "assessmentReport", label: "Assessment report", width: 1.3 },
+        { key: "eiDvo", label: "EI / DVO", width: 1.2 },
+        { key: "closure", label: "Closure months", width: 1.4 },
+      ],
+      r.escalations as unknown as Record<string, unknown>[],
+      { zebra: true },
+    );
+  }
+
+  // Claim-by-claim detail: every column of the Claims Tracker
+  doc.addPage();
+  subheading(ctx, "Claim-by-claim detail", "Every column of the Claims Tracker for each claim: notice, particulars, assessment by each party, EAR timetable, status and actions.");
+  const kvCols = [
+    { key: "l1", label: "Item", width: 1.6 },
+    { key: "v1", label: "Detail", width: 3.4 },
+    { key: "l2", label: "Item", width: 1.6 },
+    { key: "v2", label: "Detail", width: 3.4 },
+  ];
+  // two lists side by side; when one is short the items are re-flowed so neither column is left blank
+  const pairRows = (left: { label: string; value: string }[], right: { label: string; value: string }[]) => {
+    const rows: Record<string, unknown>[] = [];
+    let a = left;
+    let b = right;
+    if (a.length < 2 || b.length < 2) {
+      const all = [...a, ...b];
+      const half = Math.ceil(all.length / 2);
+      a = all.slice(0, half);
+      b = all.slice(half);
+    }
+    for (let i = 0; i < Math.max(a.length, b.length); i++) rows.push({ l1: a[i]?.label ?? "", v1: a[i]?.value ?? "", l2: b[i]?.label ?? "", v2: b[i]?.value ?? "" });
+    return rows;
+  };
+  for (const c of r.claims) {
+    const d = c.detail;
+    ensureSpace(ctx, 120);
+    doc.moveDown(0.4);
+    doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(10).text(`${c.claim_no} · ${c.contractor}${d.contractNo ? ` · ${d.contractNo}` : ""}`, { width });
+    doc.fillColor("#172033").font("Helvetica").fontSize(9).text(c.description, { width });
+    doc.fillColor(MUTED).font("Helvetica").fontSize(8).text([c.type && `Type: ${c.type}`, d.assessmentType && `Assessment: ${d.assessmentType}`, `Status: ${c.status}`, `Stage: ${c.stage}`, c.actionWith && `Action with: ${c.actionWith}`, d.trackerItem && `Tracker item ${d.trackerItem}`, c.package && `Package: ${c.package}`].filter(Boolean).join("   ·   "), { width });
+    if (d.scope) doc.fillColor(MUTED).font("Helvetica").fontSize(8).text(`Scope: ${d.scope}`, { width });
+    doc.moveDown(0.2);
+    table(ctx, kvCols, pairRows(d.notice, d.particulars), { zebra: false });
+    table(
+      ctx,
+      [
+        { key: "party", label: "Assessment", width: 2.2 },
+        { key: "eot", label: "EOT days", width: 0.9, align: "right" },
+        { key: "compensable", label: "Compensable days", width: 1.2, align: "right" },
+        { key: "sar", label: "SAR", width: 1.5, align: "right" },
+        { key: "ref", label: "Letter / VO reference", width: 2.6 },
+        { key: "date", label: "Date", width: 1 },
+      ],
+      d.parties as unknown as Record<string, unknown>[],
+      { zebra: true },
+    );
+    const right = [...d.actions, ...d.kpi, ...d.project];
+    if (d.ear.length || right.length) table(ctx, kvCols, pairRows(d.ear, right), { zebra: false });
+    if (d.lastAction) doc.fillColor("#172033").font("Helvetica").fontSize(8.5).text(`Last action / discussion: ${d.lastAction}`, { width });
+    if (d.remark) doc.fillColor("#172033").font("Helvetica").fontSize(8.5).text(`Remark: ${d.remark}`, { width });
+    if (c.status === "Pending" && c.daysSinceReceipt !== null) doc.fillColor(MUTED).font("Helvetica").fontSize(8).text(`${c.daysSinceReceipt} days since receipt at the cut-off.`, { width });
+  }
+
   doc.moveDown(0.5);
-  doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(`Prepared from the Claims & Disputes register of ${APP_NAME} as at ${formatDate(r.asOf)}${data.locked ? "" : " (draft – period not locked)"}. Claimed = contractor's claim; assessed = Employer's assessment, else Engineer's recommendation; determined = determination or agreement.`, { width });
+  doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(`Prepared from the Claims & Disputes register of ${APP_NAME} as at ${formatDate(r.asOf)}${data.locked ? "" : " (draft – period not locked)"}. Claimed = contractor's claim; assessed = Employer's assessment, else Engineer's recommendation; determined = determination or agreement. Tracker columns are as imported from the AMAALA Claims Tracker (AMA-CM-FRM-0018).`, { width });
 }
 
 

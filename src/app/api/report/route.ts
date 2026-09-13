@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { withHeavyLock } from "@/lib/workbook/heavy";
 import { withUser } from "@/lib/api";
 import { getAppContext } from "@/lib/context";
 import { getReportData } from "@/lib/report/data";
@@ -7,7 +8,7 @@ import { renderMonthlyReportExcel } from "@/lib/report/excel";
 import { todayIso } from "@/lib/format";
 
 /** GET /api/report?period=ID&format=pdf|xlsx – generates the monthly report. */
-export async function GET(req: Request, ctx: unknown) {
+async function heavyGET(req: Request, ctx: unknown) {
   return withUser(async () => {
     const app = getAppContext();
     if (!app.programme) return NextResponse.json({ error: "Select a programme in the top bar first." }, { status: 400 });
@@ -27,3 +28,6 @@ export async function GET(req: Request, ctx: unknown) {
     return new Response(new Uint8Array(buffer), { headers: { "Content-Type": "application/pdf", "Content-Disposition": `attachment; filename="${base}.pdf"` } });
   })(req, ctx);
 }
+
+/** Heavy work runs one request at a time and hands memory back afterwards (small hosting plan). */
+export const GET: typeof heavyGET = (...args) => withHeavyLock(() => heavyGET(...args));

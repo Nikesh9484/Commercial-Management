@@ -172,16 +172,14 @@ export function convertClaimsTracker(sheets: SheetValues[], ctx: ClaimsTrackerCo
       const empDate = isCost ? date(v, 52) ?? date(v, 41) : date(v, 41) ?? date(v, 52);
       const detRef = isCost ? txt(v, 54) || txt(v, 44) : txt(v, 44) || txt(v, 54);
       const detDate = isCost ? date(v, 55) ?? date(v, 45) : date(v, 45) ?? date(v, 55);
-      const noteParts = [
-        `Claims Tracker item ${n} (${txt(v, 2) || "claim"})`,
-        txt(v, 67) ? `Assessment report: ${txt(v, 67)}` : "",
-        txt(v, 68) ? `EI / DVO: ${txt(v, 68)}` : "",
-        txt(v, 69) ? `Action with: ${txt(v, 69)}` : "",
-        txt(v, 73).toLowerCase() === "yes" ? "Notice of Dissatisfaction: Yes" : "",
-        txt(v, 74).toLowerCase() === "yes" ? "Notice of Dispute: Yes" : "",
-        txt(v, 66) ? `Discretionary EOT: ${txt(v, 66)}` : "",
-        txt(v, 70) ? `Remarks: ${txt(v, 70)}` : "",
-      ].filter(Boolean);
+      const noteParts = [`Claims Tracker item ${n} (${txt(v, 2) || "claim"})`];
+      const yes = (i: number) => /^y(es)?$/i.test(txt(v, i));
+      // a closure month may be typed as MM-YY or held as a date cell
+      const month = (i: number) => {
+        const d = date(v, i);
+        return d ? `${d.slice(5, 7)}-${d.slice(2, 4)}` : txt(v, i);
+      };
+      const lastAction = [date(v, 56) ?? txt(v, 56), txt(v, 57)].filter(Boolean).join(" – ");
 
       out.push([
         claimNo,
@@ -233,6 +231,38 @@ export function convertClaimsTracker(sheets: SheetValues[], ctx: ClaimsTrackerCo
         detRef,
         detDate,
         noteParts.join(" · "),
+        // every remaining tracker column
+        txt(v, 2),
+        n,
+        num(v, 18),
+        txt(v, 19),
+        num(v, 24),
+        txt(v, 25),
+        txt(v, 28),
+        date(v, 29),
+        lastAction,
+        date(v, 58),
+        num(v, 59),
+        date(v, 60),
+        num(v, 61),
+        date(v, 62),
+        num(v, 63),
+        date(v, 64),
+        txt(v, 66),
+        txt(v, 67),
+        txt(v, 68),
+        txt(v, 69),
+        txt(v, 70),
+        txt(v, 72),
+        yes(73),
+        yes(74),
+        month(76),
+        month(77),
+        month(78),
+        date(v, 80),
+        date(v, 81),
+        date(v, 82),
+        date(v, 83),
       ]);
     }
   }
@@ -251,6 +281,11 @@ export function convertClaimsTracker(sheets: SheetValues[], ctx: ClaimsTrackerCo
     ["Employer EOT days", "employer_eot_days"], ["Employer compensable days", "employer_compensable_days"], ["Employer cost (SAR)", "employer_cost"], ["Employer letter ref", "employer_ref"], ["Employer date", "employer_date"],
     ["Determination EOT days", "determination_eot_days"], ["Determination compensable days", "determination_compensable_days"], ["Determination cost (SAR)", "determination_cost"], ["Determination letter / VO ref", "determination_ref"], ["Determination date", "determination_date"],
     ["Notes", "notes"],
+    ["Assessment type", "assessment_type"], ["Claims Tracker item No", "tracker_item"], ["(B−A) business days per tracker", "notice_days_tracker"], ["Complies per tracker (20 business days)", "notice_complies_tracker"], ["(C−A) business days per tracker", "detail_days_tracker"], ["Complies per tracker (30 business days)", "detail_complies_tracker"], ["High-level EAR RFA reference", "hlear_rfa_ref"], ["High-level EAR RFA approved", "hlear_rfa_date"],
+    ["Last action / type of discussion", "last_action"], ["EAR / HLEAR start (trigger date)", "ear_start_date"], ["Pre-TIA – days allowed", "ear_pretia_days"], ["Pre-TIA – completed", "ear_pretia_date"], ["TIA – days allowed", "ear_tia_days"], ["TIA – completed", "ear_tia_date"], ["Finalisation – days allowed", "ear_final_days"], ["Finalisation – completed", "ear_final_date"],
+    ["Discretionary EOT", "discretionary_eot"], ["Assessment report status", "assessment_report"], ["EI (time) / DVO (cost) status", "ei_dvo"], ["Action with", "action_with"], ["Remark", "remark"], ["Rejected on merit / revise & resubmit", "rejection"], ["Notice of Dissatisfaction issued", "nod_issued"], ["Notice of Dispute issued", "nod_dispute"],
+    ["Assessment report closure month", "closure_month_report"], ["Discretionary EOT closure month", "closure_month_eot"], ["DVO closure month", "closure_month_dvo"],
+    ["Project start date", "project_start_date"], ["Project completion date", "project_completion_date"], ["Revised completion date", "revised_completion_date"], ["Entry date of late claim in the tracker", "late_entry_date"],
   ].map(([label, key]) => ({ label, key }));
 
   return { sheets: out.length ? [{ name: "Claims Tracker", register: "claims", columns, rows: out }] : [], notes, periodEnd: asOf, reportNo: null };

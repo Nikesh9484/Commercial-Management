@@ -348,6 +348,13 @@ function seed(db: Database.Database) {
     setSetting(db, "seeded_hold_rule", "1");
   }
 
+  // VBH's monthly workbook carries SCHD G (bonds & insurance) and the FA Status sheet; The Marina's come from the stand-alone imports.
+  if (getSetting(db, "seeded_vbh_feeds") !== "1") {
+    db.prepare("UPDATE programmes SET workbook_feeds_all = 1 WHERE code = '1TB01006'").run();
+    db.prepare("UPDATE programmes SET workbook_feeds_all = 0 WHERE workbook_feeds_all IS NULL").run();
+    setSetting(db, "seeded_vbh_feeds", "1");
+  }
+
   // Earlier versions seeded "(edit me)" placeholder names; give them their real names so no
   // report or cover page ever prints the placeholder.
   const rename = (table: string, from: string, to: string) => db.prepare(`UPDATE "${table}" SET name = ?, updated_at = ?, updated_by = 'system' WHERE name = ?`).run(to, stamp, from);

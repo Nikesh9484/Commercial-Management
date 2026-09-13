@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { withHeavyLock } from "@/lib/workbook/heavy";
 import { withUser } from "@/lib/api";
 import { getAppContext } from "@/lib/context";
 import { getReportData } from "@/lib/report/data";
@@ -14,7 +15,7 @@ import { todayIso } from "@/lib/format";
  *                                             Outlook opens it as an unsent message ready to send.
  * Optional &period=ID (defaults to the period in the top bar).
  */
-export async function GET(req: Request, ctx: unknown) {
+async function heavyGET(req: Request, ctx: unknown) {
   return withUser(async (user) => {
     const app = getAppContext();
     if (!app.programme) return NextResponse.json({ error: "Select a programme in the top bar first." }, { status: 400 });
@@ -40,3 +41,6 @@ export async function GET(req: Request, ctx: unknown) {
     });
   })(req, ctx);
 }
+
+/** Heavy work runs one request at a time and hands memory back afterwards (small hosting plan). */
+export const GET: typeof heavyGET = (...args) => withHeavyLock(() => heavyGET(...args));

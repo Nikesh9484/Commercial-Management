@@ -75,6 +75,7 @@ export const programmes: RegisterDef = {
     { key: "client_id", label: "Client", type: "lookup", lookup: { register: "clients" } },
     { key: "location_id", label: "Location", type: "lookup", lookup: { register: "locations" } },
     { key: "hold_in_afa", label: "Level 1: remaining budget hold is a commitment", type: "boolean", defaultValue: false, hideInTable: true, help: "Tick when the project's Excel Level 1 lists \"Remaining Budget Hold\" under Commitments (Village Boutique Hotel): the hold's remainder stays in the anticipated final account. Leave unticked when the Excel leaves the hold out of the anticipated final account (The Marina), so the unallocated hold shows as under budget. Set automatically when a monthly workbook is imported." },
+    { key: "workbook_feeds_all", label: "Monthly workbook feeds Bonds & Insurance and Final Account Status", type: "boolean", defaultValue: false, hideInTable: true, help: "Tick when the project's monthly workbook carries the bonds & insurance log (SCHD G) and the Final Account Status sheet, so both are recorded with every monthly import (Village Boutique Hotel). Leave unticked when they come only from their stand-alone imports (The Marina). Claims & Disputes always come from the stand-alone Claims Tracker import." },
     { key: "description", label: "Description", type: "textarea", hideInTable: true },
   ],
 };

@@ -6,6 +6,8 @@ import { getAppContext } from "@/lib/context";
 import { listPeriods } from "@/lib/snapshots";
 import { getRegisterDef } from "@/lib/registers";
 import { IMPORTABLE } from "@/lib/workbook/analyze";
+import { standaloneOnly } from "@/lib/workbook/import";
+import { getDb } from "@/lib/db";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { WorkbookImporter, type StandaloneMode } from "@/components/workbook/WorkbookImporter";
 
@@ -13,7 +15,7 @@ import { WorkbookImporter, type StandaloneMode } from "@/components/workbook/Wor
 export const IMPORT_KINDS: Record<string, { title: string; subtitle: string; only?: string[]; exclude?: string[]; intro?: string; fileHint?: string; doneHref?: string; doneLabel?: string }> = {
   monthly: {
     title: "Import monthly workbook",
-    subtitle: "Upload one of your Excel monthly reports and the app records it against a reporting period. Each month is stored as its own report, so months can be loaded in any order and each one shows its movement against the last. Claims & Disputes, Bonds & Insurance and Final Account Status are never taken from the workbook: they come only from their stand-alone imports (Claims Tracker, Bonds & Insurance, Final Account Status).",
+    subtitle: "Upload one of your Excel monthly reports and the app records it against a reporting period. Each month is stored as its own report, so months can be loaded in any order and each one shows its movement against the last. Claims & Disputes are never taken from the workbook: they come only from the stand-alone Claims Tracker import. Bonds & Insurance and Final Account Status are read from the workbook when the project is set up for it (Village Boutique Hotel); otherwise they come only from their stand-alone imports (The Marina).",
     exclude: ["claims", "bonds", "final_accounts"],
   },
   bonds: {
@@ -68,7 +70,9 @@ export default async function ImportPage({ params, searchParams }: { params: Pro
   const user = (await getCurrentUser())!;
   const ctx = getAppContext();
   const periods = listPeriods().map((p) => ({ id: p.id, label: p.label, status: p.status, report_no: p.report_no }));
-  const registers = IMPORTABLE.filter((i) => (!spec.only || spec.only.includes(i.key)) && !spec.exclude?.includes(i.key)).map((i) => {
+  // the monthly import leaves out the registers this project feeds only from stand-alone imports
+  const exclude = spec.exclude ? standaloneOnly(getDb(), ctx.programme?.id ?? 0) : undefined;
+  const registers = IMPORTABLE.filter((i) => (!spec.only || spec.only.includes(i.key)) && !exclude?.includes(i.key)).map((i) => {
     const def = getRegisterDef(i.key)!;
     return {
       key: i.key,
@@ -126,7 +130,7 @@ export default async function ImportPage({ params, searchParams }: { params: Pro
               </Link>
             </div>
           )}
-          <WorkbookImporter registers={registers} periods={periods} isAdmin={user.role === "admin"} defaultReportNo={nextNo} standalone={standalone} excludeRegisters={spec.exclude} initialPeriodId={initialPeriodId} />
+          <WorkbookImporter registers={registers} periods={periods} isAdmin={user.role === "admin"} defaultReportNo={nextNo} standalone={standalone} excludeRegisters={exclude} initialPeriodId={initialPeriodId} />
         </>
       )}
     </div>

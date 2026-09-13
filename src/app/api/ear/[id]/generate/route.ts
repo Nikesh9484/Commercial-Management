@@ -1,3 +1,4 @@
+import { releaseMemory } from "@/lib/workbook/heavy";
 import { NextResponse } from "next/server";
 import { withUser } from "@/lib/api";
 import { AuthError } from "@/lib/auth";
@@ -10,7 +11,7 @@ type Ctx = { params: Promise<{ id: string }> };
 /** Reading a whole claim folder and writing the report can take several minutes. */
 export const maxDuration = 900;
 
-export const POST = withUser<Ctx>(async (user, { params }) => {
+const heavyPOST = withUser<Ctx>(async (user, { params }) => {
   if (!canUseEar(user)) throw new AuthError("Only Editors and Admins can create an EAR.");
   const { id } = await params;
   const ctx = getAppContext();
@@ -20,3 +21,12 @@ export const POST = withUser<Ctx>(async (user, { params }) => {
   void _json;
   return NextResponse.json({ case: rest, note: r.note });
 });
+
+/** Reading the claim folder is memory-hungry; it is handed back once the report is written (the model wait itself is idle time). */
+export const POST: typeof heavyPOST = async (...args) => {
+  try {
+    return await heavyPOST(...args);
+  } finally {
+    releaseMemory();
+  }
+};

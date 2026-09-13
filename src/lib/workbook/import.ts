@@ -1,3 +1,4 @@
+import type Database from "better-sqlite3";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -91,6 +92,16 @@ export interface SheetMapping {
 
 /** Registers that are fed only by their stand-alone imports (Claims Tracker, Bonds & Insurance, Final Account Status) – never by the monthly workbook. */
 export const STANDALONE_ONLY = ["claims", "bonds", "final_accounts"] as const;
+
+/**
+ * The registers the monthly workbook must not write for a project: claims always (the Claims Tracker is
+ * stand-alone); bonds & insurance and final accounts too unless the project's workbook carries them
+ * (Settings → Programmes → "Monthly workbook feeds Bonds & Insurance and Final Account Status").
+ */
+export function standaloneOnly(db: Database.Database, programmeId: number): string[] {
+  const row = db.prepare("SELECT workbook_feeds_all FROM programmes WHERE id = ?").get(programmeId) as { workbook_feeds_all: number | null } | undefined;
+  return row?.workbook_feeds_all ? ["claims"] : [...STANDALONE_ONLY];
+}
 
 export interface ImportRequest {
   fileId: string;
@@ -188,8 +199,8 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo): Promis
     if (latest!.status !== "Locked" || !hasStoredCopy(db, latest!.id)) takeSnapshot(latest!.id, user, "preserve");
     // Starting point for the older month: that report's own stored copy (else the nearest earlier report,
     // else nothing). A full monthly import then removes, from the registers it fed, every row the workbook
-    // did not contain, so rows that only exist in later months never leak into it; the stand-alone
-    // registers (claims, bonds, final accounts) are left exactly as that report holds them.
+    // did not contain, so rows that only exist in later months never leak into it; the project's
+    // stand-alone registers (see standaloneOnly) are left exactly as that report holds them.
     const own = hasStoredCopy(db, periodId) ? period : null;
     const base = own ?? nearestStoredBefore(db, period.report_no, programmeId);
     if (base) {
@@ -206,12 +217,13 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo): Promis
   const results: SheetResult[] = [];
 
   const monthly = !req.allowedRegisters;
+  const standalone = standaloneOnly(db, programmeId);
   const touchedByRegister = new Map<string, Set<number>>();
   for (const m of req.sheets) {
     if (!m.register) continue;
     if (req.allowedRegisters && !req.allowedRegisters.includes(m.register)) continue;
     // the monthly workbook never writes the stand-alone registers
-    if (monthly && (STANDALONE_ONLY as readonly string[]).includes(m.register)) continue;
+    if (monthly && standalone.includes(m.register)) continue;
     const def = getRegisterDef(m.register);
     const ws = getSheet(worksheets, m.sheet);
     if (!def || !ws) continue;
@@ -362,7 +374,7 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo): Promis
   if (older && monthly) {
     for (const [key, ids] of touchedByRegister) {
       const def = getRegisterDef(key);
-      if (!def || !def.snapshot || (STANDALONE_ONLY as readonly string[]).includes(key)) continue;
+      if (!def || !def.snapshot || standalone.includes(key)) continue;
       const scoped = def.fields.some((f) => f.key === "programme_id");
       const list = [...ids];
       const where = `${scoped ? "programme_id = ? AND " : ""}id NOT IN (${list.map(() => "?").join(",") || "-1"})`;
