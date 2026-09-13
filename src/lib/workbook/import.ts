@@ -425,7 +425,9 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo, progres
     summary: `Imported workbook for ${period.label}: ${results.map((r) => `${r.sheet} → ${r.register} (${r.created} added, ${r.updated} updated, ${r.errors.length} errors)`).join("; ")}${pruned ? `; ${pruned} row(s) not in the workbook removed from this older report` : ""}`,
   });
 
-  db.prepare("UPDATE reporting_periods SET source_file = ?, imported_at = ?, imported_by = ? WHERE id = ?").run(String(req.fileName ?? "").slice(0, 200) || null, nowIso(), user.name, periodId);
+  // the library shows the monthly workbook the report came from; a stand-alone import does not replace that name
+  if (monthly) db.prepare("UPDATE reporting_periods SET source_file = ?, imported_at = ?, imported_by = ? WHERE id = ?").run(String(req.fileName ?? "").slice(0, 200) || null, nowIso(), user.name, periodId);
+  else db.prepare("UPDATE reporting_periods SET imported_at = ?, imported_by = ? WHERE id = ?").run(nowIso(), user.name, periodId);
   if (monthly && req.excelCheck && typeof req.excelCheck === "object") {
     // the Excel's own Level 1 figures travel with the report, and the workbook's layout decides the project's Level 1 convention
     db.prepare("UPDATE reporting_periods SET excel_check = ? WHERE id = ?").run(JSON.stringify(req.excelCheck), periodId);

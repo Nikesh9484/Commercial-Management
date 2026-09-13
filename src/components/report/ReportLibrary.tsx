@@ -76,7 +76,8 @@ export function ReportLibrary({ rows, isAdmin, canEdit }: { rows: LibraryRow[]; 
   async function remove(row: LibraryRow) {
     const typed = prompt(`Delete ${row.label}?\n\nThis removes the report, its issued snapshot (${row.snapshot_records.toLocaleString()} records) and its checklist. The live registers (cost lines, changes, claims …) are NOT changed. Type the report number (${row.report_no}) to confirm.`);
     if (typed === null) return;
-    if (typed.trim() !== String(row.report_no)) return toast("The report number did not match – nothing deleted.", "error");
+    // "47", "No 47", "Report No 47" and "47." all confirm report 47
+    if ((typed.match(/\d+/g) ?? []).pop() !== String(row.report_no)) return toast(`The report number did not match – nothing deleted. Type just the number ${row.report_no} to confirm.`, "error");
     setBusy(row.id);
     const r = await fetch(`/api/periods/${row.id}`, { method: "DELETE" });
     const res = await j(r);
