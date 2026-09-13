@@ -2,6 +2,8 @@ import type Database from "better-sqlite3";
 import { getDb } from "../db";
 import { getCostFeeds } from "./feeds";
 import { snapshotRows } from "../view-mode";
+import { openStoredRegisters } from "./stored";
+import type { FeedStatus } from "./feeds-types";
 import { MONEY_COLUMNS, type Money, type CostLineRow, type Level1Row, type CostReport } from "./columns";
 
 export { MONEY_COLUMNS, type Money, type MoneyKey, type CostLineRow, type Level1Row, type CostReport } from "./columns";
@@ -18,7 +20,7 @@ export function addMoney(into: Money, row: Money): Money {
 }
 
 function round2(n: number): number {
-  return Math.round((n + Number.EPSILON) * 100) / 100;
+  return Math.round((n + Number.EPSILON) * 100) / 100 || 0;
 }
 
 interface RawLine {
@@ -51,24 +53,53 @@ export function computeCostReport(programmeId: number, periodId: number | null):
     ? ((db.prepare("SELECT id, label, status FROM reporting_periods WHERE programme_id = ? AND report_no < ? ORDER BY report_no DESC LIMIT 1").get(programmeId, period.report_no) as { id: number; label: string; status: string } | undefined) ?? null)
     : null;
 
-  // A locked report, or any report that is not the latest, is shown from its stored copy, not recalculated.
+  // A locked report, or any report that is not the latest, is shown from its stored registers, not the live ones.
   if (period && (period.status === "Locked" || !!(db.prepare("SELECT 1 FROM reporting_periods WHERE programme_id = ? AND report_no > ? LIMIT 1").get(programmeId, period.report_no)))) {
+    const meta = { programme, holdInAfa, period: { id: period.id, label: period.label, status: period.status } };
+    const prevAfa = prev ? previousAfa(db, prev.id) : null;
+    // Recalculated from the registers as they were when the report was stored, with the current rules,
+    // so a rule corrected later reads the same way on every report.
+    const stored = openStoredRegisters(db, period.id);
+    if (stored) {
+      try {
+        const { lines, status } = computeLines(stored, programmeId, period.id, !!prevAfa);
+        const previousPeriod = applyPrevious(lines, prev, prevAfa);
+        return withReportMovement(assembleReport(lines, { ...meta, previousPeriod, feeds: status }), prevAfa);
+      } finally {
+        stored.close();
+      }
+    }
+    // Older stored copies hold only the calculated report: shown as stored, with the budget-hold rule re-applied.
     const snap = snapshotRows<CostLineRow>(db, period.id, "cost_report");
     if (snap) {
       const assetIds = new Set((db.prepare("SELECT id FROM assets WHERE programme_id = ?").all(programmeId) as { id: number }[]).map((a) => a.id));
       const { status } = getCostFeeds(db, programmeId, period.id);
       const lines = snap.filter((l) => assetIds.has(l.asset_id)).map((l) => ({ ...l, category: l.category ?? "", is_budget_hold: !!l.is_budget_hold }));
-      // the budget-hold rule is re-applied to a stored report, so reports stored under an earlier rule read the same way
       applyBudgetHold(lines);
-      // Column R/S (previous AFA, period movement) are re-read from the previous issued report so a
-      // previous period that was locked empty, or re-imported since, cannot leave S equal to N.
-      const prevAfa = prev ? previousAfa(db, prev.id) : null;
       const previousPeriod = applyPrevious(lines, prev, prevAfa);
-      return withReportMovement(assembleReport(lines, { programme, holdInAfa, period: { id: period.id, label: period.label, status: period.status }, previousPeriod, feeds: status }), prevAfa);
+      return withReportMovement(assembleReport(lines, { ...meta, previousPeriod, feeds: status }), prevAfa);
     }
   }
 
-  const raw = db
+  const prevAfa = prev ? previousAfa(db, prev.id) : null;
+  const { lines, status } = computeLines(db, programmeId, periodId ?? 0, !!prevAfa);
+  const previousPeriod = applyPrevious(lines, prev, prevAfa);
+
+  return withReportMovement(
+    assembleReport(lines, {
+      programme,
+      holdInAfa,
+      period: period ? { id: period.id, label: period.label, status: period.status } : null,
+      previousPeriod,
+      feeds: status,
+    }),
+    prevAfa,
+  );
+}
+
+/** The cost lines of a project calculated from the registers in `src` (the live database, or a period's stored registers). */
+function computeLines(src: Database.Database, programmeId: number, periodId: number, prevAvailable: boolean): { lines: CostLineRow[]; status: FeedStatus[] } {
+  const raw = src
     .prepare(
       `SELECT l.id, l.asset_id, a.code AS asset_code, a.name AS asset_name, l.code, l.package_id, p.name AS package, l.name,
               c.name AS contractor, l.section, l.sort_order, l.approved_baseline_budget, l.opening_transfers,
@@ -83,8 +114,7 @@ export function computeCostReport(programmeId: number, periodId: number | null):
     )
     .all(programmeId) as RawLine[];
 
-  const { feeds, status } = getCostFeeds(db, programmeId, periodId ?? 0);
-  const prevAfa = prev ? previousAfa(db, prev.id) : null;
+  const { feeds, status } = getCostFeeds(src, programmeId, periodId);
 
   const lines: CostLineRow[] = raw.map((r) => {
     const g = (k: Map<number, number>) => round2(k.get(r.id) ?? 0);
@@ -115,25 +145,14 @@ export function computeCostReport(programmeId: number, periodId: number | null):
       contractor: r.contractor ?? "",
       section: r.section === "Uncommitted" ? "Uncommitted" : "Committed",
       sort_order: r.sort_order ?? 0,
-      prev_available: !!prevAfa,
+      prev_available: prevAvailable,
       category: r.category ?? "",
       is_budget_hold: !!r.is_budget_hold,
       E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S,
     };
   });
   applyBudgetHold(lines);
-  const previousPeriod = applyPrevious(lines, prev, prevAfa);
-
-  return withReportMovement(
-    assembleReport(lines, {
-      programme,
-      holdInAfa,
-      period: period ? { id: period.id, label: period.label, status: period.status } : null,
-      previousPeriod,
-      feeds: status,
-    }),
-    prevAfa,
-  );
+  return { lines, status };
 }
 
 /**
@@ -274,15 +293,31 @@ interface PreviousAfa {
   byCode: Map<string, number>;
 }
 
-/** Anticipated Final Account per cost line stored when the previous period was locked (by id and by asset + code). */
+/**
+ * Anticipated Final Account per cost line of the previous report (by id and by asset + code): recalculated
+ * from that period's stored registers with the current rules, so column R reads exactly what that report
+ * shows; older stored copies without registers fall back to their stored calculated report.
+ */
 function previousAfa(db: Database.Database, periodId: number): PreviousAfa | null {
-  const rows = db.prepare("SELECT record_id, data FROM snapshots WHERE period_id = ? AND register_key = 'cost_report'").all(periodId) as { record_id: number; data: string }[];
-  if (!rows.length) return null;
+  const per = db.prepare("SELECT programme_id FROM reporting_periods WHERE id = ?").get(periodId) as { programme_id: number } | undefined;
+  let lines: CostLineRow[] | null = null;
+  const stored = per ? openStoredRegisters(db, periodId) : null;
+  if (stored && per) {
+    try {
+      lines = computeLines(stored, per.programme_id, periodId, false).lines;
+    } finally {
+      stored.close();
+    }
+  } else {
+    const rows = db.prepare("SELECT record_id, data FROM snapshots WHERE period_id = ? AND register_key = 'cost_report'").all(periodId) as { record_id: number; data: string }[];
+    if (!rows.length) return null;
+    // the stored lines are re-run through the budget-hold rule so an older stored report compares like for like
+    lines = rows.map((r) => ({ ...(JSON.parse(r.data) as CostLineRow), id: r.record_id, category: (JSON.parse(r.data) as CostLineRow).category ?? "", is_budget_hold: !!(JSON.parse(r.data) as CostLineRow).is_budget_hold }));
+    applyBudgetHold(lines);
+  }
+  if (!lines.length) return null;
   const byId = new Map<number, number>();
   const byCode = new Map<string, number>();
-  // the stored lines are re-run through the budget-hold rule so an older stored report compares like for like
-  const lines = rows.map((r) => ({ ...(JSON.parse(r.data) as CostLineRow), id: r.record_id }));
-  applyBudgetHold(lines.map((l) => ({ ...l, category: l.category ?? "", is_budget_hold: !!l.is_budget_hold })).map((l) => Object.assign(lines.find((x) => x.id === l.id)!, l)));
   let total = 0;
   let totalExclHold = 0;
   for (const d of lines) {

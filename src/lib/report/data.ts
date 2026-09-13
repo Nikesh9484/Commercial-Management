@@ -1,7 +1,7 @@
 import { getDb } from "../db";
 import { getRegisterDef } from "../registers";
 import { listRecords } from "../registers/engine";
-import { assembleReport, computeCostReport, type CostReport, type CostLineRow } from "../cost-report/compute";
+import { computeCostReport, type CostReport } from "../cost-report/compute";
 import { getCashflow, type Cashflow } from "../cashflow/compute";
 import { getChecklist, type ChecklistItem } from "../checklist";
 import { getDashboard, type DashboardData } from "../dashboard/summary";
@@ -70,16 +70,9 @@ export function getReportData(programmeId: number, periodId: number): ReportData
     sources[key] = snap ? "snapshot" : "live";
   }
 
-  // Cost report
-  const live = computeCostReport(programmeId, periodId);
-  let costReport = live;
-  const snapLines = stored ? (snapshotRows(periodId, "cost_report") as CostLineRow[] | null) : null;
-  if (snapLines) {
-    const assetIds = new Set((db.prepare("SELECT id FROM assets WHERE programme_id = ?").all(programmeId) as { id: number }[]).map((a) => a.id));
-    const mine = snapLines.filter((l) => assetIds.has(l.asset_id));
-    costReport = assembleReport(mine, { programme: live.programme, holdInAfa: live.holdInAfa, period: live.period, previousPeriod: live.previousPeriod, feeds: live.feeds });
-    sources.cost_report = "snapshot";
-  } else sources.cost_report = "live";
+  // Cost report: a stored period is recalculated from its stored registers inside computeCostReport
+  const costReport = computeCostReport(programmeId, periodId);
+  sources.cost_report = stored && !!db.prepare("SELECT 1 FROM snapshots WHERE period_id = ? AND register_key = 'cost_lines' LIMIT 1").get(periodId) ? "snapshot" : "live";
 
   // Cash flow
   let cashflow = getCashflow(db, programmeId);
