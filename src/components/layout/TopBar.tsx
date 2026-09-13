@@ -7,6 +7,7 @@ import type { AppContext } from "@/lib/context";
 import type { UserInfo } from "@/lib/registers/types";
 import { ROLE_LABELS } from "@/lib/registers/types";
 import { useToast } from "@/components/ui/Toast";
+import { AskMe } from "@/components/ask/AskMe";
 
 export function TopBar({ context, user, onMenu }: { context: AppContext; user: UserInfo; onMenu: () => void }) {
   const router = useRouter();
@@ -95,6 +96,8 @@ export function TopBar({ context, user, onMenu }: { context: AppContext; user: U
           </div>
         </Selector>
       </div>
+
+      {user.role !== "reporter" && <AskMe project={context.programme?.name ?? ""} period={context.period?.label ?? ""} />}
 
       <div className="relative">
         <button className="flex items-center gap-2 rounded-md px-2 py-1 hover:bg-white/10" onClick={() => setMenuOpen((o) => !o)}>

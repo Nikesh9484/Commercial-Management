@@ -23,6 +23,8 @@ import {
   CalendarPlus,
   Library,
   Wand2,
+  BookOpen,
+  FileSignature,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -119,6 +121,9 @@ export function Sidebar({ open, onClose, role, project }: { open: boolean; onClo
               )}
             </div>
           ))}
+          <div className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider text-blue-200/50">Libraries</div>
+          {link("/library/eot", "EOT Library (EARs)", BookOpen)}
+          {link("/library/contract", "Contract Library", FileSignature)}
           {role !== "viewer" && role !== "contributor" && (
             <>
               <div className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider text-blue-200/50">Stand-alone imports</div>
