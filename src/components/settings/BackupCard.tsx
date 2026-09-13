@@ -12,9 +12,10 @@ export function BackupCard({ status }: { status: BackupStatus }) {
   const toast = useToast();
   const router = useRouter();
   const [busy, setBusy] = useState(false);
-  async function run() {
+  async function run(force = false) {
+    if (force && !confirm("Replace the cloud backup with the database on this server, even if it is smaller? Only do this when you are sure the data here is the right data.")) return;
     setBusy(true);
-    const res = await fetch("/api/backup", { method: "POST" });
+    const res = await fetch(`/api/backup${force ? "?force=1" : ""}`, { method: "POST" });
     const j = await res.json().catch(() => ({}));
     setBusy(false);
     if (!res.ok) return toast(j.error ?? "Backup failed.", "error");
@@ -32,9 +33,14 @@ export function BackupCard({ status }: { status: BackupStatus }) {
             <Download size={14} /> Download database
           </a>
           {status.enabled && (
-            <button className="btn btn-primary btn-sm" onClick={run} disabled={busy}>
-              <CloudUpload size={14} /> {busy ? "Uploading…" : "Back up to cloud now"}
-            </button>
+            <>
+              <button className="btn btn-primary btn-sm" onClick={() => run(false)} disabled={busy}>
+                <CloudUpload size={14} /> {busy ? "Uploading…" : "Back up to cloud now"}
+              </button>
+              <button className="btn btn-secondary btn-sm" onClick={() => run(true)} disabled={busy} title="Replaces the cloud backup even when the database here is much smaller than it">
+                Back up now (replace)
+              </button>
+            </>
           )}
         </div>
       </div>

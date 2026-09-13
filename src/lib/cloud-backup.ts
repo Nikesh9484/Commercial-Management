@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { S3Client, GetObjectCommand, PutObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
-import { getDb } from "./db";
+import { getDb, restoreBackupIfMissing } from "./db";
 
 /**
  * Cloud backup of the SQLite database file.
@@ -31,6 +31,8 @@ export function provider(): Provider {
 
 interface Store {
   exists(key: string): Promise<boolean>;
+  /** Size in bytes of the stored file, null when there is none. */
+  size(key: string): Promise<number | null>;
   get(key: string): Promise<Buffer | null>;
   put(key: string, body: Buffer): Promise<void>;
   label: string;
@@ -47,6 +49,14 @@ function s3Store(): Store {
         return true;
       } catch {
         return false;
+      }
+    },
+    async size(key) {
+      try {
+        const h = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+        return h.ContentLength ?? null;
+      } catch {
+        return null;
       }
     },
     async get(key) {
@@ -67,17 +77,21 @@ function githubStore(): Store {
   const folder = process.env.BACKUP_GITHUB_FOLDER || "backups";
   const headers = { Authorization: `Bearer ${token}`, "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "commercial-dashboard" };
   const url = (key: string) => `${api}/repos/${repo}/contents/${folder}/${key}`;
-  const sha = async (key: string): Promise<string | null> => {
+  const meta = async (key: string): Promise<{ sha: string; size: number } | null> => {
     const r = await fetch(url(key), { headers: { ...headers, Accept: "application/vnd.github+json" } });
     if (r.status === 404) return null;
     if (!r.ok) throw new Error(`GitHub ${r.status} reading ${key}: ${(await r.text()).slice(0, 200)}`);
-    const j = (await r.json()) as { sha?: string };
-    return j.sha ?? null;
+    const j = (await r.json()) as { sha?: string; size?: number };
+    return j.sha ? { sha: j.sha, size: Number(j.size ?? 0) } : null;
   };
+  const sha = async (key: string) => (await meta(key))?.sha ?? null;
   return {
     label: `${repo} (GitHub)`,
     async exists(key) {
       return (await sha(key)) !== null;
+    },
+    async size(key) {
+      return (await meta(key))?.size ?? null;
     },
     async get(key) {
       const r = await fetch(url(key), { headers: { ...headers, Accept: "application/vnd.github.raw+json" } });
@@ -112,7 +126,7 @@ export interface BackupStatus {
   uploads: number;
 }
 
-type G = typeof globalThis & { __cdBackup?: BackupStatus; __cdBackupTimer?: NodeJS.Timeout; __cdBackupBusy?: boolean; __cdLastSeen?: string };
+type G = typeof globalThis & { __cdBackup?: BackupStatus; __cdBackupTimer?: NodeJS.Timeout; __cdBackupBusy?: boolean; __cdLastSeen?: string; __cdRestoreFailed?: boolean };
 const g = globalThis as G;
 
 export function backupStatus(): BackupStatus {
@@ -137,32 +151,23 @@ export function dbPath(): string {
   return process.env.DB_PATH || path.join(process.cwd(), "data", "commercial.db");
 }
 
-/** Called once at server start: fetch the last backup if there is no local database yet. */
+/**
+ * Called once at server start. The actual download happens synchronously inside getDb() the first
+ * time the database is opened (src/lib/db.ts, restoreBackupIfMissing) so no request can seed an empty
+ * database while a restore is on its way; this only records how the database came to be.
+ */
 export async function restoreIfNeeded(): Promise<void> {
   const status = backupStatus();
   if (!isConfigured()) return;
-  const file = dbPath();
-  if (fs.existsSync(file)) {
-    status.restoredFrom = "local";
-    status.restoredAt = new Date().toISOString();
-    return;
-  }
   try {
-    const st = store();
-    const bytes = await st.get(KEY);
-    if (!bytes) {
-      status.restoredFrom = "fresh";
-      status.restoredAt = new Date().toISOString();
-      console.log(`[backup] no backup in ${st.label} yet – starting with a fresh database`);
-      return;
-    }
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, bytes);
-    status.restoredFrom = "cloud";
+    const how = restoreBackupIfMissing(dbPath());
+    getDb();
+    status.restoredFrom = how === "restored" ? "cloud" : how === "present" ? "local" : "fresh";
     status.restoredAt = new Date().toISOString();
-    console.log(`[backup] restored ${bytes.length} bytes from ${st.label}/${KEY}`);
+    console.log(`[backup] database ${how === "restored" ? "restored from" : how === "present" ? "already on disk; backups go to" : "started fresh; backups go to"} ${store().label}/${KEY}`);
   } catch (e) {
     status.lastError = `Restore failed: ${e instanceof Error ? e.message : String(e)}`;
+    g.__cdRestoreFailed = true;
     console.error("[backup]", status.lastError);
   }
 }
@@ -187,15 +192,27 @@ function changeSignature(): string {
 }
 
 /** Upload now (used by the timer, the shutdown hook and the Settings button). */
-export async function backupNow(reason = "manual"): Promise<void> {
+export async function backupNow(reason = "manual", opts: { force?: boolean } = {}): Promise<void> {
   const status = backupStatus();
   if (!isConfigured() || g.__cdBackupBusy) return;
+  if (g.__cdRestoreFailed && !opts.force) {
+    status.lastError = "Upload skipped: the database could not be restored from the cloud backup when the server started, so the copy on this server is not trusted over the backup. Restart the server once the backup store is reachable.";
+    return;
+  }
   g.__cdBackupBusy = true;
   let tmp: string | null = null;
   try {
     tmp = await snapshotAsync();
     const body = fs.readFileSync(tmp);
     const st = store();
+    // Never replace a backup with a much smaller database: an empty or half-filled database on a fresh
+    // disk must not overwrite months of data. An Admin can force it from Settings when it is intended.
+    const remote = await st.size(KEY);
+    if (!opts.force && remote && body.length < remote / 2) {
+      status.lastError = `Upload skipped: the database on this server (${Math.round(body.length / 1048576)} MB) is much smaller than the cloud backup (${Math.round(remote / 1048576)} MB). If this is intended, use "Back up now (replace)" in Settings.`;
+      console.error("[backup]", status.lastError);
+      return;
+    }
     await st.put(KEY, body);
     const day = new Date().toISOString().slice(0, 10);
     const dailyKey = `daily/${day}.db`;

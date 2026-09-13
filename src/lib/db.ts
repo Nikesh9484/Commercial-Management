@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import Database from "better-sqlite3";
 import path from "node:path";
 import fs from "node:fs";
@@ -10,7 +11,7 @@ import { nowIso, formatMonthYear } from "./format";
  * Single SQLite connection for the whole app (kept on globalThis so hot-reload in
  * development does not open a new file handle every time).
  */
-type G = typeof globalThis & { __cdDb?: Database.Database };
+type G = typeof globalThis & { __cdDb?: Database.Database; __cdRestore?: "restored" | "fresh" | "present" };
 
 /**
  * Prepared statements are kept and reused by SQL text. Compiling a statement costs SQLite native
@@ -37,11 +38,33 @@ function cacheStatements(db: Database.Database) {
   }) as typeof db.prepare;
 }
 
+/** True when a cloud backup store is configured (see src/lib/cloud-backup.ts). */
+function backupConfigured(): boolean {
+  return !!((process.env.BACKUP_GITHUB_TOKEN && process.env.BACKUP_GITHUB_REPO) || (process.env.BACKUP_S3_ENDPOINT && process.env.BACKUP_S3_BUCKET && process.env.BACKUP_S3_KEY_ID && process.env.BACKUP_S3_SECRET));
+}
+
+/**
+ * On a fresh disk the last cloud backup is fetched BEFORE the database is opened, in a child process
+ * so the wait is synchronous: nothing can open (and seed) an empty database while the download is on
+ * its way. When the store is configured but unreachable the server refuses to start with an empty
+ * database rather than seed one that the backup loop would then upload over the real backup.
+ */
+export function restoreBackupIfMissing(dbPath: string): "restored" | "fresh" | "present" {
+  if (fs.existsSync(dbPath)) return "present";
+  if (!backupConfigured()) return "fresh";
+  const script = path.join(process.cwd(), "scripts", "restore-backup.cjs");
+  const r = spawnSync(process.execPath, [script, dbPath], { stdio: "inherit", timeout: 10 * 60_000 });
+  if (r.status === 0) return "restored";
+  if (r.status === 3) return "fresh";
+  throw new Error(`The database is missing and the cloud backup could not be restored (exit ${r.status ?? r.signal}). Refusing to start with an empty database – check the BACKUP_* settings and restart.`);
+}
+
 export function getDb(): Database.Database {
   const g = globalThis as G;
   if (g.__cdDb) return g.__cdDb;
   const dbPath = process.env.DB_PATH || path.join(process.cwd(), "data", "commercial.db");
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+  g.__cdRestore = restoreBackupIfMissing(dbPath);
   const db = new Database(dbPath);
   cacheStatements(db);
   db.pragma("journal_mode = WAL");

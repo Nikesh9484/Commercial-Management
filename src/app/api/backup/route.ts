@@ -22,14 +22,18 @@ const heavyGET = withUser(async (user) => {
 });
 
 /** POST /api/backup – upload to cloud storage now (admin). */
-export const POST = withUser(async (user) => {
-  if (user.role !== "admin") throw new AuthError("Only an Admin can run a backup.");
-  if (!isConfigured()) return NextResponse.json({ error: "Cloud backup is not set up (BACKUP_S3_* settings missing)." }, { status: 400 });
-  await backupNow("manual");
-  const s = backupStatus();
-  if (s.lastError) return NextResponse.json({ error: s.lastError }, { status: 500 });
-  return NextResponse.json({ ok: true, status: s });
-});
+export async function POST(req: Request, ctx: unknown) {
+  return withUser(async (user) => {
+    if (user.role !== "admin") throw new AuthError("Only an Admin can run a backup.");
+    if (!isConfigured()) return NextResponse.json({ error: "Cloud backup is not set up (BACKUP_S3_* settings missing)." }, { status: 400 });
+    // ?force=1 replaces the cloud backup even when the database here is much smaller (Admin, on purpose)
+    const force = new URL(req.url).searchParams.get("force") === "1";
+    await backupNow("manual", { force });
+    const s = backupStatus();
+    if (s.lastError) return NextResponse.json({ error: s.lastError }, { status: 500 });
+    return NextResponse.json({ ok: true, status: s });
+  })(req, ctx);
+}
 
 /** Heavy work runs one request at a time and hands memory back afterwards (small hosting plan). */
 export const GET: typeof heavyGET = (...args) => withHeavyLock(() => heavyGET(...args));
