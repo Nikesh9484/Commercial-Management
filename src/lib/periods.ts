@@ -105,7 +105,7 @@ export function deletePeriod(id: number, user: UserInfo): { label: string } {
     db.prepare("UPDATE budget_transfers SET period_id = NULL WHERE period_id = ?").run(id);
     db.prepare("DELETE FROM reporting_periods WHERE id = ?").run(id);
     if (getSetting(db, "current_period_id") === String(id)) {
-      const latest = db.prepare("SELECT id FROM reporting_periods ORDER BY report_no DESC LIMIT 1").get() as { id: number } | undefined;
+      const latest = db.prepare("SELECT id FROM reporting_periods WHERE programme_id = ? ORDER BY report_no DESC LIMIT 1").get(p.programme_id) as { id: number } | undefined;
       setSetting(db, "current_period_id", latest ? String(latest.id) : null);
     }
   });

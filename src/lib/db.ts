@@ -155,6 +155,9 @@ function initSchema(db: Database.Database) {
     );
   `);
   for (const def of allRegisters) ensureRegisterTable(db, def);
+  // Reporting periods created before projects were kept apart belong to the first project (The Marina).
+  const first = db.prepare("SELECT id FROM programmes ORDER BY id LIMIT 1").get() as { id: number } | undefined;
+  if (first) db.prepare("UPDATE reporting_periods SET programme_id = ? WHERE programme_id IS NULL").run(first.id);
 }
 
 /* ------------------------------------------------------------------ */
@@ -302,13 +305,41 @@ function seed(db: Database.Database) {
     const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0)).toISOString().slice(0, 10);
     const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString().slice(0, 10);
     const label = `Monthly Report No 1 – ${formatMonthYear(end)}`;
+    const prog = db.prepare("SELECT id FROM programmes ORDER BY id LIMIT 1").get() as { id: number } | undefined;
     const r = db
       .prepare(
-        `INSERT INTO reporting_periods(report_no, period_start, period_end, label, status, created_at, created_by, updated_at, updated_by)
-         VALUES(1, ?, ?, ?, 'Open', ?, 'system', ?, 'system')`,
+        `INSERT INTO reporting_periods(programme_id, report_no, period_start, period_end, label, status, created_at, created_by, updated_at, updated_by)
+         VALUES(?, 1, ?, ?, ?, 'Open', ?, 'system', ?, 'system')`,
       )
-      .run(start, end, label, stamp, stamp);
+      .run(prog?.id ?? null, start, end, label, stamp, stamp);
     setSetting(db, "current_period_id", String(r.lastInsertRowid));
+  }
+
+  // Second stand-alone project: Village Boutique Hotel (VBH), programme code 1TB01006, with its
+  // sub-assets. It has its own registers, reporting periods and report library; nothing is shared
+  // with The Marina except the reference lists (clients, contractors, dropdown values).
+  if (getSetting(db, "seeded_vbh") !== "1") {
+    if (!db.prepare("SELECT 1 FROM programmes WHERE code = '1TB01006'").get()) {
+      const marina = db.prepare("SELECT client_id, location_id FROM programmes ORDER BY id LIMIT 1").get() as { client_id: number | null; location_id: number | null } | undefined;
+      const prog = db
+        .prepare(
+          `INSERT INTO programmes(code, name, client_id, location_id, created_at, created_by, updated_at, updated_by)
+           VALUES('1TB01006', 'Village Boutique Hotel (VBH)', ?, ?, ?, 'system', ?, 'system')`,
+        )
+        .run(marina?.client_id ?? null, marina?.location_id ?? null, stamp, stamp);
+      const ins = db.prepare(`INSERT INTO assets(programme_id, code, name, created_at, created_by, updated_at, updated_by) VALUES(?, ?, ?, ?, 'system', ?, 'system')`);
+      for (const [code, name] of [
+        ["1TB01006.01", "Village Boutique Branded Condos"],
+        ["1TB01006.02", "Village Boutique Branded Residence"],
+        ["1TB01006.03", "Village Boutique Hotel"],
+        ["1TB01006.99", "VBH – Project Wide"],
+      ]) {
+        if (!db.prepare("SELECT 1 FROM assets WHERE code = ?").get(code)) ins.run(prog.lastInsertRowid, code, name, stamp, stamp);
+      }
+      const main = db.prepare("SELECT id FROM assets WHERE code = '1TB01006.03'").get() as { id: number } | undefined;
+      if (main) setSetting(db, `current_asset_id:${prog.lastInsertRowid}`, String(main.id));
+    }
+    setSetting(db, "seeded_vbh", "1");
   }
 
   // Earlier versions seeded "(edit me)" placeholder names; give them their real names so no

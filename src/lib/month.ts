@@ -62,6 +62,7 @@ export function startPeriod(input: { report_no: number; period_end: string }, us
   // the month that was live until now keeps its own data from here on
   const prev = latestPeriod(db);
   if (prev && prev.report_no < input.report_no && prev.status !== "Locked") takeSnapshot(prev.id, user, "new month");
+  // the period belongs to the project selected in the top bar (scope default)
   const row = createRecord(getRegisterDef("reporting_periods")!, { report_no: input.report_no, period_start: start, period_end: end, label: labelFor(input.report_no, end), status: "Open" }, user);
   setSetting(db, "current_period_id", String(row.id));
   getChecklist(row.id);

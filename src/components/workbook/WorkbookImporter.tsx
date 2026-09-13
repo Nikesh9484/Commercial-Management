@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Upload, FileSpreadsheet, CheckCircle2, AlertTriangle, ArrowRight, Lock, Info } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Upload, FileSpreadsheet, CheckCircle2, AlertTriangle, ArrowRight, Lock, Info, Files } from "lucide-react";
 import type { WorkbookAnalysis, SheetAnalysis } from "@/lib/workbook/analyze";
 import type { ImportResult } from "@/lib/workbook/import";
 import { Chip } from "@/components/ui/Chip";
@@ -18,6 +19,16 @@ interface PeriodOption {
   label: string;
   status: string;
   report_no: number;
+}
+
+interface BatchItem {
+  name: string;
+  size: number;
+  status: "queued" | "reading" | "ready" | "importing" | "done" | "warning" | "skipped" | "error";
+  reportNo?: number;
+  periodEnd?: string;
+  message: string;
+  result?: ImportResult;
 }
 
 export interface StandaloneMode {
@@ -47,19 +58,26 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo,
   const [result, setResult] = useState<ImportResult | null>(null);
 
   const [progress, setProgress] = useState("");
+  const router = useRouter();
 
-  async function analyze() {
-    if (!file) return;
-    setBusy(true);
-    // The file goes up in small text pieces (base64 JSON). Big binary uploads get cut short by some
-    // company web filters; small text requests pass, and the server checks the total size at the end.
+  // Several reports in one go (monthly import only)
+  const [batchFiles, setBatchFiles] = useState<File[]>([]);
+  const [batch, setBatch] = useState<BatchItem[]>([]);
+  const [batchBusy, setBatchBusy] = useState(false);
+
+  /**
+   * Uploads a file and returns the app's reading of it. The file goes up in small text pieces
+   * (base64 JSON): big binary uploads get cut short by some company web filters; small text
+   * requests pass, and the server checks the total size at the end.
+   */
+  async function uploadAndAnalyze(f: File, onProgress: (msg: string) => void): Promise<WorkbookAnalysis> {
     const CHUNK = 256 * 1024;
-    const count = Math.max(1, Math.ceil(file.size / CHUNK));
+    const count = Math.max(1, Math.ceil(f.size / CHUNK));
     let uploadId = "";
     let j: { error?: string; uploadId?: string } = {};
     for (let i = 0; i < count; i++) {
-      setProgress(count > 1 ? `Uploading part ${i + 1} of ${count}…` : "Uploading…");
-      const piece = file.slice(i * CHUNK, (i + 1) * CHUNK);
+      onProgress(count > 1 ? `Uploading part ${i + 1} of ${count}…` : "Uploading…");
+      const piece = f.slice(i * CHUNK, (i + 1) * CHUNK);
       const data = await toBase64(piece);
       let res: Response;
       let text = "";
@@ -67,31 +85,36 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo,
         res = await fetch("/api/workbook/analyze", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ uploadId, name: file.name, size: file.size, index: i, count, data }),
+          body: JSON.stringify({ uploadId, name: f.name, size: f.size, index: i, count, data }),
         });
         text = await res.text();
       } catch (e) {
-        setBusy(false);
-        setProgress("");
-        return toast(`Upload failed on part ${i + 1} of ${count}: ${e instanceof Error ? e.message : String(e)}`, "error");
+        throw new Error(`Upload failed on part ${i + 1} of ${count}: ${e instanceof Error ? e.message : String(e)}`);
       }
       try {
         j = JSON.parse(text);
       } catch {
-        setBusy(false);
-        setProgress("");
-        return toast(`The server replied with an unexpected answer (${res.status}). ${text.slice(0, 120)}`, "error");
+        throw new Error(`The server replied with an unexpected answer (${res.status}). ${text.slice(0, 120)}`);
       }
-      if (!res.ok) {
-        setBusy(false);
-        setProgress("");
-        return toast(j.error ?? "Could not read the file.", "error");
-      }
+      if (!res.ok) throw new Error(j.error ?? "Could not read the file.");
       uploadId = j.uploadId ?? uploadId;
+    }
+    return j as unknown as WorkbookAnalysis;
+  }
+
+  async function analyze() {
+    if (!file) return;
+    setBusy(true);
+    let a: WorkbookAnalysis;
+    try {
+      a = await uploadAndAnalyze(file, setProgress);
+    } catch (e) {
+      setBusy(false);
+      setProgress("");
+      return toast(e instanceof Error ? e.message : String(e), "error");
     }
     setBusy(false);
     setProgress("");
-    const a = j as unknown as WorkbookAnalysis;
     setAnalysis(a);
     if (a.conversion) {
       // A known report layout was converted: suggest the period the report is for.
@@ -138,6 +161,77 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo,
     toast("Workbook imported.");
   }
 
+  /**
+   * Several monthly reports in one go: every file is read first (each recognised report says which
+   * report number and cut-off it is for), then they are imported from the lowest report number up, so
+   * every month is stored as its own report and the highest becomes the live one. Files whose layout
+   * is not recognised are left for the one-at-a-time import above.
+   */
+  async function runBatch() {
+    if (!batchFiles.length) return;
+    setBatchBusy(true);
+    const items: BatchItem[] = batchFiles.map((f) => ({ name: f.name, size: f.size, status: "queued", message: "" }));
+    const update = (i: number, patch: Partial<BatchItem>) => {
+      items[i] = { ...items[i], ...patch };
+      setBatch([...items]);
+    };
+    setBatch([...items]);
+    const analyses: (WorkbookAnalysis | null)[] = [];
+    for (let i = 0; i < batchFiles.length; i++) {
+      update(i, { status: "reading", message: "Reading…" });
+      try {
+        const a = await uploadAndAnalyze(batchFiles[i], (m) => update(i, { message: m }));
+        analyses.push(a);
+        if (!a.conversion) update(i, { status: "skipped", message: "Layout not recognised – import this file on its own above and map its sheets by hand." });
+        else if (!a.conversion.reportNo || !a.conversion.periodEnd) update(i, { status: "skipped", message: "The report number or reporting period could not be read from the file – import it on its own above and type them in." });
+        else update(i, { status: "ready", reportNo: a.conversion.reportNo, periodEnd: a.conversion.periodEnd, message: `Report No ${a.conversion.reportNo} · cut-off ${a.conversion.periodEnd}` });
+      } catch (e) {
+        analyses.push(null);
+        update(i, { status: "error", message: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    // import from the lowest report number up
+    const order = items.map((it, i) => i).filter((i) => items[i].status === "ready").sort((x, y) => items[x].reportNo! - items[y].reportNo!);
+    const known = periods.map((p) => ({ id: p.id, report_no: p.report_no, status: p.status, label: p.label }));
+    for (const i of order) {
+      const a = analyses[i]!;
+      const no = items[i].reportNo!;
+      const existing = known.find((p) => p.report_no === no);
+      if (existing && existing.status === "Locked") {
+        update(i, { status: "skipped", message: `${existing.label} is locked (issued). Unlock it in the report library first if it should be replaced.` });
+        continue;
+      }
+      update(i, { status: "importing", message: `Importing Report No ${no}…` });
+      const body = {
+        fileId: a.fileId,
+        period: existing ? { id: existing.id } : { report_no: no, period_end: items[i].periodEnd },
+        sheets: a.sheets.map((s) => ({ sheet: s.name, headerRow: s.headerRow, register: s.register && excludeRegisters.includes(s.register) ? null : s.register, columns: Object.fromEntries(s.columns.map((c) => [String(c.index), c.field])) })),
+        lock,
+        createMissingLookups: createLookups,
+        allowedRegisters: excludeRegisters.length ? registers.map((r) => r.key) : undefined,
+        fileName: a.fileName,
+      };
+      try {
+        const res = await fetch("/api/workbook/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        const j = (await res.json().catch(() => ({}))) as ImportResult & { error?: string };
+        if (!res.ok) {
+          update(i, { status: "error", message: j.error ?? "Import failed." });
+          continue;
+        }
+        if (!existing) known.push({ id: j.period.id, report_no: no, status: j.period.locked ? "Locked" : "Open", label: j.period.label });
+        const added = j.sheets.reduce((t, r) => t + r.created, 0);
+        const updated = j.sheets.reduce((t, r) => t + r.updated, 0);
+        const errors = j.sheets.reduce((t, r) => t + r.errors.length, 0);
+        update(i, { status: errors ? "warning" : "done", result: j, message: `${j.period.label}${existing ? " (replaced)" : ""}: ${added} added, ${updated} updated${errors ? `, ${errors} row(s) could not be read` : ""}${j.period.locked ? " · locked" : ""}` });
+      } catch (e) {
+        update(i, { status: "error", message: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    setBatchBusy(false);
+    toast(`${items.filter((x) => x.status === "done" || x.status === "warning").length} report(s) imported into the library.`);
+    router.refresh();
+  }
+
   const mappedSheets = analysis ? analysis.sheets.filter((s) => mapping[s.name]?.register) : [];
   // the month being imported vs the latest report that exists
   const targetNo = periodMode === "existing" ? (periods.find((p) => p.id === periodId)?.report_no ?? null) : Number(reportNo.replace(/\D/g, "")) || null;
@@ -146,6 +240,66 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo,
 
   return (
     <div className="space-y-5">
+      {!standalone && (
+        <div className="card p-5">
+          <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold text-ink">
+            <Files size={16} className="text-navy" /> Several reports in one go
+          </h2>
+          <p className="mb-3 text-xs text-muted">
+            Choose all the monthly report workbooks you want in the library (hold Ctrl / ⌘ while picking). Each file is read, its report number and cut-off are taken from the workbook itself, and the reports are imported from the lowest number up – every month is stored as its own report and the highest becomes the live one. A report that already exists and is open is replaced; a locked one is skipped. Files in a layout the app does not recognise are listed so you can import them one at a time below.
+          </p>
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="flex min-w-64 flex-1 flex-col gap-1 text-xs text-muted">
+              Excel files (.xlsx) – as many as you like
+              <input type="file" accept=".xlsx" multiple className="input" onChange={(e) => { setBatchFiles(Array.from(e.target.files ?? [])); setBatch([]); }} disabled={batchBusy} />
+            </label>
+            {isAdmin && (
+              <label className="inline-flex items-center gap-2 text-sm">
+                <input type="checkbox" className="h-4 w-4 accent-navy" checked={lock} onChange={(e) => setLock(e.target.checked)} /> <Lock size={14} /> Lock each report after importing
+              </label>
+            )}
+            <button className="btn btn-primary" onClick={runBatch} disabled={!batchFiles.length || batchBusy}>
+              <Upload size={16} /> {batchBusy ? "Importing…" : `Import ${batchFiles.length || ""} report${batchFiles.length === 1 ? "" : "s"}`}
+            </button>
+          </div>
+          {batch.length > 0 && (
+            <table className="data mt-4 w-full text-sm">
+              <thead>
+                <tr>
+                  <th>File</th>
+                  <th>Report</th>
+                  <th>Result</th>
+                </tr>
+              </thead>
+              <tbody>
+                {batch.map((b, i) => (
+                  <tr key={i}>
+                    <td className="font-medium">{b.name}</td>
+                    <td className="whitespace-nowrap">{b.reportNo ? `No ${b.reportNo} · ${b.periodEnd}` : "–"}</td>
+                    <td>
+                      <Chip tone={b.status === "done" ? "green" : b.status === "error" ? "red" : b.status === "skipped" || b.status === "warning" ? "amber" : "blue"}>
+                        {b.status === "done" ? "Imported" : b.status === "warning" ? "Imported with errors" : b.status === "error" ? "Failed" : b.status === "skipped" ? "Skipped" : b.status === "importing" ? "Importing…" : b.status === "reading" ? "Reading…" : b.status === "ready" ? "Ready" : "Queued"}
+                      </Chip>
+                      <div className="mt-1 text-xs text-muted">{b.message}</div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {batch.length > 0 && !batchBusy && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Link href="/modules/monthly-report/library" className="btn btn-secondary btn-sm">
+                Open the report library <ArrowRight size={14} />
+              </Link>
+              <Link href="/" className="btn btn-secondary btn-sm">
+                Executive summary <ArrowRight size={14} />
+              </Link>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Step 1 */}
       <div className="card p-5">
         <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold text-ink">

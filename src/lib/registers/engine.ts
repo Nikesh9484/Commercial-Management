@@ -258,9 +258,12 @@ function prepareInput(def: RegisterDef, input: Record<string, unknown>, mode: "c
   const db = getDb();
   for (const f of def.fields) {
     if (!f.unique || !(f.key in values) || values[f.key] === null) continue;
+    // uniqueness is per programme / asset for a scoped register (each project keeps its own numbering)
+    const scopeKey = def.scope === "programme" ? "programme_id" : def.scope === "asset" ? "asset_id" : null;
+    const scopeVal = scopeKey ? (values[scopeKey] ?? existing?.[scopeKey] ?? null) : null;
     const clash = db
-      .prepare(`SELECT id FROM "${def.table}" WHERE "${f.key}" = ? COLLATE NOCASE ${existing ? "AND id <> ?" : ""}`)
-      .get(...(existing ? [values[f.key], existing.id] : [values[f.key]])) as { id: number } | undefined;
+      .prepare(`SELECT id FROM "${def.table}" WHERE "${f.key}" = ? COLLATE NOCASE ${existing ? "AND id <> ?" : ""} ${scopeKey && scopeVal !== null && scopeVal !== undefined ? `AND "${scopeKey}" = ?` : ""}`)
+      .get(...(existing ? [values[f.key], existing.id] : [values[f.key]]), ...(scopeKey && scopeVal !== null && scopeVal !== undefined ? [scopeVal] : [])) as { id: number } | undefined;
     if (clash) errors[f.key] = `${f.label} "${values[f.key]}" already exists.`;
   }
 

@@ -17,11 +17,12 @@ export interface ViewedPeriod {
 export function viewingLockedPeriod(db: Database.Database = getDb()): (ViewedPeriod & { status: string; reason: string }) | null {
   const id = Number(getSetting(db, "current_period_id") ?? 0);
   if (!id) return null;
-  const p = db.prepare("SELECT id, label, report_no, status FROM reporting_periods WHERE id = ?").get(id) as (ViewedPeriod & { status: string }) | undefined;
+  const p = db.prepare("SELECT id, label, report_no, status, programme_id FROM reporting_periods WHERE id = ?").get(id) as (ViewedPeriod & { status: string; programme_id: number }) | undefined;
   if (!p) return null;
+  if (String(p.programme_id) !== (getSetting(db, "current_programme_id") ?? String(p.programme_id))) return null;
   const n = (db.prepare("SELECT COUNT(*) AS n FROM snapshots WHERE period_id = ? AND register_key = 'cost_report'").get(id) as { n: number }).n;
   if (!n) return null;
-  const newer = db.prepare("SELECT label FROM reporting_periods WHERE report_no > ? ORDER BY report_no DESC LIMIT 1").get(p.report_no) as { label: string } | undefined;
+  const newer = db.prepare("SELECT label FROM reporting_periods WHERE programme_id = ? AND report_no > ? ORDER BY report_no DESC LIMIT 1").get(p.programme_id, p.report_no) as { label: string } | undefined;
   if (p.status !== "Locked" && !newer) return null;
   const reason = p.status === "Locked" ? `${p.label} is locked – you are viewing the issued report.` : `${p.label} is an earlier report – you are viewing its stored data; ${newer!.label} is the live one.`;
   return { id: p.id, label: p.label, report_no: p.report_no, status: p.status, reason };

@@ -12,7 +12,7 @@ export function AppShell({ context, user, children }: { context: AppContext; use
   return (
     <ToastProvider>
       <div className="flex min-h-screen">
-        <Sidebar open={menuOpen} onClose={() => setMenuOpen(false)} role={user.role} />
+        <Sidebar open={menuOpen} onClose={() => setMenuOpen(false)} role={user.role} project={context.programme ? (context.asset && context.asset.code.startsWith(`${context.programme.code}.`) ? context.asset.name : context.programme.name) : null} />
         <div className="flex min-w-0 flex-1 flex-col">
           <TopBar context={context} user={user} onMenu={() => setMenuOpen(true)} />
           <main className="flex-1 p-4 sm:p-6">{children}</main>

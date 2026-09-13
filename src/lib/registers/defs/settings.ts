@@ -105,8 +105,10 @@ export const reportingPeriods: RegisterDef = {
   group: "Report control",
   displayField: "label",
   editRoles: [...ADMIN_ONLY],
+  scope: "programme",
   defaultSort: { field: "report_no", dir: "desc" },
   fields: [
+    { key: "programme_id", label: "Programme", type: "lookup", lookup: { register: "programmes" }, required: true, hideInTable: true, hideInForm: true },
     { key: "report_no", label: "Report No", type: "number", required: true, unique: true },
     { key: "period_end", label: "Period end (cut-off)", type: "date", required: true, help: "The label is built from this date, e.g. Sep'26." },
     { key: "period_start", label: "Period start", type: "date" },

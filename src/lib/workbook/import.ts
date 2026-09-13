@@ -159,12 +159,13 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo): Promis
   // Reporting period. Every report keeps its own data: the live registers belong to the latest report.
   // Importing an older month is done "in a sandbox": the latest report's live data is stored first,
   // the older month is imported and stored, and the live registers are put back afterwards.
+  const programmeId = Number(getSetting(db, "current_programme_id") ?? (db.prepare("SELECT id FROM programmes ORDER BY id LIMIT 1").get() as { id: number } | undefined)?.id ?? 1);
   let periodId = req.period.id ?? null;
   if (!periodId) {
     if (!req.period.report_no || !req.period.period_end) throw new ValidationError("Choose an existing reporting period or give a report number and cut-off date for a new one.");
     const end = parseDateInput(req.period.period_end);
     if (!end) throw new ValidationError("The cut-off date is not a valid date.");
-    const existing = db.prepare("SELECT id FROM reporting_periods WHERE report_no = ?").get(req.period.report_no) as { id: number } | undefined;
+    const existing = db.prepare("SELECT id FROM reporting_periods WHERE programme_id = ? AND report_no = ?").get(programmeId, req.period.report_no) as { id: number } | undefined;
     if (existing) periodId = existing.id;
     else {
       const row = createRecord(getRegisterDef("reporting_periods")!, { report_no: req.period.report_no, period_end: end, label: `Monthly Report No ${req.period.report_no} – ${formatMonthYear(end)}` }, user, "import");
@@ -172,9 +173,10 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo): Promis
     }
   }
   const period = getPeriod(periodId)!;
+  if (period.programme_id !== programmeId) throw new ValidationError(`${period.label} belongs to another project. Switch the project in the top bar first.`);
   if (period.status === "Locked") throw new ValidationError(`${period.label} is locked. Unlock it first if you really want to re-import that month.`);
   // the latest report owns the live registers; an older month is imported "in a sandbox"
-  const latest = latestPeriod(db);
+  const latest = latestPeriod(db, programmeId);
   const older = !!latest && latest.id !== periodId && latest.report_no > period.report_no;
   const olderImport = older;
   const newer = latest ? [{ label: latest.label }] : [];
@@ -186,17 +188,16 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo): Promis
     // did not contain, so rows that only exist in later months never leak into it; the stand-alone
     // registers (claims, bonds, final accounts) are left exactly as that report holds them.
     const own = hasStoredCopy(db, periodId) ? period : null;
-    const base = own ?? nearestStoredBefore(db, period.report_no);
+    const base = own ?? nearestStoredBefore(db, period.report_no, programmeId);
     if (base) {
       restoreFromSnapshot(db, base.id);
       baseNote = base.id === periodId ? `starting from ${period.label}'s own stored data` : `starting from the stored data of ${base.label}`;
     } else {
-      clearSnapshotRegisters(db);
+      clearSnapshotRegisters(db, programmeId);
       baseNote = "starting from empty registers (no earlier report is stored)";
     }
   }
   setSetting(db, "current_period_id", String(periodId));
-  const programmeId = Number(getSetting(db, "current_programme_id") ?? (db.prepare("SELECT id FROM programmes ORDER BY id LIMIT 1").get() as { id: number } | undefined)?.id ?? 1);
 
   const lookupsCreated: string[] = [];
   const results: SheetResult[] = [];

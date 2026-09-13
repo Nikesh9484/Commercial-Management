@@ -40,7 +40,7 @@ async function clearData(user: UserInfo, req: Request) {
     db.prepare("DELETE FROM report_checklist").run();
     db.prepare("DELETE FROM app_settings WHERE key LIKE 'workbook_map:%'").run();
     db.prepare("UPDATE reporting_periods SET status = 'Open', locked_at = NULL, locked_by = NULL").run();
-    if (body.periods) db.prepare("DELETE FROM app_settings WHERE key = 'current_period_id'").run();
+    if (body.periods) db.prepare("DELETE FROM app_settings WHERE key = 'current_period_id' OR key LIKE 'current_period_id:%'").run();
   });
   tx();
   if (!body.periods) {

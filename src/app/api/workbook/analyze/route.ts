@@ -5,6 +5,7 @@ import { analyzeWorkbook } from "@/lib/workbook/analyze";
 import { storeUpload, uploadPath, appendUploadPart, finishUploadParts, saveConverted } from "@/lib/workbook/import";
 import { readWorkbookValues } from "@/lib/workbook/read";
 import { looksLikeMarinaReport, convertMarinaReport, toSheetValues } from "@/lib/workbook/marina";
+import { looksLikeVbhReport, convertVbhReport } from "@/lib/workbook/vbh";
 import { looksLikeClaimsTracker, convertClaimsTracker, codeFrag, type KnownLine } from "@/lib/workbook/claims-tracker";
 import { getAppContext } from "@/lib/context";
 import { getDb } from "@/lib/db";
@@ -62,6 +63,12 @@ export async function POST(req: Request, ctx: unknown) {
     if (looksLikeMarinaReport(worksheets)) {
       // The Marina CM Report layout: convert the schedules into clean register sheets first.
       const conv = convertMarinaReport(worksheets);
+      worksheets = toSheetValues(conv);
+      saveConverted(fileId, worksheets);
+      conversion = { notes: conv.notes, reportNo: conv.reportNo, periodEnd: conv.periodEnd };
+    } else if (looksLikeVbhReport(worksheets)) {
+      // The VBH Commercial Report layout (SCHD A–G + DATA): same idea, its own converter.
+      const conv = convertVbhReport(worksheets);
       worksheets = toSheetValues(conv);
       saveConverted(fileId, worksheets);
       conversion = { notes: conv.notes, reportNo: conv.reportNo, periodEnd: conv.periodEnd };

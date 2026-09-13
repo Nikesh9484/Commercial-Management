@@ -46,11 +46,11 @@ export function computeCostReport(programmeId: number, periodId: number | null):
   const programme = (db.prepare("SELECT id, code, name FROM programmes WHERE id = ?").get(programmeId) as CostReport["programme"]) ?? null;
   const period = periodId ? ((db.prepare("SELECT id, label, status, report_no FROM reporting_periods WHERE id = ?").get(periodId) as { id: number; label: string; status: string; report_no: number } | undefined) ?? null) : null;
   const prev = period
-    ? ((db.prepare("SELECT id, label, status FROM reporting_periods WHERE report_no < ? ORDER BY report_no DESC LIMIT 1").get(period.report_no) as { id: number; label: string; status: string } | undefined) ?? null)
+    ? ((db.prepare("SELECT id, label, status FROM reporting_periods WHERE programme_id = ? AND report_no < ? ORDER BY report_no DESC LIMIT 1").get(programmeId, period.report_no) as { id: number; label: string; status: string } | undefined) ?? null)
     : null;
 
   // A locked report, or any report that is not the latest, is shown from its stored copy, not recalculated.
-  if (period && (period.status === "Locked" || !!(db.prepare("SELECT 1 FROM reporting_periods WHERE report_no > ? LIMIT 1").get(period.report_no)))) {
+  if (period && (period.status === "Locked" || !!(db.prepare("SELECT 1 FROM reporting_periods WHERE programme_id = ? AND report_no > ? LIMIT 1").get(programmeId, period.report_no)))) {
     const snap = snapshotRows<CostLineRow>(db, period.id, "cost_report");
     if (snap) {
       const assetIds = new Set((db.prepare("SELECT id FROM assets WHERE programme_id = ?").all(programmeId) as { id: number }[]).map((a) => a.id));
@@ -250,9 +250,9 @@ function previousAfa(db: Database.Database, periodId: number): PreviousAfa | nul
   return { byId, byCode };
 }
 
-/** Stores the computed report for every programme (called when a period is locked). Returns rows stored. */
-export function snapshotCostReport(db: Database.Database, periodId: number, takenAt: string): number {
-  const programmes = db.prepare("SELECT id FROM programmes").all() as { id: number }[];
+/** Stores the computed report of the period's project (called when a period is stored or locked). Returns rows stored. */
+export function snapshotCostReport(db: Database.Database, periodId: number, takenAt: string, programmeId?: number): number {
+  const programmes = programmeId ? [{ id: programmeId }] : (db.prepare("SELECT id FROM programmes").all() as { id: number }[]);
   const ins = db.prepare("INSERT INTO snapshots(period_id, register_key, record_id, data, taken_at) VALUES(?, 'cost_report', ?, ?, ?)");
   let n = 0;
   for (const p of programmes) {

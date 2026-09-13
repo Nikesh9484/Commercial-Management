@@ -16,8 +16,8 @@
 import type { SheetValues } from "./read";
 import { cellText } from "./read";
 
-type Row = unknown[];
-type Sheet = SheetValues;
+export type Row = unknown[];
+export type Sheet = SheetValues;
 /** Schedule E of the monthly workbook is read but not imported; the Claims Tracker is the source of claims. */
 const INCLUDE_WORKBOOK_CLAIMS = false;
 
@@ -37,13 +37,13 @@ export interface ConversionResult {
 
 /* ------------------------------------------------------------------ helpers */
 
-const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
-const cell = (v: Row | undefined, i: number): unknown => (v && v.length > i ? v[i] : undefined);
-const txt = (v: Row | undefined, i: number): string => {
+export const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+export const cell = (v: Row | undefined, i: number): unknown => (v && v.length > i ? v[i] : undefined);
+export const txt = (v: Row | undefined, i: number): string => {
   const x = cell(v, i);
   return x === null || x === undefined ? "" : String(x).trim();
 };
-const money = (v: Row | undefined, i: number): number | null => {
+export const money = (v: Row | undefined, i: number): number | null => {
   const x = cell(v, i);
   if (isNum(x)) return Math.round(x * 100) / 100;
   if (typeof x === "string") {
@@ -59,7 +59,7 @@ function serialToIso(n: number): string | null {
   return inRange(d.getUTCFullYear()) ? d.toISOString().slice(0, 10) : null;
 }
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
-function date(v: Row | undefined, i: number): string | null {
+export function date(v: Row | undefined, i: number): string | null {
   const x = cell(v, i);
   if (x === null || x === undefined || x === "") return null;
   if (isNum(x)) return serialToIso(x);
@@ -76,7 +76,7 @@ function date(v: Row | undefined, i: number): string | null {
   if (m3 && inRange(Number(m3[3]))) return `${m3[3]}-${m3[2].padStart(2, "0")}-${m3[1].padStart(2, "0")}`;
   return null;
 }
-function monthText(v: Row | undefined, i: number): string {
+export function monthText(v: Row | undefined, i: number): string {
   const x = cell(v, i);
   if (x === null || x === undefined || x === "") return "";
   const iso = isNum(x) ? serialToIso(x) : /^\d{4}-\d{2}/.test(String(x)) ? String(x).slice(0, 10) : null;
@@ -86,13 +86,13 @@ function monthText(v: Row | undefined, i: number): string {
   }
   return String(x).trim();
 }
-const yes = (v: Row | undefined, i: number) => ["yes", "y", "true", "1", "x", "11", "ü"].includes(txt(v, i).toLowerCase());
-const norm = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
+export const yes = (v: Row | undefined, i: number) => ["yes", "y", "true", "1", "x", "11", "ü"].includes(txt(v, i).toLowerCase());
+export const norm = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
 
-function rows(sheet: Sheet | undefined): [number, Row][] {
+export function rows(sheet: Sheet | undefined): [number, Row][] {
   return sheet ? [...sheet.rows.entries()].sort((a, b) => a[0] - b[0]) : [];
 }
-function findSheet(sheets: Sheet[], ...names: string[]): Sheet | undefined {
+export function findSheet(sheets: Sheet[], ...names: string[]): Sheet | undefined {
   for (const n of names) {
     const hit = sheets.find((s) => norm(s.name) === norm(n));
     if (hit) return hit;
@@ -100,7 +100,7 @@ function findSheet(sheets: Sheet[], ...names: string[]): Sheet | undefined {
   return undefined;
 }
 /** First row whose cells include all the given words (case-insensitive). */
-function findHeaderRow(sheet: Sheet, ...words: string[]): number | null {
+export function findHeaderRow(sheet: Sheet, ...words: string[]): number | null {
   for (const [r, v] of rows(sheet)) {
     const joined = v.map((x) => cellText(x).toLowerCase()).join(" | ");
     if (words.every((w) => joined.includes(w.toLowerCase()))) return r;
@@ -148,7 +148,7 @@ function pkg(name: string): string {
   return n ? (PKG_ALIAS[n.toLowerCase()] ?? n) : "";
 }
 
-const BOND_TYPES: Record<string, string> = {
+export const BOND_TYPES: Record<string, string> = {
   "trade license": "Trade License",
   "professional indemnity": "Professional Indemnity",
   "public liability": "Public/Third Party Liability",
@@ -740,7 +740,7 @@ export function convertMarinaReport(sheets: Sheet[]): ConversionResult {
   return { sheets: out.filter((s) => s.rows.length > 0), notes, periodEnd, reportNo };
 }
 
-function cols(pairs: [string, string][]) {
+export function cols(pairs: [string, string][]) {
   return pairs.map(([label, key]) => ({ label, key }));
 }
 

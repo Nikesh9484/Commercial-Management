@@ -45,7 +45,7 @@ const ICONS: Record<string, LucideIcon> = {
   FileDown,
 };
 
-export function Sidebar({ open, onClose, role }: { open: boolean; onClose: () => void; role: Role }) {
+export function Sidebar({ open, onClose, role, project }: { open: boolean; onClose: () => void; role: Role; project?: string | null }) {
   const pathname = usePathname();
   const search = useSearchParams();
   const isActive = (href: string) =>
@@ -76,9 +76,9 @@ export function Sidebar({ open, onClose, role }: { open: boolean; onClose: () =>
       >
         <div className="flex h-14 items-center justify-between border-b border-white/10 px-4">
           <Link href="/" className="flex items-center gap-2" onClick={onClose}>
-            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-accent text-sm font-bold">TM</span>
+            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-accent text-sm font-bold">{initialsOf(project ?? APP_SHORT)}</span>
             <span className="leading-tight">
-              <span className="block text-sm font-semibold tracking-wide">{APP_SHORT}</span>
+              <span className="block truncate text-sm font-semibold tracking-wide" title={project ?? APP_SHORT}>{project ?? APP_SHORT}</span>
               <span className="block text-[11px] text-blue-100/80">{APP_SUBTITLE}</span>
             </span>
           </Link>
@@ -146,4 +146,15 @@ export function Sidebar({ open, onClose, role }: { open: boolean; onClose: () =>
       </aside>
     </>
   );
+}
+
+/** "The Marina" -> "TM", "Village Boutique Hotel (VBH)" -> "VB". */
+function initialsOf(name: string): string {
+  return name
+    .replace(/\(.*?\)/g, "")
+    .split(/[\s–-]+/)
+    .filter((w) => /^[A-Za-z]/.test(w))
+    .slice(0, 2)
+    .map((w) => w[0].toUpperCase())
+    .join("") || "CD";
 }

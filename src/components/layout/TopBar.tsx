@@ -37,14 +37,15 @@ export function TopBar({ context, user, onMenu }: { context: AppContext; user: U
       </button>
 
       <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto sm:gap-4">
-        <Selector label="Programme">
+        <Selector label="Project / Asset">
           <select
             className={selectCls}
             value={context.programme?.id ?? ""}
             disabled={!canChange || pending}
             onChange={(e) => change({ programme_id: Number(e.target.value) })}
+            title="Each project is stand-alone: its own registers, reports and library"
           >
-            {context.programmes.length === 0 && <option value="">No programme yet</option>}
+            {context.programmes.length === 0 && <option value="">No project yet</option>}
             {context.programmes.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.code} · {p.name}
@@ -52,16 +53,25 @@ export function TopBar({ context, user, onMenu }: { context: AppContext; user: U
             ))}
           </select>
         </Selector>
-        <Selector label="Asset">
-          <select className={selectCls} value={context.asset?.id ?? ""} disabled={!canChange || pending} onChange={(e) => change({ asset_id: Number(e.target.value) })}>
-            {assetsForProgramme.length === 0 && <option value="">No asset yet</option>}
-            {assetsForProgramme.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.code} · {a.name}
-              </option>
-            ))}
-          </select>
-        </Selector>
+        {assetsForProgramme.length > 1 ? (
+          <Selector label="Sub-asset">
+            <select className={selectCls} value={context.asset?.id ?? ""} disabled={!canChange || pending} onChange={(e) => change({ asset_id: Number(e.target.value) })} title="Default sub-asset for new rows and report covers; every sub-asset of the project is always shown">
+              {assetsForProgramme.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.code} · {a.name}
+                </option>
+              ))}
+            </select>
+          </Selector>
+        ) : (
+          context.asset && (
+            <Selector label="Asset code">
+              <span className="block truncate rounded-md border border-white/10 bg-white/5 px-2 py-0.5 text-sm text-blue-100" title={context.asset.name}>
+                {context.asset.code}
+              </span>
+            </Selector>
+          )
+        )}
         <Selector label="Reporting period">
           <div className="flex items-center gap-1.5">
             <select className={selectCls} value={context.period?.id ?? ""} disabled={!canChange || pending} onChange={(e) => change({ period_id: Number(e.target.value) })}>

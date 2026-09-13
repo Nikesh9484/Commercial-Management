@@ -120,8 +120,8 @@ const r2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 export function previousLockedPeriod(db: Database.Database, period: PeriodRow): PeriodRow | null {
   return (
     (db
-      .prepare("SELECT p.* FROM reporting_periods p WHERE p.report_no < ? AND EXISTS (SELECT 1 FROM snapshots s WHERE s.period_id = p.id AND s.register_key = 'cost_report') ORDER BY p.report_no DESC LIMIT 1")
-      .get(period.report_no) as PeriodRow | undefined) ?? null
+      .prepare("SELECT p.* FROM reporting_periods p WHERE p.programme_id = ? AND p.report_no < ? AND EXISTS (SELECT 1 FROM snapshots s WHERE s.period_id = p.id AND s.register_key = 'cost_report') ORDER BY p.report_no DESC LIMIT 1")
+      .get(period.programme_id, period.report_no) as PeriodRow | undefined) ?? null
   );
 }
 
