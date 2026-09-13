@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { memoryNote, releaseMemory } from "./heavy";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -168,7 +169,9 @@ function resolveOption(value: string, options: string[]): string | null {
 export async function importWorkbook(req: ImportRequest, user: UserInfo): Promise<ImportResult> {
   if (user.role === "viewer") throw new ValidationError("Viewers cannot import.");
   const db = getDb();
+  const debug = process.env.IMPORT_DEBUG ? (phase: string) => console.log(`[import] ${phase}: ${memoryNote()}`) : () => {};
   const worksheets = await uploadSheets(req.fileId);
+  debug("sheets loaded");
 
   // Reporting period. Every report keeps its own data: the live registers belong to the latest report.
   // Importing an older month is done "in a sandbox": the latest report's live data is stored first,
@@ -252,11 +255,25 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo): Promis
     const hasPeriodField = def.fields.some((f) => f.key === "period_id");
     const hasCostLine = def.fields.some((f) => f.key === "cost_line_id" && f.type === "lookup");
     const costLines = hasCostLine ? (db.prepare("SELECT id, package_id, contractor_id FROM cost_lines").all() as { id: number; package_id: number | null; contractor_id: number | null }[]) : [];
+    // dropdown options are read once per target register for the sheet, not once per cell
+    const optionCache = new Map<string, { id: number; label: string }[]>();
+    const optionsOf = (target: string) => {
+      let o = optionCache.get(target);
+      if (!o) {
+        o = lookupOptions(db, target, true);
+        optionCache.set(target, o);
+      }
+      return o;
+    };
 
+    let processed = 0;
     const tx = db.transaction(() => {
       for (let r = m.headerRow + 1; r <= ws.rowCount; r++) {
         const row = ws.rows.get(r);
         if (!row) continue;
+        // Every row prepares fresh SQL statements whose native memory the JavaScript heap does not see, so the
+        // garbage collector would let hundreds of megabytes pile up before running: it is run every 100 rows.
+        if (++processed % 100 === 0) releaseMemory();
         const input: Record<string, unknown> = {};
         let any = false;
         for (const c of colMap) {
@@ -302,7 +319,7 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo): Promis
             if (f.type !== "lookup") continue;
             const target = f.lookup!.register;
             const label = String(v).trim();
-            const opts = lookupOptions(db, target, true);
+            const opts = optionsOf(target);
             const want = label.toLowerCase();
             const hit =
               opts.find((o) => o.label.toLowerCase() === want) ??
@@ -327,6 +344,7 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo): Promis
               const created = createRecord(getRegisterDef(target)!, { name: label, ...extra }, user, "import");
               lookupsCreated.push(`${getRegisterDef(target)!.singular}: ${label}`);
               input[f.key] = created.id;
+              optionCache.delete(target);
             } else if (target === "programmes") {
               delete input[f.key]; // fall back to the current asset / programme
             }
@@ -366,6 +384,8 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo): Promis
     });
     tx();
     results.push(result);
+    releaseMemory();
+    debug(`sheet ${m.sheet} → ${m.register}`);
   }
 
   // An older month rebuilt from its monthly workbook: rows the workbook did not contain are removed from
@@ -398,12 +418,15 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo): Promis
   }
   // the imported month is stored as this report's own data
   takeSnapshot(periodId, user, "import");
+  releaseMemory();
+  debug("snapshot taken");
   let locked = false;
   if (req.lock && user.role === "admin") {
     const totalErrors = results.reduce((t, r) => t + r.errors.length, 0);
     if (totalErrors === 0) {
       lockPeriod(periodId, user, { force: olderImport });
       locked = true;
+      debug("period locked");
     }
   }
   if (older) {

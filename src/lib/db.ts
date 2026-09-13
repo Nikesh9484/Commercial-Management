@@ -12,12 +12,38 @@ import { nowIso, formatMonthYear } from "./format";
  */
 type G = typeof globalThis & { __cdDb?: Database.Database };
 
+/**
+ * Prepared statements are kept and reused by SQL text. Compiling a statement costs SQLite native
+ * memory that the JavaScript garbage collector neither sees nor hands back promptly (a record read
+ * with all its lookup labels compiles to ~150 KB), so an import that read and wrote a few hundred
+ * records grew the process by 200 MB and the small hosting plan restarted it. No statement in this
+ * code base uses the modes that would make sharing unsafe (pluck / raw / expand / bind / iterate).
+ */
+function cacheStatements(db: Database.Database) {
+  const raw = db.prepare.bind(db);
+  const cache = new Map<string, Database.Statement>();
+  const MAX = 400;
+  db.prepare = ((sql: string) => {
+    let s = cache.get(sql);
+    if (s) {
+      cache.delete(sql);
+      cache.set(sql, s);
+      return s;
+    }
+    s = raw(sql);
+    cache.set(sql, s);
+    if (cache.size > MAX) cache.delete(cache.keys().next().value as string);
+    return s;
+  }) as typeof db.prepare;
+}
+
 export function getDb(): Database.Database {
   const g = globalThis as G;
   if (g.__cdDb) return g.__cdDb;
   const dbPath = process.env.DB_PATH || path.join(process.cwd(), "data", "commercial.db");
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   const db = new Database(dbPath);
+  cacheStatements(db);
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
   initSchema(db);
