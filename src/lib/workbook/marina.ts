@@ -29,6 +29,15 @@ export interface ConvertedSheet {
   rows: unknown[][];
 }
 
+/** Report-level values a workbook carries besides its registers: written to the reporting period on import. */
+export interface ReportControl {
+  aconex_ref?: string | null;
+  /** narrative for the Executive Summary ("Key issues this period") */
+  key_issues?: string | null;
+  /** report checklist ticks by module number */
+  checklist?: Record<number, boolean> | null;
+}
+
 export interface ConversionResult {
   sheets: ConvertedSheet[];
   notes: string[];
@@ -36,6 +45,7 @@ export interface ConversionResult {
   reportNo: number | null;
   /** the workbook's own Level 1 figures, for the reconciliation shown on the dashboard */
   level1?: Level1Check | null;
+  control?: ReportControl | null;
 }
 
 /* ------------------------------------------------------------------ helpers */

@@ -68,13 +68,13 @@ export async function POST(req: Request, ctx: unknown) {
       const conv = convertMarinaReport(worksheets);
       worksheets = toSheetValues(conv);
       saveConverted(fileId, worksheets);
-      conversion = { notes: conv.notes, reportNo: conv.reportNo, periodEnd: conv.periodEnd, level1: conv.level1 ?? null };
+      conversion = { notes: conv.notes, reportNo: conv.reportNo, periodEnd: conv.periodEnd, level1: conv.level1 ?? null, control: conv.control ?? null };
     } else if (looksLikeVbhReport(worksheets)) {
       // The VBH Commercial Report layout (SCHD A–G + DATA): same idea, its own converter.
       const conv = convertVbhReport(worksheets);
       worksheets = toSheetValues(conv);
       saveConverted(fileId, worksheets);
-      conversion = { notes: conv.notes, reportNo: conv.reportNo, periodEnd: conv.periodEnd, level1: conv.level1 ?? null };
+      conversion = { notes: conv.notes, reportNo: conv.reportNo, periodEnd: conv.periodEnd, level1: conv.level1 ?? null, control: conv.control ?? null };
     } else if (looksLikeClaimsTracker(worksheets)) {
       // The AMAALA Claims Tracker: keep our programme's claims and link them to our cost lines
       // (the main contract line – the one with the largest budget – when a contract has several lines).

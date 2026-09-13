@@ -155,6 +155,7 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo,
       allowedRegisters: standalone?.only ?? (excludeRegisters.length ? registers.map((r) => r.key) : undefined),
       fileName: analysis.fileName,
       excelCheck: analysis.conversion?.level1 ?? null,
+      control: analysis.conversion?.control ?? null,
     };
     try {
       const j = await importViaJob(body, setPhase);
@@ -220,6 +221,7 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo,
         allowedRegisters: excludeRegisters.length ? registers.map((r) => r.key) : undefined,
         fileName: a.fileName,
         excelCheck: a.conversion?.level1 ?? null,
+        control: a.conversion?.control ?? null,
       };
       try {
         const j = await importViaJob(body, (m) => update(i, { message: `Importing Report No ${no}… ${m}` }));

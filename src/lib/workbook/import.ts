@@ -13,6 +13,8 @@ import { nowIso, formatMonthYear, parseDateInput } from "../format";
 import { importKeyFields, norm } from "./analyze";
 import { cellText, getSheet, readWorkbookValues, type SheetValues } from "./read";
 import type { Level1Check } from "./level1-check";
+import type { ReportControl } from "./marina";
+import { getChecklist, setChecklistItem } from "../checklist";
 
 /* ------------------------------------------------------------------ */
 /* Temporary storage of the uploaded workbook (30 minutes)             */
@@ -118,6 +120,8 @@ export interface ImportRequest {
   fileName?: string;
   /** The workbook's own Level 1 figures (from the converter), kept on the period for the Excel check. */
   excelCheck?: Level1Check | null;
+  /** Report-level values the workbook carries (reference, narrative, checklist ticks), written to the period. */
+  control?: ReportControl | null;
 }
 
 export interface SheetResult {
@@ -428,6 +432,19 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo, progres
   // the library shows the monthly workbook the report came from; a stand-alone import does not replace that name
   if (monthly) db.prepare("UPDATE reporting_periods SET source_file = ?, imported_at = ?, imported_by = ? WHERE id = ?").run(String(req.fileName ?? "").slice(0, 200) || null, nowIso(), user.name, periodId);
   else db.prepare("UPDATE reporting_periods SET imported_at = ?, imported_by = ? WHERE id = ?").run(nowIso(), user.name, periodId);
+  if (monthly && req.control && typeof req.control === "object") {
+    // report control from the workbook: reference, Executive Summary narrative and the report checklist
+    const c = req.control;
+    if (c.aconex_ref) db.prepare("UPDATE reporting_periods SET aconex_ref = ? WHERE id = ?").run(String(c.aconex_ref).slice(0, 200), periodId);
+    if (c.key_issues) db.prepare("UPDATE reporting_periods SET key_issues = ? WHERE id = ?").run(String(c.key_issues).slice(0, 20000), periodId);
+    if (c.checklist && typeof c.checklist === "object") {
+      const items = getChecklist(periodId);
+      for (const [mod, done] of Object.entries(c.checklist)) {
+        const item = items.find((i) => i.module_no === Number(mod));
+        if (item && !!item.done !== !!done) setChecklistItem(item.id, { done: !!done }, user);
+      }
+    }
+  }
   if (monthly && req.excelCheck && typeof req.excelCheck === "object") {
     // the Excel's own Level 1 figures travel with the report, and the workbook's layout decides the project's Level 1 convention
     db.prepare("UPDATE reporting_periods SET excel_check = ? WHERE id = ?").run(JSON.stringify(req.excelCheck), periodId);

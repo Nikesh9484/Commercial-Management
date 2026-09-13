@@ -9,7 +9,7 @@
  * account status (FA Status). Every rule mirrors the Excel: DVO / PVO / RFC amounts feed the cost
  * report exactly as SCHD B does, and each cost category keeps its budget-hold line.
  */
-import { BOND_TYPES, cell, cols, date, findHeaderRow, findSheet, fmt, isNum, money, monthText, norm, rows, txt, type ConversionResult, type ConvertedSheet, type Row, type Sheet } from "./marina";
+import { BOND_TYPES, cell, cols, date, findHeaderRow, findSheet, fmt, isNum, money, monthText, norm, rows, txt, type ConversionResult, type ConvertedSheet, type ReportControl, type Row, type Sheet } from "./marina";
 import { readLevel1Check } from "./level1-check";
 
 /* ------------------------------------------------------------------ detection */
@@ -94,6 +94,8 @@ interface Contract {
   frags: string[];
   p: Params | null;
   note: string;
+  /** Stage 2 remeasure less stage 1 value (Executive Summary "Stage 2 contract conversion" tracker) */
+  faAdj?: number;
 }
 interface Params {
   hdr: number;
@@ -381,34 +383,90 @@ export function convertVbhReport(sheets: Sheet[]): ConversionResult {
     const p: Params = { hdr, adv: A ? pct(cell(r12, 8)) : 0, ret: A ? pct(cell(r12, 9)) : 0, vat: isNum(vatCell) ? Math.round(vatCell * 100) : 15, ipcDays: days(cell(r13, A ? 15 : 12), 28), payDays: days(cell(r13, A ? 26 : 23), 30) };
     if (!c.p) c.p = p;
     const col = { ipcNo: A ? 12 : 9, ipcRef: A ? 13 : 10, ipcDate: A ? 14 : 11, cumCert: A ? 17 : 14, grossCert: A ? 18 : 15, invRef: A ? 23 : 20, invDate: A ? 24 : 21, paid: A ? 25 : 22 };
+    // A sheet may hold several blocks (one per service / call-off order under the same PO), each
+    // ending in a TOTAL row. The cumulative figures of each block are carried on top of the blocks
+    // before it, so the contract's cumulative claimed / certified keeps rising across the sheet.
     let prevCum = 0;
     let n = 0;
+    let baseClaimed = 0;
+    let baseCert = 0;
+    let lastClaimed = 0;
+    let lastCert = 0;
+    let block = 0;
+    let blockTitle = "";
     const seenApp = new Map<string, number>();
+    // "1", "IPC No 3", "IPA 12" – the serial in the first column, however it is written
+    const serial = (v: Row): number | null => {
+      const x = cell(v, 1);
+      if (isNum(x)) return x;
+      const m = /(\d+)/.exec(txt(v, 1));
+      return m ? Number(m[1]) : null;
+    };
     for (const [r, v] of rows(s)) {
       if (r <= hdr + 2) continue;
-      if (txt(v, 1).toUpperCase().startsWith("TOTAL")) break;
-      if (!isNum(cell(v, 1)) || !isNum(cell(v, 6))) continue;
+      if (txt(v, 1).toUpperCase().startsWith("TOTAL")) {
+        baseClaimed += lastClaimed;
+        baseCert += lastCert;
+        lastClaimed = 0;
+        lastCert = 0;
+        prevCum = 0;
+        n = 0;
+        block++;
+        continue;
+      }
+      const sr = serial(v);
+      if (sr === null || !isNum(cell(v, 6))) {
+        // a heading row between blocks names the next service / call-off order
+        if (block > 0 && txt(v, 1) && !txt(v, 2) && !isNum(cell(v, 6))) blockTitle = txt(v, 1).slice(0, 40);
+        continue;
+      }
       n++;
       let cumCert = money(v, col.cumCert);
       const gross = money(v, col.grossCert);
       if (cumCert !== null && gross !== null && n > 1 && Math.abs(cumCert - gross) < 0.5 && prevCum > 0 && cumCert < prevCum) cumCert = Math.round((prevCum + gross) * 100) / 100;
       if (cumCert !== null) prevCum = cumCert;
-      let appNo = txt(v, 2) || `IPA ${cell(v, 1)}`;
+      const claimed = money(v, 6);
+      if (claimed !== null) lastClaimed = claimed;
+      if (cumCert !== null) lastCert = cumCert;
+      let appNo = txt(v, 2) || txt(v, 1) || `IPA ${sr}`;
+      if (block > 0 && blockTitle && !appNo.toLowerCase().includes(blockTitle.toLowerCase().slice(0, 8))) appNo = `${appNo} – ${blockTitle}`;
       const k = appNo.toLowerCase();
       const dup = (seenApp.get(k) ?? 0) + 1;
       seenApp.set(k, dup);
       if (dup > 1) appNo = `${appNo} (${dup})`;
       const appDate = date(v, 5) ?? date(v, col.ipcDate) ?? date(v, 3);
-      ipcRows.push([c.po, cell(v, 1), appNo, monthText(v, 3), txt(v, 4), appDate ?? PERIOD_END, money(v, 6), txt(v, col.ipcNo), txt(v, col.ipcRef), date(v, col.ipcDate), cumCert, txt(v, col.invRef), date(v, col.invDate), date(v, col.paid), appDate ? "" : "Application date missing in Excel"]);
+      const cumClaimed = claimed === null ? null : Math.round((claimed + baseClaimed) * 100) / 100;
+      const cumCertified = cumCert === null ? null : Math.round((cumCert + baseCert) * 100) / 100;
+      ipcRows.push([c.po, sr, appNo, monthText(v, 3), txt(v, 4), appDate ?? PERIOD_END, cumClaimed, txt(v, col.ipcNo), txt(v, col.ipcRef), date(v, col.ipcDate), cumCertified, txt(v, col.invRef), date(v, col.invDate), date(v, col.paid), appDate ? "" : "Application date missing in Excel"]);
     }
-    notes.push(`IPC sheet "${s.name.trim()}" → contract ${c.po} (${c.contractor}).`);
+    notes.push(`IPC sheet "${s.name.trim()}" → contract ${c.po} (${c.contractor})${block > 1 ? `, ${block} blocks (service / call-off orders) carried cumulatively` : ""}.`);
+  }
+
+  // ---- Stage 2 contract conversion tracker (Executive Summary): remeasured value against the stage 1 contract
+  const ES = findSheet(sheets, "Executive Summary");
+  let stage2 = 0;
+  if (ES) {
+    for (const [, v] of rows(ES)) {
+      const m = /^(\d{3}[A-Z]\d{2})\s*-\s*/i.exec(txt(v, 13));
+      if (!m || !isNum(cell(v, 14))) continue;
+      const c = contractByFrag.get(m[1].toUpperCase());
+      if (!c) continue;
+      const s1 = money(v, 14) ?? 0;
+      const s2 = money(v, 15);
+      const variance = money(v, 16) ?? (s2 === null ? null : Math.round((s2 - s1) * 100) / 100);
+      if (variance !== null) c.faAdj = variance;
+      const when = date(v, 18) ?? txt(v, 18);
+      c.note = `Stage 2 conversion: stage 1 ${fmt(s1)}, stage 2 remeasure ${s2 === null ? "–" : fmt(s2)}, variance ${variance === null ? "–" : fmt(variance)}${txt(v, 17) ? `; ${txt(v, 17)}` : ""}${when ? `; forecast completion ${when}` : ""}.`;
+      stage2++;
+    }
+    if (stage2) notes.push(`Stage 2 contract conversion tracker: ${stage2} contract(s) – the remeasure variance is carried as the contract's final account adjustment.`);
   }
 
   out.push({
     name: "Contracts",
     register: "contracts",
     columns: cols([["SR No", "sr_no"], ["Contract title", "title"], ["REEF PR No", "reef_pr_no"], ["REEF PO No", "reef_po_no"], ["ACC ref", "acc_ref"], ["Contractor / Consultant", "contractor_id"], ["Package", "package_id"], ["Cost report line", "cost_line_id"], ["Scope of work", "scope_of_work"], ["Current status", "current_status"], ["Original completion date", "original_completion_date"], ["EOT granted (days)", "eot_granted_days"], ["Original contract", "original_contract"], ["Final account adjustment", "final_account_adjustment"], ["Advance recovery %", "advance_recovery_pct"], ["Retention %", "retention_pct"], ["Days to issue IPC", "ipc_days"], ["Days to pay", "payment_days"], ["VAT %", "vat_pct"], ["Notes", "notes"]]),
-    rows: contracts.map((c) => [c.sr, `${c.scope.slice(0, 100)}${c.frags.length > 1 ? ` (${c.frags.length} lines)` : ""}`, "", c.po, c.acc, c.contractor, c.pkg, c.line, c.scope, c.status, null, 0, Math.round(c.original * 100) / 100, 0, c.p?.adv ?? 0, c.p?.ret ?? 0, c.p?.ipcDays ?? 28, c.p?.payDays ?? 30, c.p?.vat ?? 15, c.frags.length > 1 ? `One PO across ${c.frags.length} cost lines: ${c.frags.join(", ")}; value = awarded contracts / budget of those lines (SCHD B column C).` : "Value = awarded contract / budget (SCHD B column C)."]),
+    rows: contracts.map((c) => [c.sr, `${c.scope.slice(0, 100)}${c.frags.length > 1 ? ` (${c.frags.length} lines)` : ""}`, "", c.po, c.acc, c.contractor, c.pkg, c.line, c.scope, c.status, null, 0, Math.round(c.original * 100) / 100, c.faAdj ?? 0, c.p?.adv ?? 0, c.p?.ret ?? 0, c.p?.ipcDays ?? 28, c.p?.payDays ?? 30, c.p?.vat ?? 15, `${c.frags.length > 1 ? `One PO across ${c.frags.length} cost lines: ${c.frags.join(", ")}; value = awarded contracts / budget of those lines (SCHD B column C).` : "Value = awarded contract / budget (SCHD B column C)."}${c.note ? ` ${c.note}` : ""}`]),
   });
   if (ipcRows.length) notes.push(`IPC log: ${ipcRows.length} payment application(s) across ${new Set(ipcRows.map((r) => r[0])).size} contract(s). The dashboard's "Certified to date" is the gross cumulative certified amount from the IPC sheets; SCHD B column K shows it net of advance recovery and retention, so the two differ by those deductions.`);
   out.push({
@@ -618,8 +676,87 @@ export function convertVbhReport(sheets: Sheet[]): ConversionResult {
     rows: faRows,
   });
 
+  // ---- Project team and distribution (Report Data sheet)
+  const teamRows: unknown[][] = [];
+  const control: ReportControl = { aconex_ref: null, key_issues: null, checklist: null };
+  if (rd) {
+    let section: "" | "distribution" | "team" = "";
+    let n = 0;
+    const checklist: Record<number, boolean> = {};
+    const moduleOf = (label: string): number[] => {
+      const t = label.toUpperCase().trim();
+      if (t === "MOM" || t.startsWith("EXECUTIVE SUMMARY")) return [11];
+      const m = /^SCHEDULE\s+([A-K])$/.exec(t);
+      const map: Record<string, number> = { A: 2, B: 2, C: 3, D: 5, E: 4, F: 6, G: 7, H: 8, I: 9, J: 10 };
+      return m && map[m[1]] ? [map[m[1]]] : [];
+    };
+    for (const [, v] of rows(rd)) {
+      // label in the first filled cell, value in the next filled cell (the sheet's columns vary)
+      const filled = v.map((x, i) => [i, x] as const).filter(([i, x]) => i <= 4 && x !== null && x !== undefined && String(x).trim() !== "");
+      const a = filled.length ? txt(v, filled[0][0]) : "";
+      const b = filled.length > 1 ? txt(v, filled[1][0]) : "";
+      if (/^amaala ref/i.test(a) && b && !control.aconex_ref) control.aconex_ref = b;
+      if (/^distribution$/i.test(a)) {
+        section = "distribution";
+        continue;
+      }
+      if (/^project team$/i.test(a)) {
+        section = "team";
+        continue;
+      }
+      if ((section && a.endsWith(":")) || (section && /director|manager|lead|surveying|engineer|head/i.test(a) && b)) {
+        const role = a.replace(/:$/, "").trim();
+        if (role && b && /^[A-Za-z .'-]+$/.test(b)) teamRows.push([++n, role, b, "AMAALA", section === "distribution"]);
+        continue;
+      }
+      // report checklist: "√" in the Done column
+      for (const mod of moduleOf(a)) {
+        const done = txt(v, 5) === "√" || txt(v, 5).toLowerCase() === "yes";
+        checklist[mod] = mod in checklist ? checklist[mod] && done : done;
+      }
+    }
+    if (Object.keys(checklist).length) control.checklist = checklist;
+    // the same person is often listed under Distribution and under Project Team: one row, on distribution
+    const merged = new Map<string, unknown[]>();
+    for (const r of teamRows) {
+      const k = `${String(r[1]).toLowerCase()}|${String(r[2]).toLowerCase()}`;
+      const prev = merged.get(k);
+      if (prev) prev[4] = prev[4] || r[4];
+      else merged.set(k, r);
+    }
+    teamRows.splice(0, teamRows.length, ...[...merged.values()].map((r, i) => [i + 1, ...r.slice(1)]));
+    if (teamRows.length) notes.push(`Project team: ${teamRows.length} (${teamRows.filter((r) => r[4]).length} on distribution).`);
+  }
+  out.push({ name: "Project Team", register: "project_team", columns: cols([["#", "sort_order"], ["Role / position", "role"], ["Name", "name"], ["Organisation", "organisation"], ["On distribution", "in_distribution"]]), rows: teamRows });
+
+  // ---- Key period movements (Executive Summary): the narrative for the dashboard's Executive Summary
+  if (ES) {
+    // the sheet shows the headline movements first and the itemised list under a second
+    // "KEY PERIOD MOVEMENTS" heading: the last heading starts the list that is carried over
+    const all = rows(ES);
+    let start = -1;
+    all.forEach(([r, v]) => {
+      if (/^key period movements/i.test(txt(v, 4))) start = r;
+    });
+    const lines: string[] = [];
+    for (const [r, v] of all) {
+      if (r <= start) continue;
+      const a = txt(v, 4);
+      if (!a || /^description$/i.test(a)) continue;
+      const amt = money(v, 8);
+      if (amt === null) continue;
+      const item = /^(item\s*no|\s*-\s)/i.test(a);
+      lines.push(item ? `  • ${a.replace(/^\s*-\s*/, "")}: ${amt >= 0 ? "+" : ""}${fmt(amt)}` : `${lines.length ? "\n" : ""}${a}: ${amt >= 0 ? "+" : ""}${fmt(amt)}`);
+    }
+    if (lines.length) {
+      control.key_issues = `Key period movements (from ${reportNo ? `Report No ${reportNo}` : "the monthly report"}):\n${lines.join("\n")}`;
+      notes.push(`Key period movements: ${lines.filter((l) => l.startsWith("  •")).length} item(s) carried to the Executive Summary narrative.`);
+    }
+  }
+  if (control.aconex_ref) notes.push(`Report reference ${control.aconex_ref} kept as the period's Aconex ref.`);
+
   notes.push(`Converted from the VBH Commercial Report layout (${assetName || "Village Boutique Hotel"}, ${progCode}${reportNo ? `, Report No ${reportNo}` : ""}${periodEnd ? `, period ending ${periodEnd}` : ""}).`);
   const level1 = readLevel1Check(sheets);
   if (level1) notes.push(`Excel Level 1: budget ${fmt(level1.budget)}, anticipated final account ${fmt(level1.afa)}, variance ${fmt(level1.variance)}, last month ${fmt(level1.lastMonthAfa)}, variance to last month ${fmt(level1.varianceToLastMonth)} – kept with the report for the dashboard's Excel check.`);
-  return { sheets: out.filter((s) => s.rows.length > 0), notes, periodEnd, reportNo, level1 };
+  return { sheets: out.filter((s) => s.rows.length > 0), notes, periodEnd, reportNo, level1, control };
 }

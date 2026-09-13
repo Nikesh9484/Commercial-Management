@@ -3,6 +3,7 @@ import { allRegisters } from "../registers";
 import type { FieldDef, RegisterDef } from "../registers/types";
 import { getDb, getSetting } from "../db";
 import type { Level1Check } from "./level1-check";
+import type { ReportControl } from "./marina";
 
 /** Registers a workbook sheet may be mapped to (in report order). */
 export const IMPORTABLE: { key: string; label: string }[] = [
@@ -250,7 +251,7 @@ export interface WorkbookAnalysis {
   fileName: string;
   sheets: SheetAnalysis[];
   /** Present when a known report layout was converted into clean sheets first. */
-  conversion?: { notes: string[]; reportNo: number | null; periodEnd: string | null; level1?: Level1Check | null };
+  conversion?: { notes: string[]; reportNo: number | null; periodEnd: string | null; level1?: Level1Check | null; control?: ReportControl | null };
 }
 
 /** Finds the row that looks most like a header: many short text cells, few numbers. */
