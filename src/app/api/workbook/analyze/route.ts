@@ -4,6 +4,7 @@ import { AuthError } from "@/lib/auth";
 import { analyzeWorkbook } from "@/lib/workbook/analyze";
 import { storeUpload, uploadPath, appendUploadPart, finishUploadParts, saveConverted } from "@/lib/workbook/import";
 import { readWorkbookValues } from "@/lib/workbook/read";
+import { withHeavyLock, releaseMemory } from "@/lib/workbook/heavy";
 import { looksLikeMarinaReport, convertMarinaReport, toSheetValues } from "@/lib/workbook/marina";
 import { looksLikeVbhReport, convertVbhReport } from "@/lib/workbook/vbh";
 import { looksLikeClaimsTracker, convertClaimsTracker, codeFrag, type KnownLine } from "@/lib/workbook/claims-tracker";
@@ -58,6 +59,8 @@ export async function POST(req: Request, ctx: unknown) {
     if (bytes[0] !== 0x50 || bytes[1] !== 0x4b) return NextResponse.json({ error: "This does not look like an .xlsx workbook. In Excel use Save As → Excel Workbook (.xlsx)." }, { status: 400 });
     const fileId = storeUpload(bytes);
     bytes = Buffer.alloc(0); // let the copy go before parsing
+    return withHeavyLock(async () => {
+    releaseMemory();
     let worksheets = await readWorkbookValues(uploadPath(fileId));
     let conversion: { notes: string[]; reportNo: number | null; periodEnd: string | null } | undefined;
     if (looksLikeMarinaReport(worksheets)) {
@@ -99,6 +102,8 @@ export async function POST(req: Request, ctx: unknown) {
       conversion = { notes: conv.notes, reportNo: null, periodEnd: null };
     }
     const analysis = { ...analyzeWorkbook(worksheets, name || "workbook.xlsx", fileId), conversion };
+    worksheets = [];
     return NextResponse.json(analysis);
+    });
   })(req, ctx);
 }

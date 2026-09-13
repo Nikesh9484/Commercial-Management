@@ -180,6 +180,7 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo,
     for (let i = 0; i < batchFiles.length; i++) {
       update(i, { status: "reading", message: "Reading…" });
       try {
+        if (i > 0) await pause(2000); // let the server settle between big files (memory on the small hosting plan)
         const a = await uploadAndAnalyze(batchFiles[i], (m) => update(i, { message: m }));
         analyses.push(a);
         if (!a.conversion) update(i, { status: "skipped", message: "Layout not recognised – import this file on its own above and map its sheets by hand." });
@@ -187,7 +188,7 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo,
         else update(i, { status: "ready", reportNo: a.conversion.reportNo, periodEnd: a.conversion.periodEnd, message: `Report No ${a.conversion.reportNo} · cut-off ${a.conversion.periodEnd}` });
       } catch (e) {
         analyses.push(null);
-        update(i, { status: "error", message: e instanceof Error ? e.message : String(e) });
+        update(i, { status: "error", message: friendly(e) });
       }
     }
     // import from the lowest report number up
@@ -202,6 +203,7 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo,
         continue;
       }
       update(i, { status: "importing", message: `Importing Report No ${no}…` });
+      await pause(1500);
       const body = {
         fileId: a.fileId,
         period: existing ? { id: existing.id } : { report_no: no, period_end: items[i].periodEnd },
@@ -224,7 +226,7 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo,
         const errors = j.sheets.reduce((t, r) => t + r.errors.length, 0);
         update(i, { status: errors ? "warning" : "done", result: j, message: `${j.period.label}${existing ? " (replaced)" : ""}: ${added} added, ${updated} updated${errors ? `, ${errors} row(s) could not be read` : ""}${j.period.locked ? " · locked" : ""}` });
       } catch (e) {
-        update(i, { status: "error", message: e instanceof Error ? e.message : String(e) });
+        update(i, { status: "error", message: friendly(e) });
       }
     }
     setBatchBusy(false);
@@ -559,6 +561,17 @@ function SheetMapper({ sheet, registers, value, onChange }: { sheet: SheetAnalys
       )}
     </div>
   );
+}
+
+const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Network failures mid-batch usually mean the server restarted (out of memory on a big file). */
+function friendly(e: unknown): string {
+  const msg = e instanceof Error ? e.message : String(e);
+  if (/failed to fetch|networkerror|load failed|unexpected answer \(50[234]\)/i.test(msg)) {
+    return `${msg} – the server stopped answering while working on this file. It usually means the hosting plan ran out of memory on a large workbook: wait a minute, then import this file on its own (or save a copy with only the schedule sheets and try again).`;
+  }
+  return msg;
 }
 
 function toBase64(blob: Blob): Promise<string> {
