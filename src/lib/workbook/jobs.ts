@@ -2,7 +2,9 @@ import type { UserInfo } from "../registers/types";
 import { importWorkbook, type ImportRequest, type ImportResult } from "./import";
 import { withHeavyLock } from "./heavy";
 import { ValidationError } from "../registers/engine";
-import { getDb, getSetting, setSetting } from "../db";
+import fs from "node:fs";
+import path from "node:path";
+import { getDb, getSetting } from "../db";
 import { putTrace, getTrace } from "../cloud-backup";
 
 /** The last step an import reached, kept in the database so it survives a restart of the server. */
@@ -18,8 +20,14 @@ export interface ImportTrace {
   status: "running" | "done" | "failed";
 }
 
+/** The local trace lives in a small file next to the database, so tracing does not count as a database change. */
+function traceFile(): string {
+  return path.join(path.dirname(process.env.DB_PATH || path.join(process.cwd(), "data", "commercial.db")), "import-trace.json");
+}
+
 export function lastImportTrace(): ImportTrace | null {
   try {
+    if (fs.existsSync(traceFile())) return JSON.parse(fs.readFileSync(traceFile(), "utf8")) as ImportTrace;
     const raw = getSetting(getDb(), "import_trace");
     return raw ? (JSON.parse(raw) as ImportTrace) : null;
   } catch {
@@ -72,7 +80,7 @@ export function startImportJob(req: ImportRequest, user: UserInfo): ImportJob {
     job.rssMb = t.rssMb;
     console.log(`[import ${job.id}] ${status} · ${t.phase}${t.total ? ` ${t.done ?? 0}/${t.total}` : ""} · rss ${t.rssMb} MB, heap ${t.heapMb} MB`);
     try {
-      setSetting(getDb(), "import_trace", JSON.stringify(t));
+      fs.writeFileSync(traceFile(), JSON.stringify(t));
     } catch {
       /* the trace is best effort */
     }

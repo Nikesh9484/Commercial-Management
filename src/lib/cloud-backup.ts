@@ -20,6 +20,8 @@ import { getDb, restoreBackupIfMissing } from "./db";
 
 const KEY = process.env.BACKUP_S3_OBJECT || "commercial.db";
 const INTERVAL_MS = 20_000;
+/** A changed database is uploaded at most this often (each upload is the whole file, ~25 MB of bandwidth). */
+const MIN_UPLOAD_GAP_MS = 3 * 60_000;
 
 /** Where backups go: an S3-compatible bucket, or a (private) GitHub repository. */
 export type Provider = "s3" | "github" | null;
@@ -283,7 +285,13 @@ export function startBackupLoop(): void {
   g.__cdLastSeen = changeSignature();
   g.__cdBackupTimer = setInterval(() => {
     const sig = changeSignature();
-    if (sig !== g.__cdLastSeen) void backupNow("changed");
+    if (sig === g.__cdLastSeen) return;
+    // not while an import is writing (its result goes up once it is done), and not more than every few minutes
+    const running = currentImportTrace();
+    if (running && running.status === "running") return;
+    const last = backupStatus().lastUploadAt ? Date.parse(backupStatus().lastUploadAt!) : 0;
+    if (Date.now() - last < MIN_UPLOAD_GAP_MS) return;
+    void backupNow("changed");
   }, INTERVAL_MS);
   g.__cdBackupTimer.unref();
   const onExit = (signal: string) => {
