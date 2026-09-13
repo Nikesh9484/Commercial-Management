@@ -446,6 +446,12 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo, progres
       debug("period locked");
     }
   }
+  // keep the write-ahead log small after a big import (it is checkpointed into the main file)
+  try {
+    db.pragma("wal_checkpoint(TRUNCATE)");
+  } catch {
+    /* best effort */
+  }
   if (older) {
     // put the live registers back to the latest report and return the top bar to it
     restoreFromSnapshot(db, latest!.id);

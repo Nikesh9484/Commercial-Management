@@ -16,6 +16,12 @@ export async function GET() {
     out.database = { ok: false, error: e instanceof Error ? `${e.name}: ${e.message}` : String(e) };
   }
   try {
+    const { lastImportTrace } = await import("@/lib/workbook/jobs");
+    out.lastImport = lastImportTrace();
+  } catch {
+    /* no trace */
+  }
+  try {
     const { backupStatus } = await import("@/lib/cloud-backup");
     out.backup = backupStatus();
   } catch (e) {

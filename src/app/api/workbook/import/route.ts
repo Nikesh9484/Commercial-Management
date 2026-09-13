@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { withUser, readJson } from "@/lib/api";
 import { importWorkbook, type ImportRequest } from "@/lib/workbook/import";
-import { startImportJob, getImportJob } from "@/lib/workbook/jobs";
+import { startImportJob, getImportJob, lastImportTrace } from "@/lib/workbook/jobs";
 import { AuthError } from "@/lib/auth";
 import { withHeavyLock } from "@/lib/workbook/heavy";
 
@@ -28,7 +28,12 @@ export async function GET(req: Request, ctx: unknown) {
   return withUser(async () => {
     const id = new URL(req.url).searchParams.get("job") ?? "";
     const job = getImportJob(id);
-    if (!job) return NextResponse.json({ error: "This import is no longer known to the server (it may have restarted). Open the report library to see whether the report was stored, then try again." }, { status: 404 });
-    return NextResponse.json({ jobId: job.id, status: job.status, phase: job.phase, done: job.done, total: job.total, result: job.result, error: job.error }, { headers: { "Cache-Control": "no-store" } });
+    if (!job) {
+      // the job list lives in memory: an unknown id means the server restarted while it ran – say where it got to
+      const t = lastImportTrace();
+      const where = t && t.jobId === id ? ` The server restarted while importing${t.fileName ? ` "${t.fileName}"` : ""}: the last step recorded was "${t.phase}${t.total ? ` (${t.done ?? 0} of ${t.total} rows)` : ""}" with ${t.rssMb} MB of memory in use at ${t.at.slice(11, 19)} UTC.` : "";
+      return NextResponse.json({ error: `This import is no longer known to the server (it restarted).${where} Open the report library to see whether the report was stored, then try again.`, trace: t && t.jobId === id ? t : undefined }, { status: 404 });
+    }
+    return NextResponse.json({ jobId: job.id, status: job.status, phase: job.phase, done: job.done, total: job.total, rssMb: job.rssMb, result: job.result, error: job.error }, { headers: { "Cache-Control": "no-store" } });
   })(req, ctx);
 }

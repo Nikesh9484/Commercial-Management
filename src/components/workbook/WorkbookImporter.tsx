@@ -597,11 +597,11 @@ async function importViaJob(body: unknown, onPhase: (m: string) => void): Promis
         throw new ImportFailed(k.error ?? "The server restarted while importing. Open the report library to see whether the report was stored, then try again.");
       }
       if (!r.ok) throw new Error(`unexpected answer (${r.status})`);
-      const st = (await r.json()) as { status: string; phase?: string; done?: number; total?: number; result?: ImportResult; error?: string };
+      const st = (await r.json()) as { status: string; phase?: string; done?: number; total?: number; rssMb?: number; result?: ImportResult; error?: string };
       unanswered = 0;
       if (st.status === "done" && st.result) return st.result;
       if (st.status === "failed") throw new ImportFailed(st.error ?? "Import failed.");
-      onPhase(st.phase ? `${st.phase}${st.total ? ` (${st.done ?? 0} / ${st.total} rows)` : ""}` : "Importing…");
+      onPhase(`${st.phase ? `${st.phase}${st.total ? ` (${st.done ?? 0} / ${st.total} rows)` : ""}` : "Importing…"}${st.rssMb ? ` · ${st.rssMb} MB in use` : ""}`);
     } catch (e) {
       if (e instanceof ImportFailed) throw e;
       // no answer: the server is busy with the import itself – keep waiting, up to five minutes of silence
