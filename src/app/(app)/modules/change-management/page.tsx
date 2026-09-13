@@ -1,13 +1,18 @@
 import Link from "next/link";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, FileText } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth";
 import { getAppContext } from "@/lib/context";
 import { getModule } from "@/lib/modules";
+import { getRegisterDef } from "@/lib/registers";
+import { recordsForView } from "@/lib/view-mode";
 import { getChangeSummary, MATRIX_STATUSES } from "@/lib/changes/summary";
 import { formatMoney } from "@/lib/format";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Chip } from "@/components/ui/Chip";
 import { RegisterPage } from "@/components/register/RegisterPage";
+import { ExportButtons } from "@/components/ui/ExportButtons";
+import { SeverityBars } from "@/components/charts/SeverityBars";
+import { HorizontalBars } from "@/components/charts/HorizontalBars";
 
 export const metadata = { title: "Change Management Tracker" };
 
@@ -17,11 +22,53 @@ export default async function ChangeManagementPage() {
   const ctx = getAppContext();
   const summary = ctx.programme ? getChangeSummary(ctx.programme.id) : null;
 
+  // ageing and category breakdown for the open changes, computed from the same rows the table shows
+  const changeRows = ctx.programme ? recordsForView(getRegisterDef("changes")!) : [];
+  const num = (v: unknown) => (v === null || v === undefined || v === "" ? 0 : Number(v));
+  const CLOSED = ["Approved", "Rejected", "Cancelled", "Superseded", "Transferred", "Review Complete"];
+  const openChangeRows = changeRows.filter((r) => r.dvo_closed !== true && !CLOSED.includes(String(r.overall_status_id__label ?? "")));
+  const stageAmount = (r: (typeof changeRows)[number]) => {
+    const stage = String(r.current_stage ?? "");
+    const prefix = stage === "DVO" || stage === "Funding" ? "dvo" : stage === "VO" || stage === "EI" ? "vo" : stage === "PVO" ? "pvo" : stage === "RFC" ? "rfc" : null;
+    if (!prefix) return 0;
+    const v = r[`${prefix}_cr_amount`];
+    return Math.abs(v === null || v === undefined ? num(r[`${prefix}_tracker_amount`]) : num(v));
+  };
+  const ageBuckets: [string, number, number][] = [
+    ["Under 30 days", 0, 30],
+    ["30 to 60 days", 31, 60],
+    ["60 to 90 days", 61, 90],
+    ["Over 90 days", 91, Infinity],
+  ];
+  const changeAgeing = ageBuckets.map(([bucket, lo, hi]) => {
+    const inBand = openChangeRows.filter((r) => { const d = num(r.days_open); return d >= lo && d <= hi; });
+    return { bucket, n: inBand.length, value: Math.round(inBand.reduce((t, r) => t + stageAmount(r), 0)) };
+  });
+  const catMap = new Map<string, number>();
+  for (const r of openChangeRows) {
+    const k = String(r.change_category_id__label ?? "(no category)");
+    catMap.set(k, (catMap.get(k) ?? 0) + stageAmount(r));
+  }
+  const changeByCategory = [...catMap.entries()].map(([label, value]) => ({ label, value: Math.round(value) })).sort((a, b) => b.value - a.value).slice(0, 8);
+
   return (
     <div className="space-y-5">
-      <PageHeader exportSection="changes" eyebrow={`Module ${mod.no}`} title={mod.title} subtitle="Every change in one record, followed from Early Warning → RFC → PVO → VO → EI → DVO → Funding. Approved DVOs, live PVO / VOs and RFCs feed the cost report automatically." />
+      <PageHeader
+        exportSection="changes"
+        eyebrow={`Module ${mod.no}`}
+        title={mod.title}
+        subtitle="Every change in one record, followed from Early Warning → RFC → PVO → VO → EI → DVO → Funding. Approved DVOs, live PVO / VOs and RFCs feed the cost report automatically."
+        actions={
+          ctx.programme ? (
+            <span className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-2 py-1 shadow-sm" title="Executive change management report for the month: stage-by-stage value, ageing, narrative and actions">
+              <FileText size={14} className="text-navy" />
+              <ExportButtons section="changes_report" label="Change status report" />
+            </span>
+          ) : undefined
+        }
+      />
 
-      {summary && (
+      {summary && ctx.programme && (
         <>
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <Stat label="Changes" value={String(summary.changes)} sub={`${summary.open} open`} />
@@ -86,6 +133,19 @@ export default async function ChangeManagementPage() {
                   </tr>
                 </tbody>
               </table>
+            </div>
+          </div>
+
+          <div className="grid gap-3 lg:grid-cols-2">
+            <div className="card p-5">
+              <h2 className="mb-1 text-sm font-semibold text-ink">Ageing of open changes</h2>
+              <p className="mb-3 text-xs text-muted">Days since raised. Colour runs from good to critical with the age band, not the change itself.</p>
+              <SeverityBars rows={changeAgeing} valueLabel="value at current stage" />
+            </div>
+            <div className="card p-5">
+              <h2 className="mb-1 text-sm font-semibold text-ink">Open value by category</h2>
+              <p className="mb-3 text-xs text-muted">Cost-report value of open changes, grouped by change category.</p>
+              <HorizontalBars rows={changeByCategory} valueLabel="open value" />
             </div>
           </div>
         </>

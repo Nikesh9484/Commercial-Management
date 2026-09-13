@@ -22,6 +22,11 @@ const NAMES: Record<string, string> = {
   claims_report: "Claims_Status_Report",
   fa_report: "Final_Account_Status_Report",
   payments_report: "Invoice_and_Payment_Status_Report",
+  changes_report: "Change_Management_Status_Report",
+  ew_report: "Early_Warnings_and_Risks_Status_Report",
+  ps_report: "Provisional_Sums_Status_Report",
+  bonds_report: "Bonds_and_Insurance_Status_Report",
+  transfers_report: "Budget_Transfers_Status_Report",
   deck: "Cost_Report_Presentation",
   dashboard: "Commercial_Dashboard",
 };

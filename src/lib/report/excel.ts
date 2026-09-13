@@ -3,6 +3,11 @@ import ExcelJS from "exceljs";
 import { executiveTotals } from "../cost-report/executive";
 import { buildClaimsReport } from "./claims-report";
 import { buildPaymentsReport } from "./payments-report";
+import { buildChangesReport } from "./changes-report";
+import { buildEwReport } from "./ew-report";
+import { buildPsReport } from "./provisional-sums-report";
+import { buildBondsReport } from "./bonds-report";
+import { buildTransfersReport } from "./transfers-report";
 import { buildFaReport } from "./fa-report";
 import type { ReportData } from "./data";
 import { REPORT_SCHEDULES } from "./schedules";
@@ -51,6 +56,11 @@ export async function renderSectionsExcel(data: ReportData, keys: string[], link
     else if (k === "claims_report") claimsReportSheet(wb, data);
     else if (k === "fa_report") faReportSheet(wb, data);
     else if (k === "payments_report") paymentsReportSheet(wb, data);
+    else if (k === "changes_report") changesReportSheet(wb, data);
+    else if (k === "ew_report") ewReportSheet(wb, data);
+    else if (k === "ps_report") psReportSheet(wb, data);
+    else if (k === "bonds_report") bondsReportSheet(wb, data);
+    else if (k === "transfers_report") transfersReportSheet(wb, data);
     else if (k === "level1" || k === "level2" || k.toUpperCase() === "A" || k.toUpperCase() === "B") {
       if (!costDone) costPair(wb, data, wantsL1 ? "Level 1 - Executive" : null, wantsL2 ? "Level 2 - Detailed" : null);
       costDone = true;
@@ -434,6 +444,293 @@ export function paymentsReportSheet(wb: ExcelJS.Workbook, d: ReportData) {
       [5, 6, 7].forEach((i) => (row.getCell(i).numFmt = "DD-MMM-YY"));
       row.getCell(9).numFmt = MONEY_FMT;
     }
+  }
+}
+
+
+export function changesReportSheet(wb: ExcelJS.Workbook, d: ReportData) {
+  const r = buildChangesReport(d);
+  const ws = wb.addWorksheet("Change Mgmt Status Report");
+  [12, 40, 18, 20, 14, 12, 10, 20, 14].forEach((w, i) => (ws.getColumn(i + 1).width = w));
+  titleBlock(ws, r.title, `${sub(d)} · as at ${formatDate(r.asOf)}`, 9);
+  const h = r.headline;
+  header(ws.addRow(["Headline", "Value", "Note"]));
+  const kp: [string, unknown, string][] = [
+    ["Changes", h.total, `${h.open} open · ${h.closed} closed`],
+    ["Pending over 30 / 60 days", `${h.overdue30} / ${h.overdue60}`, "open items by days since raised"],
+    ["Cost report – DVO, column H (SAR)", h.dvoValue, ""],
+    ["Cost report – PVO / VO, column J (SAR)", h.pvoValue, ""],
+    ["Cost report – RFC, column K (SAR)", h.rfcValue, ""],
+    ["Total live value (SAR)", h.totalLiveValue, ""],
+    ["DVOs pending approval", h.dvoPending, `${formatMoney(h.dvoPendingValue)} not yet determined`],
+    ["Not linked to a cost report line", h.unlinked, ""],
+  ];
+  for (const [k, v, n] of kp) {
+    const row = ws.addRow([k, v, n]);
+    if (typeof v === "number" && /SAR/.test(k)) row.getCell(2).numFmt = MONEY_FMT;
+  }
+  ws.addRow([]);
+  ws.addRow(["Commercial narrative"]).font = { bold: true, size: 12, color: { argb: NAVY } };
+  for (const p of r.narrative) {
+    ws.addRow([p.heading]).font = { bold: true };
+    const row = ws.addRow([p.text]);
+    ws.mergeCells(row.number, 1, row.number, 8);
+    row.alignment = { wrapText: true, vertical: "top" };
+    row.height = Math.min(120, 15 * Math.ceil(p.text.length / 150));
+  }
+  if (r.movement) {
+    ws.addRow([]);
+    ws.addRow([r.movement.label]).font = { bold: true, size: 12, color: { argb: NAVY } };
+    if (!r.movement.items.length) ws.addRow(["No movement in the change register."]);
+    for (const it of r.movement.items) ws.addRow([`• ${it}`]);
+  }
+  if (r.attention.length) {
+    ws.addRow([]);
+    ws.addRow(["Items requiring attention"]).font = { bold: true, size: 12, color: { argb: "FF7C2D12" } };
+    for (const it of r.attention) ws.addRow([`• ${it}`]);
+  }
+  ws.addRow([]);
+  ws.addRow(["By stage"]).font = { bold: true, size: 12, color: { argb: NAVY } };
+  header(ws.addRow(["Stage", "Description", "Total", "Approved", "Pending", "Rejected / cancelled", "Approved value (SAR)"]));
+  for (const s of r.byStage) ws.addRow([s.stage, s.full, s.total, s.approved, s.pending, s.dead, s.value]).getCell(7).numFmt = MONEY_FMT;
+  ws.addRow([]);
+  ws.addRow(["Ageing of open changes"]).font = { bold: true, size: 12, color: { argb: NAVY } };
+  header(ws.addRow(["Age", "Changes", "Value (SAR)"]));
+  for (const a of r.ageing) ws.addRow([a.bucket, a.n, a.value]).getCell(3).numFmt = MONEY_FMT;
+  ws.addRow([]);
+  ws.addRow(["Open changes"]).font = { bold: true, size: 12, color: { argb: NAVY } };
+  header(ws.addRow(["Item", "Description", "Stage", "Contractor", "Category", "Value (SAR)", "Days open", "Date raised", "Action with", "Status"]));
+  for (const o of r.open) {
+    const row = ws.addRow([o.item_no, o.description, o.stage, o.contractor, o.category, o.amount, o.daysOpen, o.dateRaised ? toDate(o.dateRaised) : null, o.actionPendingBy, o.status]);
+    row.getCell(6).numFmt = MONEY_FMT;
+    row.getCell(8).numFmt = "DD-MMM-YY";
+  }
+}
+
+export function ewReportSheet(wb: ExcelJS.Workbook, d: ReportData) {
+  const r = buildEwReport(d);
+  const ws = wb.addWorksheet("EW & Risks Status Report");
+  [12, 44, 18, 14, 16, 12, 12].forEach((w, i) => (ws.getColumn(i + 1).width = w));
+  titleBlock(ws, r.title, `${sub(d)} · as at ${formatDate(r.asOf)}`, 7);
+  const h = r.headline;
+  header(ws.addRow(["Headline", "Value", "Note"]));
+  const kp: [string, unknown, string][] = [
+    ["Open early warnings", h.ewOpen, `of ${h.ewTotal} total`],
+    ["Open early warning value (SAR, column L)", h.ewOpenValue, ""],
+    ["Early warnings converted to a change", h.ewConverted, ""],
+    ["Late early warnings (30 / 60 days)", `${h.ewOverdue30} / ${h.ewOverdue60}`, ""],
+    ["Open risks", h.risksOpen, `${h.highRated} rated High`],
+    ["Risk exposure (SAR, expected value)", h.riskExposure, ""],
+    ["Open opportunities", h.opportunitiesOpen, ""],
+    ["Opportunity value (SAR, expected value)", h.opportunityValue, ""],
+    ["Net exposure (SAR)", h.netExposure, "risk exposure less opportunity value"],
+  ];
+  for (const [k, v, n] of kp) {
+    const row = ws.addRow([k, v, n]);
+    if (typeof v === "number" && /SAR/.test(k)) row.getCell(2).numFmt = MONEY_FMT;
+  }
+  ws.addRow([]);
+  ws.addRow(["Commercial narrative"]).font = { bold: true, size: 12, color: { argb: NAVY } };
+  for (const p of r.narrative) {
+    ws.addRow([p.heading]).font = { bold: true };
+    const row = ws.addRow([p.text]);
+    ws.mergeCells(row.number, 1, row.number, 7);
+    row.alignment = { wrapText: true, vertical: "top" };
+    row.height = Math.min(120, 15 * Math.ceil(p.text.length / 150));
+  }
+  if (r.movement) {
+    ws.addRow([]);
+    ws.addRow([r.movement.label]).font = { bold: true, size: 12, color: { argb: NAVY } };
+    if (!r.movement.items.length) ws.addRow(["No movement in the early warning or risk registers."]);
+    for (const it of r.movement.items) ws.addRow([`• ${it}`]);
+  }
+  if (r.attention.length) {
+    ws.addRow([]);
+    ws.addRow(["Items requiring attention"]).font = { bold: true, size: 12, color: { argb: "FF7C2D12" } };
+    for (const it of r.attention) ws.addRow([`• ${it}`]);
+  }
+  ws.addRow([]);
+  ws.addRow(["Open early warnings"]).font = { bold: true, size: 12, color: { argb: NAVY } };
+  header(ws.addRow(["EW No", "Description", "Contractor", "Likelihood", "Cost impact (SAR)", "Time (days)", "Days open"]));
+  for (const e of r.ewOpen) ws.addRow([e.ew_no, e.description, e.contractor, e.likelihood, e.costImpact, e.timeImpactDays, e.daysOpen]).getCell(5).numFmt = MONEY_FMT;
+  if (r.risksOpen.length) {
+    ws.addRow([]);
+    ws.addRow(["Open risks & opportunities"]).font = { bold: true, size: 12, color: { argb: NAVY } };
+    header(ws.addRow(["No", "Type", "Description", "Owner", "Probability %", "Cost impact (SAR)", "Expected value (SAR)", "Rating"]));
+    for (const rk of r.risksOpen) {
+      const row = ws.addRow([rk.ro_no, rk.type, rk.description, rk.owner, rk.probability, rk.costImpact, rk.expectedValue, rk.rating]);
+      [6, 7].forEach((i) => (row.getCell(i).numFmt = MONEY_FMT));
+    }
+  }
+}
+
+export function psReportSheet(wb: ExcelJS.Workbook, d: ReportData) {
+  const r = buildPsReport(d);
+  const ws = wb.addWorksheet("Provisional Sums Status Report");
+  [10, 40, 22, 18, 16, 16, 16].forEach((w, i) => (ws.getColumn(i + 1).width = w));
+  titleBlock(ws, r.title, `${sub(d)} · as at ${formatDate(r.asOf)}`, 7);
+  const h = r.headline;
+  header(ws.addRow(["Headline", "Value", "Note"]));
+  const kp: [string, unknown, string][] = [
+    ["Provisional sums", h.total, `${h.withValue} of ${h.total} instructed`],
+    ["Total budget (SAR)", h.budget, ""],
+    ["Total instructed (SAR)", h.instructed, ""],
+    ["Total extras (SAR)", h.extras, ""],
+    ["Total savings (SAR)", h.savings, ""],
+    ["Net (SAR)", h.net, "positive = extra over budget"],
+  ];
+  for (const [k, v, n] of kp) {
+    const row = ws.addRow([k, v, n]);
+    if (typeof v === "number" && /SAR/.test(k)) row.getCell(2).numFmt = MONEY_FMT;
+  }
+  ws.addRow([]);
+  ws.addRow(["Commercial narrative"]).font = { bold: true, size: 12, color: { argb: NAVY } };
+  for (const p of r.narrative) {
+    ws.addRow([p.heading]).font = { bold: true };
+    const row = ws.addRow([p.text]);
+    ws.mergeCells(row.number, 1, row.number, 7);
+    row.alignment = { wrapText: true, vertical: "top" };
+    row.height = Math.min(120, 15 * Math.ceil(p.text.length / 150));
+  }
+  if (r.movement) {
+    ws.addRow([]);
+    ws.addRow([r.movement.label]).font = { bold: true, size: 12, color: { argb: NAVY } };
+    if (!r.movement.items.length) ws.addRow(["No movement in the provisional sums register."]);
+    for (const it of r.movement.items) ws.addRow([`• ${it}`]);
+  }
+  if (r.attention.length) {
+    ws.addRow([]);
+    ws.addRow(["Items requiring attention"]).font = { bold: true, size: 12, color: { argb: "FF7C2D12" } };
+    for (const it of r.attention) ws.addRow([`• ${it}`]);
+  }
+  ws.addRow([]);
+  ws.addRow(["Provisional sums at cut-off"]).font = { bold: true, size: 12, color: { argb: NAVY } };
+  header(ws.addRow(["Item", "Description", "Contractor", "Status", "Budget (SAR)", "Instructed (SAR)", "(Saving) / Extra (SAR)"]));
+  for (const x of r.rows) {
+    const row = ws.addRow([x.item, x.description, x.contractor, x.status, x.budget, x.contractValue, x.savingExtra]);
+    [5, 6, 7].forEach((i) => (row.getCell(i).numFmt = MONEY_FMT));
+  }
+  const t = ws.addRow(["TOTAL", "", "", "", h.budget, h.instructed, h.net]);
+  bold(t);
+  [5, 6, 7].forEach((i) => (t.getCell(i).numFmt = MONEY_FMT));
+  ws.addRow([]);
+  ws.addRow(["By status"]).font = { bold: true, size: 12, color: { argb: NAVY } };
+  header(ws.addRow(["Status", "Items", "Budget (SAR)", "Instructed (SAR)"]));
+  for (const s of r.byStatus) {
+    const row = ws.addRow([s.status, s.n, s.budget, s.contractValue]);
+    [3, 4].forEach((i) => (row.getCell(i).numFmt = MONEY_FMT));
+  }
+}
+
+export function bondsReportSheet(wb: ExcelJS.Workbook, d: ReportData) {
+  const r = buildBondsReport(d);
+  const ws = wb.addWorksheet("Bonds & Insurance Status Report");
+  [10, 30, 20, 16, 14, 10, 12].forEach((w, i) => (ws.getColumn(i + 1).width = w));
+  titleBlock(ws, r.title, `${sub(d)} · as at ${formatDate(r.asOf)}`, 7);
+  const h = r.headline;
+  header(ws.addRow(["Headline", "Value", "Note"]));
+  const kp: [string, unknown, string][] = [
+    ["Bonds & policies", h.total, `${h.active} active · ${h.expired} expired · ${h.released} released · ${h.superseded} superseded`],
+    ["Expiring within 30 / 60 days", `${h.expiring30} / ${h.expiring60}`, ""],
+    ["Cover required (SAR)", h.required, ""],
+    ["Cover provided (SAR)", h.provided, ""],
+    ["Shortfalls", h.shortfallCount, h.shortfallCount ? `${formatMoney(h.shortfallValue)} below requirement` : ""],
+    ["Not approved / not bank-verified", `${h.notApproved} / ${h.notVerified}`, ""],
+  ];
+  for (const [k, v, n] of kp) {
+    const row = ws.addRow([k, v, n]);
+    if (typeof v === "number" && /SAR/.test(k)) row.getCell(2).numFmt = MONEY_FMT;
+  }
+  ws.addRow([]);
+  ws.addRow(["Commercial narrative"]).font = { bold: true, size: 12, color: { argb: NAVY } };
+  for (const p of r.narrative) {
+    ws.addRow([p.heading]).font = { bold: true };
+    const row = ws.addRow([p.text]);
+    ws.mergeCells(row.number, 1, row.number, 7);
+    row.alignment = { wrapText: true, vertical: "top" };
+    row.height = Math.min(120, 15 * Math.ceil(p.text.length / 150));
+  }
+  if (r.movement) {
+    ws.addRow([]);
+    ws.addRow([r.movement.label]).font = { bold: true, size: 12, color: { argb: NAVY } };
+    if (!r.movement.items.length) ws.addRow(["No movement in the bonds and insurance register."]);
+    for (const it of r.movement.items) ws.addRow([`• ${it}`]);
+  }
+  if (r.attention.length) {
+    ws.addRow([]);
+    ws.addRow(["Items requiring attention"]).font = { bold: true, size: 12, color: { argb: "FF7C2D12" } };
+    for (const it of r.attention) ws.addRow([`• ${it}`]);
+  }
+  if (r.expiring.length) {
+    ws.addRow([]);
+    ws.addRow(["Expired or expiring soon"]).font = { bold: true, size: 12, color: { argb: NAVY } };
+    header(ws.addRow(["Ref", "Contractor / consultant", "Type", "Provided (SAR)", "Expiry", "Days", "Status"]));
+    for (const l of r.expiring) {
+      const row = ws.addRow([l.ref, l.contractor, l.type, l.provided, l.expiryDate ? toDate(l.expiryDate) : null, l.daysToExpiry, l.status]);
+      row.getCell(4).numFmt = MONEY_FMT;
+      row.getCell(5).numFmt = "DD-MMM-YY";
+    }
+  }
+  ws.addRow([]);
+  ws.addRow(["By type"]).font = { bold: true, size: 12, color: { argb: NAVY } };
+  header(ws.addRow(["Type", "Items", "Required (SAR)", "Provided (SAR)"]));
+  for (const t of r.byType) {
+    const row = ws.addRow([t.type, t.n, t.required, t.provided]);
+    [3, 4].forEach((i) => (row.getCell(i).numFmt = MONEY_FMT));
+  }
+}
+
+export function transfersReportSheet(wb: ExcelJS.Workbook, d: ReportData) {
+  const r = buildTransfersReport(d);
+  const ws = wb.addWorksheet("Budget Transfers Status Report");
+  [10, 40, 22, 22, 16, 14, 14].forEach((w, i) => (ws.getColumn(i + 1).width = w));
+  titleBlock(ws, r.title, `${sub(d)} · as at ${formatDate(r.asOf)}`, 7);
+  const h = r.headline;
+  header(ws.addRow(["Headline", "Value", "Note"]));
+  const kp: [string, unknown, string][] = [
+    ["Transfers", h.total, `${h.approved} approved · ${h.pending} pending`],
+    ["Approved amount moved (SAR)", h.approvedAmount, ""],
+    ["Pending approval (SAR)", h.pendingAmount, ""],
+    ["Not applied to the cost report", h.notApplied, ""],
+  ];
+  for (const [k, v, n] of kp) {
+    const row = ws.addRow([k, v, n]);
+    if (typeof v === "number" && /SAR/.test(k)) row.getCell(2).numFmt = MONEY_FMT;
+  }
+  ws.addRow([]);
+  ws.addRow(["Commercial narrative"]).font = { bold: true, size: 12, color: { argb: NAVY } };
+  for (const p of r.narrative) {
+    ws.addRow([p.heading]).font = { bold: true };
+    const row = ws.addRow([p.text]);
+    ws.mergeCells(row.number, 1, row.number, 7);
+    row.alignment = { wrapText: true, vertical: "top" };
+    row.height = Math.min(120, 15 * Math.ceil(p.text.length / 150));
+  }
+  if (r.movement) {
+    ws.addRow([]);
+    ws.addRow([r.movement.label]).font = { bold: true, size: 12, color: { argb: NAVY } };
+    if (!r.movement.items.length) ws.addRow(["No movement in the budget transfers register."]);
+    for (const it of r.movement.items) ws.addRow([`• ${it}`]);
+  }
+  if (r.attention.length) {
+    ws.addRow([]);
+    ws.addRow(["Items requiring attention"]).font = { bold: true, size: 12, color: { argb: "FF7C2D12" } };
+    for (const it of r.attention) ws.addRow([`• ${it}`]);
+  }
+  ws.addRow([]);
+  ws.addRow(["Net movement by package"]).font = { bold: true, size: 12, color: { argb: NAVY } };
+  header(ws.addRow(["Package", "Out (SAR)", "In (SAR)", "Net (SAR)"]));
+  for (const p of r.byPackage) {
+    const row = ws.addRow([p.package, p.out, p.in, p.net]);
+    [2, 3, 4].forEach((i) => (row.getCell(i).numFmt = MONEY_FMT));
+  }
+  ws.addRow([]);
+  ws.addRow(["Transfers"]).font = { bold: true, size: 12, color: { argb: NAVY } };
+  header(ws.addRow(["Item", "Description", "From", "To", "Amount (SAR)", "Date", "Status"]));
+  for (const x of r.rows) {
+    const row = ws.addRow([x.item, x.description, x.fromPackage, x.toPackage, x.amount, x.date ? toDate(x.date) : null, x.status]);
+    row.getCell(5).numFmt = MONEY_FMT;
+    row.getCell(6).numFmt = "DD-MMM-YY";
   }
 }
 

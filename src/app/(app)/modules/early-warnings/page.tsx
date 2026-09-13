@@ -1,4 +1,4 @@
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, FileText } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth";
 import { getAppContext } from "@/lib/context";
 import { getModule } from "@/lib/modules";
@@ -7,6 +7,7 @@ import { recordsForView } from "@/lib/view-mode";
 import { getEwSummary, getRiskSummary } from "@/lib/risks/summary";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EwRisksPage } from "@/components/risks/EwRisksPage";
+import { ExportButtons } from "@/components/ui/ExportButtons";
 
 export const metadata = { title: "Early Warnings & Risks / Opportunities" };
 
@@ -28,8 +29,19 @@ export default async function EarlyWarningsModule({ searchParams }: { searchPara
   const ew = getEwSummary(recordsForView(getRegisterDef("early_warnings")!));
   const risks = getRiskSummary(recordsForView(getRegisterDef("risks")!));
   return (
-    <div>
-      <PageHeader exportSection="D" eyebrow={`Module ${mod.no}`} title={mod.title} subtitle="Early warning notices (feeding column L of the cost report) and the commercial risk & opportunity register with its heat map." />
+    <div className="space-y-5">
+      <PageHeader
+        exportSection="D"
+        eyebrow={`Module ${mod.no}`}
+        title={mod.title}
+        subtitle="Early warning notices (feeding column L of the cost report) and the commercial risk & opportunity register with its heat map."
+        actions={
+          <span className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-2 py-1 shadow-sm" title="Executive report for the month: open exposure, risk heat map summary, ageing and actions">
+            <FileText size={14} className="text-navy" />
+            <ExportButtons section="ew_report" label="Early warnings & risks report" />
+          </span>
+        }
+      />
       <EwRisksPage ew={ew} risks={risks} isAdmin={user.role === "admin"} initialTab={tab === "risks" ? "risks" : "ew"} />
     </div>
   );

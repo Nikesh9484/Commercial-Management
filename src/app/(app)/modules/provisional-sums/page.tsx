@@ -1,4 +1,4 @@
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, FileText } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth";
 import { getAppContext } from "@/lib/context";
 import { getModule } from "@/lib/modules";
@@ -8,6 +8,8 @@ import { formatMoney } from "@/lib/format";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Chip } from "@/components/ui/Chip";
 import { RegisterPage } from "@/components/register/RegisterPage";
+import { ExportButtons } from "@/components/ui/ExportButtons";
+import { HorizontalBars } from "@/components/charts/HorizontalBars";
 
 export const metadata = { title: "Provisional Sums" };
 
@@ -26,10 +28,25 @@ export default async function ProvisionalSumsPage() {
     byStatus.set(k, (byStatus.get(k) ?? 0) + 1);
   }
   const withValue = rows.filter((r) => r.contract_value !== null && r.contract_value !== undefined).length;
+  const byBudget = [...rows]
+    .map((r) => ({ label: String(r.item ?? ""), value: num(r.budget), sublabel: String(r.description ?? "").slice(0, 60) }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 8);
 
   return (
     <div className="space-y-5">
-      <PageHeader exportSection="provisional_sums" eyebrow={`Module ${mod.no}`} title={mod.title} subtitle="Provisional sum allowances, what has been instructed against each, and the saving or extra that results." />
+      <PageHeader
+            exportSection="provisional_sums"
+            eyebrow={`Module ${mod.no}`}
+            title={mod.title}
+            subtitle="Provisional sum allowances, what has been instructed against each, and the saving or extra that results."
+            actions={
+              <span className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-2 py-1 shadow-sm" title="Executive report for the month: budget vs instructed, savings and extras, narrative and actions">
+                <FileText size={14} className="text-navy" />
+                <ExportButtons section="ps_report" label="Provisional sums report" />
+              </span>
+            }
+          />
 
       {ctx.programme ? (
         <>
@@ -54,6 +71,13 @@ export default async function ProvisionalSumsPage() {
               </div>
             </div>
           </div>
+          {byBudget.length > 0 && (
+            <div className="card p-5">
+              <h2 className="mb-1 text-sm font-semibold text-ink">Largest provisional sums by budget</h2>
+              <p className="mb-3 text-xs text-muted">Top items by allowance. Hover a bar for the description.</p>
+              <HorizontalBars rows={byBudget} valueLabel="budget" />
+            </div>
+          )}
           <p className="text-xs text-muted">
             (Saving) / Extra = Contract value − Budget. Savings show in green with a minus sign, extras in red. The totals row at the bottom of the table follows your search and filters. Statuses are managed under Settings → Provisional Sum Statuses.
           </p>

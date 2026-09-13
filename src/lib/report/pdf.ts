@@ -8,6 +8,11 @@ import type { FieldDef } from "../registers/types";
 import { APP_NAME } from "../brand";
 import { buildClaimsReport } from "./claims-report";
 import { buildPaymentsReport } from "./payments-report";
+import { buildChangesReport } from "./changes-report";
+import { buildEwReport } from "./ew-report";
+import { buildPsReport } from "./provisional-sums-report";
+import { buildBondsReport } from "./bonds-report";
+import { buildTransfersReport } from "./transfers-report";
 import { buildFaReport } from "./fa-report";
 
 type Doc = PDFKit.PDFDocument;
@@ -46,6 +51,11 @@ export function resolveSections(keys: string[]): { title: string; run: (ctx: Ctx
     else if (k === "claims_report") out.push({ title: "Claims Status Report", run: claimsStatusReport });
     else if (k === "fa_report") out.push({ title: "Final Account Status Report", run: faStatusReport });
     else if (k === "payments_report") out.push({ title: "Invoice & Payment Status Report", run: paymentsStatusReport });
+    else if (k === "changes_report") out.push({ title: "Change Management Status Report", run: changesStatusReport });
+    else if (k === "ew_report") out.push({ title: "Early Warnings & Risks / Opportunities Status Report", run: ewStatusReport });
+    else if (k === "ps_report") out.push({ title: "Provisional Sums Status Report", run: psStatusReport });
+    else if (k === "bonds_report") out.push({ title: "Bonds & Insurance Status Report", run: bondsStatusReport });
+    else if (k === "transfers_report") out.push({ title: "Budget Transfers Status Report", run: transfersStatusReport });
     else if (k === "level1") out.push({ title: "Schedule A – Cost Report Level 1 (Executive)", run: costLevel1 });
     else if (k === "level2") out.push({ title: "Schedule B – Cost Report Level 2 (Detailed)", run: costLevel2 });
     else if (k === "cashflow") out.push({ title: "Schedule I – Cash Flow", run: cashflow });
@@ -1035,6 +1045,465 @@ function paymentsStatusReport(ctx: Ctx) {
 
   doc.moveDown(0.5);
   doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(`Prepared from the contracts register and the IPC log of ${APP_NAME} as at ${formatDate(r.asOf)}${data.locked ? "" : " (draft – period not locked)"}. Certified is gross and excludes VAT; paid is the net amount released after advance recovery and retention.`, { width });
+}
+
+
+/* ------------------------------------------------------------------ */
+/* Change Management Status Report (executive)                         */
+
+function changesStatusReport(ctx: Ctx) {
+  const { doc, data } = ctx;
+  const r = buildChangesReport(data);
+  const h = r.headline;
+  const sar = (n: number) => formatMoney(n);
+  const kpis: [string, string, string][] = [
+    ["Changes", String(h.total), `${h.open} open · ${h.closed} closed`],
+    ["Pending over 30 / 60 days", `${h.overdue30} / ${h.overdue60}`, "open items by days since raised"],
+    ["Cost report – DVO (H)", sar(h.dvoValue), `PVO / VO (J) ${sar(h.pvoValue)}`],
+    ["Cost report – RFC (K)", sar(h.rfcValue), h.unlinked ? `${h.unlinked} change(s) not linked to a cost line` : "all changes linked to a cost line"],
+  ];
+  const cw = (PAGE.width - PAGE.margin * 2 - 3 * 10) / 4;
+  let x = PAGE.margin;
+  const y = doc.y;
+  kpis.forEach((k) => {
+    doc.rect(x, y, cw, 52).fillAndStroke("#ffffff", LINE);
+    doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(k[0].toUpperCase(), x + 8, y + 7, { width: cw - 16 });
+    doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(12).text(k[1], x + 8, y + 20, { width: cw - 16 });
+    doc.fillColor(MUTED).font("Helvetica").fontSize(7).text(k[2], x + 8, y + 37, { width: cw - 16 });
+    x += cw + 10;
+  });
+  doc.y = y + 62;
+  doc.x = PAGE.margin;
+
+  const width = PAGE.width - PAGE.margin * 2;
+  subheading(ctx, "Commercial narrative");
+  for (const p of r.narrative) {
+    ensureSpace(ctx, 50);
+    doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(9.5).text(p.heading, { width });
+    doc.fillColor("#172033").font("Helvetica").fontSize(9.5).text(p.text, { width, lineGap: 1.5 });
+    doc.moveDown(0.5);
+  }
+  if (r.movement) {
+    subheading(ctx, r.movement.label);
+    if (!r.movement.items.length) doc.fillColor(MUTED).font("Helvetica").fontSize(9).text("No movement in the change register.");
+    for (const it of r.movement.items) {
+      ensureSpace(ctx, 14);
+      doc.fillColor("#172033").font("Helvetica").fontSize(9).text(`•  ${it}`, { width });
+    }
+    doc.moveDown(0.4);
+  }
+  if (r.attention.length) {
+    subheading(ctx, "Items requiring attention");
+    for (const it of r.attention) {
+      ensureSpace(ctx, 14);
+      doc.fillColor("#7c2d12").font("Helvetica").fontSize(9).text(`•  ${it}`, { width });
+    }
+    doc.moveDown(0.4);
+  }
+
+  const money = (v: unknown) => (v === null || v === undefined ? "" : formatMoney(v as number));
+  subheading(ctx, "By stage", "Every change that has reached that stage, whichever stage it is at now.");
+  table(
+    ctx,
+    [
+      { key: "stage", label: "Stage", width: 1.3 },
+      { key: "full", label: "Description", width: 2.4 },
+      { key: "total", label: "Total", width: 1, align: "right" },
+      { key: "approved", label: "Approved", width: 1, align: "right" },
+      { key: "pending", label: "Pending", width: 1, align: "right" },
+      { key: "dead", label: "Rejected / cancelled", width: 1.3, align: "right" },
+      { key: "value", label: "Approved value (SAR)", width: 1.5, align: "right", format: money },
+    ],
+    r.byStage as unknown as Record<string, unknown>[],
+    { zebra: true },
+  );
+
+  subheading(ctx, "Ageing of open changes", "Days since the change was raised.");
+  table(
+    ctx,
+    [
+      { key: "bucket", label: "Age", width: 2 },
+      { key: "n", label: "Changes", width: 1, align: "right" },
+      { key: "value", label: "Value (SAR)", width: 2, align: "right", format: money },
+    ],
+    r.ageing as unknown as Record<string, unknown>[],
+    { zebra: true },
+  );
+
+  subheading(ctx, "Open changes", "Largest days open first, then largest value.");
+  table(
+    ctx,
+    [
+      { key: "item_no", label: "Item", width: 0.7 },
+      { key: "description", label: "Description", width: 2.6 },
+      { key: "stage", label: "Stage", width: 1.1 },
+      { key: "contractor", label: "Contractor", width: 1.5 },
+      { key: "amount", label: "Value (SAR)", width: 1.1, align: "right", format: money },
+      { key: "daysOpen", label: "Days open", width: 0.7, align: "right" },
+      { key: "actionPendingBy", label: "Action with", width: 1.1 },
+      { key: "status", label: "Status", width: 0.9 },
+    ],
+    r.open as unknown as Record<string, unknown>[],
+    { zebra: true },
+  );
+
+  doc.moveDown(0.5);
+  doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(`Prepared from the Change Management Tracker of ${APP_NAME} as at ${formatDate(r.asOf)}${data.locked ? "" : " (draft – period not locked)"}. Value is the cost-report amount at the change's current live stage.`, { width });
+}
+
+/* ------------------------------------------------------------------ */
+/* Early Warnings & Risks / Opportunities Status Report (executive)    */
+
+function ewStatusReport(ctx: Ctx) {
+  const { doc, data } = ctx;
+  const r = buildEwReport(data);
+  const h = r.headline;
+  const sar = (n: number) => formatMoney(n);
+  const kpis: [string, string, string][] = [
+    ["Open early warnings", String(h.ewOpen), `${sar(h.ewOpenValue)} in column L · ${h.ewConverted} converted to a change`],
+    ["Late early warnings (30 / 60d)", `${h.ewOverdue30} / ${h.ewOverdue60}`, "open items by days since raised"],
+    ["Risk exposure", sar(h.riskExposure), `${h.risksOpen} open risk(s), ${h.highRated} rated High`],
+    ["Opportunity value", sar(h.opportunityValue), `net exposure ${sar(h.netExposure)}`],
+  ];
+  const cw = (PAGE.width - PAGE.margin * 2 - 3 * 10) / 4;
+  let x = PAGE.margin;
+  const y = doc.y;
+  kpis.forEach((k) => {
+    doc.rect(x, y, cw, 52).fillAndStroke("#ffffff", LINE);
+    doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(k[0].toUpperCase(), x + 8, y + 7, { width: cw - 16 });
+    doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(12).text(k[1], x + 8, y + 20, { width: cw - 16 });
+    doc.fillColor(MUTED).font("Helvetica").fontSize(7).text(k[2], x + 8, y + 37, { width: cw - 16 });
+    x += cw + 10;
+  });
+  doc.y = y + 62;
+  doc.x = PAGE.margin;
+
+  const width = PAGE.width - PAGE.margin * 2;
+  subheading(ctx, "Commercial narrative");
+  for (const p of r.narrative) {
+    ensureSpace(ctx, 50);
+    doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(9.5).text(p.heading, { width });
+    doc.fillColor("#172033").font("Helvetica").fontSize(9.5).text(p.text, { width, lineGap: 1.5 });
+    doc.moveDown(0.5);
+  }
+  if (r.movement) {
+    subheading(ctx, r.movement.label);
+    if (!r.movement.items.length) doc.fillColor(MUTED).font("Helvetica").fontSize(9).text("No movement in the early warning or risk registers.");
+    for (const it of r.movement.items) {
+      ensureSpace(ctx, 14);
+      doc.fillColor("#172033").font("Helvetica").fontSize(9).text(`•  ${it}`, { width });
+    }
+    doc.moveDown(0.4);
+  }
+  if (r.attention.length) {
+    subheading(ctx, "Items requiring attention");
+    for (const it of r.attention) {
+      ensureSpace(ctx, 14);
+      doc.fillColor("#7c2d12").font("Helvetica").fontSize(9).text(`•  ${it}`, { width });
+    }
+    doc.moveDown(0.4);
+  }
+
+  const money = (v: unknown) => (v === null || v === undefined ? "" : formatMoney(v as number));
+  subheading(ctx, "Open early warnings", "Largest cost impact first.");
+  table(
+    ctx,
+    [
+      { key: "ew_no", label: "EW No", width: 0.7 },
+      { key: "description", label: "Description", width: 3 },
+      { key: "contractor", label: "Contractor", width: 1.4 },
+      { key: "likelihood", label: "Likelihood", width: 0.8 },
+      { key: "costImpact", label: "Cost impact (SAR)", width: 1.2, align: "right", format: money },
+      { key: "timeImpactDays", label: "Time (days)", width: 0.8, align: "right" },
+      { key: "daysOpen", label: "Days open", width: 0.7, align: "right" },
+    ],
+    r.ewOpen as unknown as Record<string, unknown>[],
+    { zebra: true },
+  );
+
+  if (r.risksOpen.length) {
+    subheading(ctx, "Open risks & opportunities", "Largest expected value first.");
+    table(
+      ctx,
+      [
+        { key: "ro_no", label: "No", width: 0.6 },
+        { key: "type", label: "Type", width: 0.9 },
+        { key: "description", label: "Description", width: 2.8 },
+        { key: "owner", label: "Owner", width: 1.2 },
+        { key: "probability", label: "Prob. %", width: 0.7, align: "right" },
+        { key: "costImpact", label: "Cost impact (SAR)", width: 1.2, align: "right", format: money },
+        { key: "expectedValue", label: "Expected value (SAR)", width: 1.3, align: "right", format: money },
+        { key: "rating", label: "Rating", width: 0.7 },
+      ],
+      r.risksOpen as unknown as Record<string, unknown>[],
+      { zebra: true },
+    );
+  }
+
+  doc.moveDown(0.5);
+  doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(`Prepared from the Early Warnings and Risks & Opportunities registers of ${APP_NAME} as at ${formatDate(r.asOf)}${data.locked ? "" : " (draft – period not locked)"}. Expected value = probability × cost impact.`, { width });
+}
+
+/* ------------------------------------------------------------------ */
+/* Provisional Sums Status Report (executive)                          */
+
+function psStatusReport(ctx: Ctx) {
+  const { doc, data } = ctx;
+  const r = buildPsReport(data);
+  const h = r.headline;
+  const sar = (n: number) => formatMoney(n);
+  const kpis: [string, string, string][] = [
+    ["Provisional sums", String(h.total), `${h.withValue} of ${h.total} instructed`],
+    ["Total budget", sar(h.budget), "sum of all provisional sum allowances"],
+    ["Total instructed", sar(h.instructed), h.withoutValue ? `${h.withoutValue} item(s) not yet instructed` : "every item instructed"],
+    [h.net >= 0 ? "Net extra vs budget" : "Net saving vs budget", sar(Math.abs(h.net)), `extras ${sar(h.extras)} · savings ${sar(h.savings)}`],
+  ];
+  const cw = (PAGE.width - PAGE.margin * 2 - 3 * 10) / 4;
+  let x = PAGE.margin;
+  const y = doc.y;
+  kpis.forEach((k) => {
+    doc.rect(x, y, cw, 52).fillAndStroke("#ffffff", LINE);
+    doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(k[0].toUpperCase(), x + 8, y + 7, { width: cw - 16 });
+    doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(12).text(k[1], x + 8, y + 20, { width: cw - 16 });
+    doc.fillColor(MUTED).font("Helvetica").fontSize(7).text(k[2], x + 8, y + 37, { width: cw - 16 });
+    x += cw + 10;
+  });
+  doc.y = y + 62;
+  doc.x = PAGE.margin;
+
+  const width = PAGE.width - PAGE.margin * 2;
+  subheading(ctx, "Commercial narrative");
+  for (const p of r.narrative) {
+    ensureSpace(ctx, 50);
+    doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(9.5).text(p.heading, { width });
+    doc.fillColor("#172033").font("Helvetica").fontSize(9.5).text(p.text, { width, lineGap: 1.5 });
+    doc.moveDown(0.5);
+  }
+  if (r.movement) {
+    subheading(ctx, r.movement.label);
+    if (!r.movement.items.length) doc.fillColor(MUTED).font("Helvetica").fontSize(9).text("No movement in the provisional sums register.");
+    for (const it of r.movement.items) {
+      ensureSpace(ctx, 14);
+      doc.fillColor("#172033").font("Helvetica").fontSize(9).text(`•  ${it}`, { width });
+    }
+    doc.moveDown(0.4);
+  }
+  if (r.attention.length) {
+    subheading(ctx, "Items requiring attention");
+    for (const it of r.attention) {
+      ensureSpace(ctx, 14);
+      doc.fillColor("#7c2d12").font("Helvetica").fontSize(9).text(`•  ${it}`, { width });
+    }
+    doc.moveDown(0.4);
+  }
+
+  const money = (v: unknown) => (v === null || v === undefined ? "" : formatMoney(v as number));
+  subheading(ctx, "Provisional sums at cut-off", "Largest (saving) / extra first.");
+  table(
+    ctx,
+    [
+      { key: "item", label: "Item", width: 0.7 },
+      { key: "description", label: "Description", width: 2.8 },
+      { key: "contractor", label: "Contractor", width: 1.6 },
+      { key: "status", label: "Status", width: 1 },
+      { key: "budget", label: "Budget (SAR)", width: 1.1, align: "right", format: money },
+      { key: "contractValue", label: "Instructed (SAR)", width: 1.1, align: "right", format: money },
+      { key: "savingExtra", label: "(Saving) / Extra", width: 1.1, align: "right", format: money },
+    ],
+    r.rows as unknown as Record<string, unknown>[],
+    { zebra: true, totalRow: { item: "TOTAL", budget: formatMoney(h.budget), contractValue: formatMoney(h.instructed), savingExtra: formatMoney(h.net) } },
+  );
+
+  subheading(ctx, "By status");
+  table(
+    ctx,
+    [
+      { key: "status", label: "Status", width: 2 },
+      { key: "n", label: "Items", width: 1, align: "right" },
+      { key: "budget", label: "Budget (SAR)", width: 1.5, align: "right", format: money },
+      { key: "contractValue", label: "Instructed (SAR)", width: 1.5, align: "right", format: money },
+    ],
+    r.byStatus as unknown as Record<string, unknown>[],
+    { zebra: true },
+  );
+
+  doc.moveDown(0.5);
+  doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(`Prepared from the Provisional Sums register of ${APP_NAME} as at ${formatDate(r.asOf)}${data.locked ? "" : " (draft – period not locked)"}. (Saving) / Extra = instructed value − budget.`, { width });
+}
+
+/* ------------------------------------------------------------------ */
+/* Bonds & Insurance Status Report (executive)                         */
+
+function bondsStatusReport(ctx: Ctx) {
+  const { doc, data } = ctx;
+  const r = buildBondsReport(data);
+  const h = r.headline;
+  const sar = (n: number) => formatMoney(n);
+  const kpis: [string, string, string][] = [
+    ["Bonds & policies", String(h.total), `${h.expired} expired · ${h.expiring30} within 30d · ${h.expiring60} within 60d`],
+    ["Cover held vs required", `${sar(h.provided)} / ${sar(h.required)}`, "total face value vs total requirement"],
+    ["Shortfalls", String(h.shortfallCount), h.shortfallCount ? `${sar(h.shortfallValue)} below requirement` : "every item meets its requirement"],
+    ["Checks outstanding", `${h.notApproved} / ${h.notVerified}`, "not approved / not bank-verified"],
+  ];
+  const cw = (PAGE.width - PAGE.margin * 2 - 3 * 10) / 4;
+  let x = PAGE.margin;
+  const y = doc.y;
+  kpis.forEach((k) => {
+    doc.rect(x, y, cw, 52).fillAndStroke("#ffffff", LINE);
+    doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(k[0].toUpperCase(), x + 8, y + 7, { width: cw - 16 });
+    doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(12).text(k[1], x + 8, y + 20, { width: cw - 16 });
+    doc.fillColor(MUTED).font("Helvetica").fontSize(7).text(k[2], x + 8, y + 37, { width: cw - 16 });
+    x += cw + 10;
+  });
+  doc.y = y + 62;
+  doc.x = PAGE.margin;
+
+  const width = PAGE.width - PAGE.margin * 2;
+  subheading(ctx, "Commercial narrative");
+  for (const p of r.narrative) {
+    ensureSpace(ctx, 50);
+    doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(9.5).text(p.heading, { width });
+    doc.fillColor("#172033").font("Helvetica").fontSize(9.5).text(p.text, { width, lineGap: 1.5 });
+    doc.moveDown(0.5);
+  }
+  if (r.movement) {
+    subheading(ctx, r.movement.label);
+    if (!r.movement.items.length) doc.fillColor(MUTED).font("Helvetica").fontSize(9).text("No movement in the bonds and insurance register.");
+    for (const it of r.movement.items) {
+      ensureSpace(ctx, 14);
+      doc.fillColor("#172033").font("Helvetica").fontSize(9).text(`•  ${it}`, { width });
+    }
+    doc.moveDown(0.4);
+  }
+  if (r.attention.length) {
+    subheading(ctx, "Items requiring attention");
+    for (const it of r.attention) {
+      ensureSpace(ctx, 14);
+      doc.fillColor("#7c2d12").font("Helvetica").fontSize(9).text(`•  ${it}`, { width });
+    }
+    doc.moveDown(0.4);
+  }
+
+  const money = (v: unknown) => (v === null || v === undefined ? "" : formatMoney(v as number));
+  if (r.expiring.length) {
+    subheading(ctx, "Expired or expiring soon", "Earliest expiry first.");
+    table(
+      ctx,
+      [
+        { key: "ref", label: "Ref", width: 0.6 },
+        { key: "contractor", label: "Contractor / consultant", width: 2 },
+        { key: "type", label: "Type", width: 1.6 },
+        { key: "provided", label: "Provided (SAR)", width: 1.1, align: "right", format: money },
+        { key: "expiryDate", label: "Expiry", width: 0.9, format: (v) => formatDate(v as string) },
+        { key: "daysToExpiry", label: "Days", width: 0.6, align: "right" },
+        { key: "status", label: "Status", width: 0.8 },
+      ],
+      r.expiring as unknown as Record<string, unknown>[],
+      { zebra: true },
+    );
+  }
+  subheading(ctx, "By type of bond / insurance");
+  table(
+    ctx,
+    [
+      { key: "type", label: "Type", width: 2.5 },
+      { key: "n", label: "Items", width: 1, align: "right" },
+      { key: "required", label: "Required (SAR)", width: 1.5, align: "right", format: money },
+      { key: "provided", label: "Provided (SAR)", width: 1.5, align: "right", format: money },
+    ],
+    r.byType as unknown as Record<string, unknown>[],
+    { zebra: true },
+  );
+
+  doc.moveDown(0.5);
+  doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(`Prepared from the Bonds & Insurance register of ${APP_NAME} as at ${formatDate(r.asOf)}${data.locked ? "" : " (draft – period not locked)"}. Released and superseded items are excluded from the cover totals.`, { width });
+}
+
+/* ------------------------------------------------------------------ */
+/* Budget Transfers Status Report (executive)                          */
+
+function transfersStatusReport(ctx: Ctx) {
+  const { doc, data } = ctx;
+  const r = buildTransfersReport(data);
+  const h = r.headline;
+  const sar = (n: number) => formatMoney(n);
+  const kpis: [string, string, string][] = [
+    ["Transfers", String(h.total), `${h.approved} approved · ${h.pending} pending`],
+    ["Approved amount moved", sar(h.approvedAmount), "leaves the From package, arrives in the To package"],
+    ["Pending approval", sar(h.pendingAmount), "not yet in the cost report"],
+    ["Not applied", String(h.notApplied), h.notApplied ? "approved transfers missing a cost line" : "all approved transfers applied"],
+  ];
+  const cw = (PAGE.width - PAGE.margin * 2 - 3 * 10) / 4;
+  let x = PAGE.margin;
+  const y = doc.y;
+  kpis.forEach((k) => {
+    doc.rect(x, y, cw, 52).fillAndStroke("#ffffff", LINE);
+    doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(k[0].toUpperCase(), x + 8, y + 7, { width: cw - 16 });
+    doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(12).text(k[1], x + 8, y + 20, { width: cw - 16 });
+    doc.fillColor(MUTED).font("Helvetica").fontSize(7).text(k[2], x + 8, y + 37, { width: cw - 16 });
+    x += cw + 10;
+  });
+  doc.y = y + 62;
+  doc.x = PAGE.margin;
+
+  const width = PAGE.width - PAGE.margin * 2;
+  subheading(ctx, "Commercial narrative");
+  for (const p of r.narrative) {
+    ensureSpace(ctx, 50);
+    doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(9.5).text(p.heading, { width });
+    doc.fillColor("#172033").font("Helvetica").fontSize(9.5).text(p.text, { width, lineGap: 1.5 });
+    doc.moveDown(0.5);
+  }
+  if (r.movement) {
+    subheading(ctx, r.movement.label);
+    if (!r.movement.items.length) doc.fillColor(MUTED).font("Helvetica").fontSize(9).text("No movement in the budget transfers register.");
+    for (const it of r.movement.items) {
+      ensureSpace(ctx, 14);
+      doc.fillColor("#172033").font("Helvetica").fontSize(9).text(`•  ${it}`, { width });
+    }
+    doc.moveDown(0.4);
+  }
+  if (r.attention.length) {
+    subheading(ctx, "Items requiring attention");
+    for (const it of r.attention) {
+      ensureSpace(ctx, 14);
+      doc.fillColor("#7c2d12").font("Helvetica").fontSize(9).text(`•  ${it}`, { width });
+    }
+    doc.moveDown(0.4);
+  }
+
+  const money = (v: unknown) => (v === null || v === undefined ? "" : formatMoney(v as number));
+  subheading(ctx, "Net movement by package");
+  table(
+    ctx,
+    [
+      { key: "package", label: "Package", width: 3 },
+      { key: "out", label: "Out (SAR)", width: 1.5, align: "right", format: money },
+      { key: "in", label: "In (SAR)", width: 1.5, align: "right", format: money },
+      { key: "net", label: "Net (SAR)", width: 1.5, align: "right", format: money },
+    ],
+    r.byPackage as unknown as Record<string, unknown>[],
+    { zebra: true },
+  );
+
+  subheading(ctx, "Transfers", "Most recent first.");
+  table(
+    ctx,
+    [
+      { key: "item", label: "Item", width: 0.7 },
+      { key: "description", label: "Description", width: 2.4 },
+      { key: "fromPackage", label: "From", width: 1.6 },
+      { key: "toPackage", label: "To", width: 1.6 },
+      { key: "amount", label: "Amount (SAR)", width: 1.2, align: "right", format: money },
+      { key: "date", label: "Date", width: 0.9, format: (v) => formatDate(v as string) },
+      { key: "status", label: "Status", width: 0.9 },
+    ],
+    r.rows as unknown as Record<string, unknown>[],
+    { zebra: true, totalRow: { item: "TOTAL", amount: formatMoney(h.approvedAmount + h.pendingAmount) } },
+  );
+
+  doc.moveDown(0.5);
+  doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(`Prepared from the Budget Transfers register of ${APP_NAME} as at ${formatDate(r.asOf)}${data.locked ? "" : " (draft – period not locked)"}.`, { width });
 }
 
 /* ------------------------------------------------------------------ */

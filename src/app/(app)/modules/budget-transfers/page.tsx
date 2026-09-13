@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { AlertTriangle, CheckCircle2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, FileText } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth";
 import { getAppContext } from "@/lib/context";
 import { getModule } from "@/lib/modules";
@@ -9,6 +9,8 @@ import { formatMoney } from "@/lib/format";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Chip } from "@/components/ui/Chip";
 import { RegisterPage } from "@/components/register/RegisterPage";
+import { ExportButtons } from "@/components/ui/ExportButtons";
+import { HorizontalBars } from "@/components/charts/HorizontalBars";
 
 export const metadata = { title: "Budget Transfers" };
 
@@ -20,7 +22,20 @@ export default async function BudgetTransfersPage() {
 
   return (
     <div className="space-y-5">
-      <PageHeader exportSection="budget_transfers" eyebrow={`Module ${mod.no}`} title={mod.title} subtitle="Budget moved between packages. Approved transfers reduce the From package and increase the To package in column F of the cost report." />
+      <PageHeader
+        exportSection="budget_transfers"
+        eyebrow={`Module ${mod.no}`}
+        title={mod.title}
+        subtitle="Budget moved between packages. Approved transfers reduce the From package and increase the To package in column F of the cost report."
+        actions={
+          ctx.programme ? (
+            <span className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-2 py-1 shadow-sm" title="Executive report for the month: approved vs pending, net movement by package, narrative and reconciliation">
+              <FileText size={14} className="text-navy" />
+              <ExportButtons section="transfers_report" label="Budget transfers report" />
+            </span>
+          ) : undefined
+        }
+      />
       {summary ? (
         <>
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -50,6 +65,14 @@ export default async function BudgetTransfersPage() {
                 </Link>{" "}
                 Line setup tab.
               </span>
+            </div>
+          )}
+
+          {summary.netByPackage.length > 0 && (
+            <div className="card p-5">
+              <h2 className="mb-1 text-sm font-semibold text-ink">Net movement by package</h2>
+              <p className="mb-3 text-xs text-muted">Positive (blue) = net gain to the package; length is the absolute net movement.</p>
+              <HorizontalBars rows={summary.netByPackage.map((p) => ({ label: p.package, value: p.net, color: p.net < 0 ? "#d64545" : "#2a78d6" }))} valueLabel="net movement" />
             </div>
           )}
 
