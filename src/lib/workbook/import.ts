@@ -166,12 +166,19 @@ function resolveOption(value: string, options: string[]): string | null {
   return i < 0 ? null : options[i];
 }
 
-export async function importWorkbook(req: ImportRequest, user: UserInfo): Promise<ImportResult> {
+/** Lets other requests through between batches of an import (the server stays reachable while it runs). */
+const yieldNow = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+export type ImportProgress = (phase: string, done?: number, total?: number) => void;
+
+export async function importWorkbook(req: ImportRequest, user: UserInfo, progress: ImportProgress = () => {}): Promise<ImportResult> {
   if (user.role === "viewer") throw new ValidationError("Viewers cannot import.");
   const db = getDb();
   const debug = process.env.IMPORT_DEBUG ? (phase: string) => console.log(`[import] ${phase}: ${memoryNote()}`) : () => {};
+  progress("Reading the workbook");
   const worksheets = await uploadSheets(req.fileId);
   debug("sheets loaded");
+  await yieldNow();
 
   // Reporting period. Every report keeps its own data: the live registers belong to the latest report.
   // Importing an older month is done "in a sandbox": the latest report's live data is stored first,
@@ -266,14 +273,18 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo): Promis
       return o;
     };
 
-    let processed = 0;
+    // rows go in batches of 50, each its own transaction, with a breather for other requests in between
+    const rowNos: number[] = [];
+    for (let r = m.headerRow + 1; r <= ws.rowCount; r++) if (ws.rows.get(r)) rowNos.push(r);
+    const BATCH = 50;
+    const sheetLabel = `${m.sheet} → ${def.title}`;
+    progress(sheetLabel, 0, rowNos.length);
+    for (let b = 0; b < rowNos.length; b += BATCH) {
+    const slice = rowNos.slice(b, b + BATCH);
     const tx = db.transaction(() => {
-      for (let r = m.headerRow + 1; r <= ws.rowCount; r++) {
+      for (const r of slice) {
         const row = ws.rows.get(r);
         if (!row) continue;
-        // Every row prepares fresh SQL statements whose native memory the JavaScript heap does not see, so the
-        // garbage collector would let hundreds of megabytes pile up before running: it is run every 100 rows.
-        if (++processed % 100 === 0) releaseMemory();
         const input: Record<string, unknown> = {};
         let any = false;
         for (const c of colMap) {
@@ -383,10 +394,14 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo): Promis
       }
     });
     tx();
-    results.push(result);
     releaseMemory();
+    progress(sheetLabel, Math.min(b + BATCH, rowNos.length), rowNos.length);
+    await yieldNow();
+    }
+    results.push(result);
     debug(`sheet ${m.sheet} → ${m.register}`);
   }
+  progress("Storing the report");
 
   // An older month rebuilt from its monthly workbook: rows the workbook did not contain are removed from
   // the registers it fed (matched rows keep their ids, so links from claims, bonds and final accounts hold).
@@ -420,10 +435,12 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo): Promis
   takeSnapshot(periodId, user, "import");
   releaseMemory();
   debug("snapshot taken");
+  await yieldNow();
   let locked = false;
   if (req.lock && user.role === "admin") {
     const totalErrors = results.reduce((t, r) => t + r.errors.length, 0);
     if (totalErrors === 0) {
+      progress("Locking the report");
       lockPeriod(periodId, user, { force: olderImport });
       locked = true;
       debug("period locked");

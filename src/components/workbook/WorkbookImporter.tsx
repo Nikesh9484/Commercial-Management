@@ -46,6 +46,7 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo,
   const toast = useToast();
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
+  const [phase, setPhase] = useState("");
   const [analysis, setAnalysis] = useState<WorkbookAnalysis | null>(null);
   const [mapping, setMapping] = useState<Record<string, { register: string | null; columns: Record<string, string | null> }>>({});
   const preset = initialPeriodId ? periods.find((p) => p.id === initialPeriodId) ?? null : null;
@@ -144,6 +145,7 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo,
   async function run() {
     if (!analysis) return;
     setBusy(true);
+    setPhase("Starting…");
     const body = {
       fileId: analysis.fileId,
       period: standalone ? { id: standalone.period.id } : periodMode === "existing" ? { id: periodId } : { report_no: Number(reportNo.replace(/\D/g, "")) || undefined, period_end: periodEnd },
@@ -154,12 +156,16 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo,
       fileName: analysis.fileName,
       excelCheck: analysis.conversion?.level1 ?? null,
     };
-    const res = await fetch("/api/workbook/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    const j = await res.json().catch(() => ({}));
-    setBusy(false);
-    if (!res.ok) return toast(j.error ?? "Import failed.", "error");
-    setResult(j as ImportResult);
-    toast("Workbook imported.");
+    try {
+      const j = await importViaJob(body, setPhase);
+      setResult(j);
+      toast("Workbook imported.");
+    } catch (e) {
+      toast(friendly(e), "error");
+    } finally {
+      setBusy(false);
+      setPhase("");
+    }
   }
 
   /**
@@ -216,12 +222,7 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo,
         excelCheck: a.conversion?.level1 ?? null,
       };
       try {
-        const res = await fetch("/api/workbook/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-        const j = (await res.json().catch(() => ({}))) as ImportResult & { error?: string };
-        if (!res.ok) {
-          update(i, { status: "error", message: j.error ?? "Import failed." });
-          continue;
-        }
+        const j = await importViaJob(body, (m) => update(i, { message: `Importing Report No ${no}… ${m}` }));
         if (!existing) known.push({ id: j.period.id, report_no: no, status: j.period.locked ? "Locked" : "Open", label: j.period.label });
         const added = j.sheets.reduce((t, r) => t + r.created, 0);
         const updated = j.sheets.reduce((t, r) => t + r.updated, 0);
@@ -409,6 +410,11 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo,
               <Upload size={16} /> {busy ? "Importing…" : `Import ${mappedSheets.length} sheet(s)`}
             </button>
           </div>
+          {busy && phase && (
+            <p className="mt-2 text-xs text-muted" aria-live="polite">
+              {phase} – the import runs on the server; keep this page open. On the small hosting plan a full monthly report can take a few minutes.
+            </p>
+          )}
         </div>
       )}
 
@@ -568,6 +574,44 @@ function SheetMapper({ sheet, registers, value, onChange }: { sheet: SheetAnalys
 const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** Network failures mid-batch usually mean the server restarted (out of memory on a big file). */
+class ImportFailed extends Error {}
+
+/**
+ * Starts the import and follows it until it is done. The server answers the POST at once with a job id
+ * and the import runs in the background; polling every two seconds shows the progress and survives the
+ * odd unanswered request while the server is busy (the host's proxy gives up on long requests).
+ */
+async function importViaJob(body: unknown, onPhase: (m: string) => void): Promise<ImportResult> {
+  const res = await fetch("/api/workbook/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const j = (await res.json().catch(() => ({}))) as { jobId?: string; error?: string } & Partial<ImportResult>;
+  if (!res.ok) throw new ImportFailed(j.error ?? `Import failed (${res.status}).`);
+  if (!j.jobId) return j as ImportResult; // an older server that waited for the result
+  const deadline = Date.now() + 45 * 60_000;
+  let unanswered = 0;
+  while (Date.now() < deadline) {
+    await pause(2000);
+    try {
+      const r = await fetch(`/api/workbook/import?job=${encodeURIComponent(j.jobId)}`, { cache: "no-store" });
+      if (r.status === 404) {
+        const k = (await r.json().catch(() => ({}))) as { error?: string };
+        throw new ImportFailed(k.error ?? "The server restarted while importing. Open the report library to see whether the report was stored, then try again.");
+      }
+      if (!r.ok) throw new Error(`unexpected answer (${r.status})`);
+      const st = (await r.json()) as { status: string; phase?: string; done?: number; total?: number; result?: ImportResult; error?: string };
+      unanswered = 0;
+      if (st.status === "done" && st.result) return st.result;
+      if (st.status === "failed") throw new ImportFailed(st.error ?? "Import failed.");
+      onPhase(st.phase ? `${st.phase}${st.total ? ` (${st.done ?? 0} / ${st.total} rows)` : ""}` : "Importing…");
+    } catch (e) {
+      if (e instanceof ImportFailed) throw e;
+      // no answer: the server is busy with the import itself – keep waiting, up to five minutes of silence
+      if (++unanswered > 150) throw new ImportFailed("No answer from the server for five minutes – it may have restarted. Open the report library to see whether the report was stored, then try again.");
+      onPhase("Importing… (server busy)");
+    }
+  }
+  throw new ImportFailed("The import is taking longer than 45 minutes. Open the report library to see whether the report was stored.");
+}
+
 function friendly(e: unknown): string {
   const msg = e instanceof Error ? e.message : String(e);
   if (/failed to fetch|networkerror|load failed|unexpected answer \(50[234]\)/i.test(msg)) {
