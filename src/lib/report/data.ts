@@ -8,6 +8,8 @@ import { getDashboard, type DashboardData } from "../dashboard/summary";
 import { getMovement, type Movement } from "../dashboard/movement";
 import { level1Matrix, type Level1Matrix } from "../cost-report/level1";
 import { getPeriod, getPreviousPeriod, readsStoredCopy, type PeriodRow } from "../snapshots";
+import { mergeComputed } from "../payments/compute";
+import { paymentComputedForPeriod } from "../view-mode";
 import { lookupOptions } from "../registers/engine";
 import type { RecordRow, RegisterDef } from "../registers/types";
 import { REPORT_SCHEDULES } from "./schedules";
@@ -65,7 +67,11 @@ export function getReportData(programmeId: number, periodId: number): ReportData
     const def = getRegisterDef(key)!;
     const snap = stored ? snapshotRows(periodId, key) : null;
     let rows = snap ?? listRecords(def);
-    if (snap) rows = rows.filter((r) => Number(r.programme_id) === programmeId);
+    if (snap) {
+      rows = rows.filter((r) => Number(r.programme_id) === programmeId);
+      // the payment columns are calculated again from the report's own stored registers (see view-mode)
+      if (key === "contracts" || key === "payment_applications") mergeComputed(key, rows as unknown as Record<string, unknown>[], paymentComputedForPeriod(db, programmeId, periodId));
+    }
     registers[key] = { def, rows };
     sources[key] = snap ? "snapshot" : "live";
   }

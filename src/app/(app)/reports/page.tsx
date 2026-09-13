@@ -30,6 +30,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
         item("movement", "Movement since the previous report", "Cost report movement, key period movements, status counts, register changes"),
         item("claims_report", "Claims Status Report", "Executive claims report with narrative"),
         item("fa_report", "Final Account Status Report", "Executive final account report with narrative"),
+        item("payments_report", "Invoice & Payment Status Report", "Executive payment report: certification and payment position, performance against the contractual timetable, retention, ageing and overdue items"),
         item("minutes", "Minutes of Meeting", "Meetings and actions of the period"),
       ],
     },

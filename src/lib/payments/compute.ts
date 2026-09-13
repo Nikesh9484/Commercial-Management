@@ -215,6 +215,31 @@ export function computeContracts(db: Database.Database, programmeId: number, sou
   return { contracts, applications, rows, apps };
 }
 
+/** Merges the calculated columns into register rows (contracts / payment applications), in place. */
+export function mergeComputed(
+  key: "contracts" | "payment_applications",
+  rows: Record<string, unknown>[],
+  computed: { contracts: Map<number, ContractComputed>; applications: Map<number, ApplicationComputed> },
+): Record<string, unknown>[] {
+  for (const r of rows) {
+    const comp = key === "contracts" ? computed.contracts.get(Number(r.id)) : computed.applications.get(Number(r.id));
+    if (!comp) continue;
+    const { row_tone, ...values } = comp as unknown as Record<string, unknown> & { row_tone?: string | null };
+    Object.assign(r, values);
+    if (key === "payment_applications") {
+      r.__row_tone = row_tone ?? null;
+      for (const k of ["ipc_days_late", "payment_days_late"]) {
+        const v = r[k] as number | null;
+        r[`${k}__tone`] = v === null || v === undefined ? null : v > 0 ? "red" : v < 0 ? "green" : null;
+      }
+    } else {
+      const pct = r.pct_certified as number | null;
+      r.pct_certified__tone = pct === null ? null : pct >= 100 ? "green" : null;
+    }
+  }
+  return rows;
+}
+
 /** Cost report column P: gross cumulative certified per cost line (sum over contracts linked to the line). */
 export function certifiedByLine(db: Database.Database, programmeId: number): Map<number, number> {
   const out = new Map<number, number>();

@@ -7,6 +7,7 @@ import { formatMoney, formatDate, formatNumber, formatPercent, formatDateTime } 
 import type { FieldDef } from "../registers/types";
 import { APP_NAME } from "../brand";
 import { buildClaimsReport } from "./claims-report";
+import { buildPaymentsReport } from "./payments-report";
 import { buildFaReport } from "./fa-report";
 
 type Doc = PDFKit.PDFDocument;
@@ -44,6 +45,7 @@ export function resolveSections(keys: string[]): { title: string; run: (ctx: Ctx
     else if (k === "movement") out.push({ title: "Movement since the previous report", run: movementSection });
     else if (k === "claims_report") out.push({ title: "Claims Status Report", run: claimsStatusReport });
     else if (k === "fa_report") out.push({ title: "Final Account Status Report", run: faStatusReport });
+    else if (k === "payments_report") out.push({ title: "Invoice & Payment Status Report", run: paymentsStatusReport });
     else if (k === "level1") out.push({ title: "Schedule A – Cost Report Level 1 (Executive)", run: costLevel1 });
     else if (k === "level2") out.push({ title: "Schedule B – Cost Report Level 2 (Detailed)", run: costLevel2 });
     else if (k === "cashflow") out.push({ title: "Schedule I – Cash Flow", run: cashflow });
@@ -891,6 +893,148 @@ function faStatusReport(ctx: Ctx) {
   );
   doc.moveDown(0.5);
   doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(`Prepared from the Final Account Status register of ${APP_NAME} as at ${formatDate(r.asOf)}${data.locked ? "" : " (draft – period not locked)"}.`, { width });
+}
+
+
+/* ------------------------------------------------------------------ */
+/* Invoice & Payment Status Report (executive)                         */
+
+function paymentsStatusReport(ctx: Ctx) {
+  const { doc, data } = ctx;
+  const r = buildPaymentsReport(data);
+  const h = r.headline;
+  const sar = (n: number) => formatMoney(n);
+  const kpis: [string, string, string][] = [
+    ["Contracts", String(h.contracts), `${h.contractors} contractor(s) · ${h.applications} application(s)`],
+    ["Revised contract value", sar(h.revised), "awarded value plus approved changes and claims"],
+    ["Certified to date (gross)", sar(h.certified), `${h.pctCertified ?? 0}% of revised value`],
+    ["Paid to date (net)", sar(h.netPaid), `${h.pctPaid ?? 0}% of certified released`],
+    h.balanceToCertify >= 0 ? ["Balance to certify", sar(h.balanceToCertify), "cash requirement to completion"] : ["Certified beyond the value", sar(-h.balanceToCertify), "contract sums to be brought up to date"],
+    ["Certified, awaiting payment", sar(h.awaitingPayment), `${r.overdue.filter((o) => o.stage === "Payment").length} past the payment date`],
+    ["Retention held", sar(h.retentionHeld), `advance recovered ${sar(h.advanceRecovered)}`],
+    ["Certify / pay (avg days)", `${h.avgDaysToCertify ?? "–"} / ${h.avgDaysToPay ?? "–"}`, `${h.onTimeCertification ?? "–"}% / ${h.onTimePayment ?? "–"}% within the contract`],
+  ];
+  const cw = (PAGE.width - PAGE.margin * 2 - 3 * 10) / 4;
+  let x = PAGE.margin;
+  let y = doc.y;
+  kpis.forEach((k, i) => {
+    doc.rect(x, y, cw, 52).fillAndStroke("#ffffff", LINE);
+    doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(k[0].toUpperCase(), x + 8, y + 7, { width: cw - 16 });
+    doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(12).text(k[1], x + 8, y + 20, { width: cw - 16 });
+    doc.fillColor(MUTED).font("Helvetica").fontSize(7).text(k[2], x + 8, y + 37, { width: cw - 16 });
+    x += cw + 10;
+    if (i === 3) {
+      x = PAGE.margin;
+      y += 62;
+    }
+  });
+  doc.y = y + 62;
+  doc.x = PAGE.margin;
+
+  const width = PAGE.width - PAGE.margin * 2;
+  subheading(ctx, "Commercial narrative");
+  for (const p of r.narrative) {
+    ensureSpace(ctx, 50);
+    doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(9.5).text(p.heading, { width });
+    doc.fillColor("#172033").font("Helvetica").fontSize(9.5).text(p.text, { width, lineGap: 1.5 });
+    doc.moveDown(0.5);
+  }
+  if (r.movement) {
+    subheading(ctx, r.movement.label);
+    if (!r.movement.items.length) doc.fillColor(MUTED).font("Helvetica").fontSize(9).text("No movement in the payment registers.");
+    for (const it of r.movement.items) {
+      ensureSpace(ctx, 14);
+      doc.fillColor("#172033").font("Helvetica").fontSize(9).text(`•  ${it}`, { width });
+    }
+    doc.moveDown(0.4);
+  }
+  if (r.attention.length) {
+    subheading(ctx, "Items requiring attention");
+    for (const it of r.attention) {
+      ensureSpace(ctx, 14);
+      doc.fillColor("#7c2d12").font("Helvetica").fontSize(9).text(`•  ${it}`, { width });
+    }
+    doc.moveDown(0.4);
+  }
+
+  const money = (v: unknown) => (v === null || v === undefined ? "" : formatMoney(v as number));
+  const pctFmt = (v: unknown) => (v === null || v === undefined ? "" : `${v}%`);
+  subheading(ctx, "Contract position at cut-off", "Largest revised value first. Certified is the gross cumulative amount; paid is net of advance recovery and retention.");
+  table(
+    ctx,
+    [
+      { key: "po", label: "PO / ref", width: 0.9 },
+      { key: "contractor", label: "Contractor / consultant", width: 2.2 },
+      { key: "package", label: "Package", width: 1.6 },
+      { key: "revised", label: "Revised value", width: 1.3, align: "right", format: money },
+      { key: "certified", label: "Certified (gross)", width: 1.3, align: "right", format: money },
+      { key: "pctCertified", label: "%", width: 0.6, align: "right", format: pctFmt },
+      { key: "balanceToCertify", label: "To certify", width: 1.2, align: "right", format: money },
+      { key: "netPaid", label: "Paid (net)", width: 1.2, align: "right", format: money },
+      { key: "awaitingPayment", label: "Awaiting payment", width: 1.2, align: "right", format: money },
+      { key: "retentionHeld", label: "Retention", width: 1, align: "right", format: money },
+      { key: "applications", label: "IPCs", width: 0.5, align: "right" },
+      { key: "status", label: "Status", width: 1.2 },
+    ],
+    r.contracts as unknown as Record<string, unknown>[],
+    {
+      zebra: true,
+      totalRow: { po: "TOTAL", revised: formatMoney(h.revised), certified: formatMoney(h.certified), balanceToCertify: formatMoney(h.balanceToCertify), netPaid: formatMoney(h.netPaid), awaitingPayment: formatMoney(h.awaitingPayment), retentionHeld: formatMoney(h.retentionHeld) },
+    },
+  );
+
+  subheading(ctx, "By contractor");
+  table(
+    ctx,
+    [
+      { key: "contractor", label: "Contractor / consultant", width: 2.6 },
+      { key: "contracts", label: "Contracts", width: 0.8, align: "right" },
+      { key: "revised", label: "Revised value", width: 1.4, align: "right", format: money },
+      { key: "certified", label: "Certified", width: 1.4, align: "right", format: money },
+      { key: "pctCertified", label: "% certified", width: 0.9, align: "right", format: pctFmt },
+      { key: "netPaid", label: "Paid (net)", width: 1.4, align: "right", format: money },
+      { key: "pctPaid", label: "% released", width: 0.9, align: "right", format: pctFmt },
+      { key: "retentionHeld", label: "Retention held", width: 1.2, align: "right", format: money },
+      { key: "awaitingPayment", label: "Awaiting payment", width: 1.2, align: "right", format: money },
+    ],
+    r.byContractor as unknown as Record<string, unknown>[],
+    { zebra: true },
+  );
+
+  subheading(ctx, "Certified and unpaid – ageing", "Days between the certificate and the cut-off date.");
+  table(
+    ctx,
+    [
+      { key: "bucket", label: "Age of certificate", width: 2 },
+      { key: "n", label: "Certificates", width: 1, align: "right" },
+      { key: "value", label: "Net amount (SAR)", width: 2, align: "right", format: money },
+    ],
+    r.ageing as unknown as Record<string, unknown>[],
+    { zebra: true },
+  );
+
+  if (r.overdue.length) {
+    subheading(ctx, "Overdue against the contractual timetable", "Applications not certified within the contract period, and certificates not paid within it.");
+    table(
+      ctx,
+      [
+        { key: "stage", label: "Overdue", width: 1 },
+        { key: "po", label: "PO / ref", width: 0.9 },
+        { key: "contractor", label: "Contractor", width: 2 },
+        { key: "application", label: "Application / IPC", width: 1.6 },
+        { key: "applicationDate", label: "Applied", width: 0.9, format: (v) => formatDate(v as string) },
+        { key: "ipcDate", label: "Certified", width: 0.9, format: (v) => formatDate(v as string) },
+        { key: "dueDate", label: "Due", width: 0.9, format: (v) => formatDate(v as string) },
+        { key: "daysLate", label: "Days late", width: 0.7, align: "right" },
+        { key: "amount", label: "Net amount", width: 1.3, align: "right", format: money },
+      ],
+      r.overdue as unknown as Record<string, unknown>[],
+      { zebra: true },
+    );
+  }
+
+  doc.moveDown(0.5);
+  doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(`Prepared from the contracts register and the IPC log of ${APP_NAME} as at ${formatDate(r.asOf)}${data.locked ? "" : " (draft – period not locked)"}. Certified is gross and excludes VAT; paid is the net amount released after advance recovery and retention.`, { width });
 }
 
 /* ------------------------------------------------------------------ */

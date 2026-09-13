@@ -2,6 +2,7 @@ import { APP_NAME } from "../brand";
 import ExcelJS from "exceljs";
 import { executiveTotals } from "../cost-report/executive";
 import { buildClaimsReport } from "./claims-report";
+import { buildPaymentsReport } from "./payments-report";
 import { buildFaReport } from "./fa-report";
 import type { ReportData } from "./data";
 import { REPORT_SCHEDULES } from "./schedules";
@@ -49,6 +50,7 @@ export async function renderSectionsExcel(data: ReportData, keys: string[], link
     else if (k === "movement") movementSheet(wb, data);
     else if (k === "claims_report") claimsReportSheet(wb, data);
     else if (k === "fa_report") faReportSheet(wb, data);
+    else if (k === "payments_report") paymentsReportSheet(wb, data);
     else if (k === "level1" || k === "level2" || k.toUpperCase() === "A" || k.toUpperCase() === "B") {
       if (!costDone) costPair(wb, data, wantsL1 ? "Level 1 - Executive" : null, wantsL2 ? "Level 2 - Detailed" : null);
       costDone = true;
@@ -347,6 +349,92 @@ export function faReportSheet(wb: ExcelJS.Workbook, d: ReportData) {
   ws.addRow(["By status"]).font = { bold: true, size: 12, color: { argb: NAVY } };
   header(ws.addRow(["Status", "Packages", "Anticipated final account (SAR)"]));
   for (const s of r.byStatus) ws.addRow([s.status, s.count, s.afa]).getCell(3).numFmt = MONEY_FMT;
+}
+
+export function paymentsReportSheet(wb: ExcelJS.Workbook, d: ReportData) {
+  const r = buildPaymentsReport(d);
+  const ws = wb.addWorksheet("Payment Status Report");
+  [14, 34, 24, 18, 18, 10, 16, 18, 18, 16, 8, 18].forEach((w, i) => (ws.getColumn(i + 1).width = w));
+  titleBlock(ws, r.title, `${sub(d)} · as at ${formatDate(r.asOf)}`, 12);
+  const h = r.headline;
+  header(ws.addRow(["Headline", "Value", "Note"]));
+  const kp: [string, unknown, string][] = [
+    ["Contracts", h.contracts, `${h.contractors} contractor(s) · ${h.applications} application(s)`],
+    ["Revised contract value (SAR)", h.revised, "awarded value plus approved changes and claims"],
+    ["Applied for – cumulative (SAR)", h.claimed, "gross, excl. VAT"],
+    ["Certified to date – gross (SAR)", h.certified, `${h.pctCertified ?? 0}% of revised value`],
+    ["Paid to date – net (SAR)", h.netPaid, `${h.pctPaid ?? 0}% of certified released`],
+    ["Balance to certify (SAR)", h.balanceToCertify, "cash requirement to completion"],
+    ["Applied, awaiting certification (SAR)", h.awaitingCertification, ""],
+    ["Certified, awaiting payment (SAR)", h.awaitingPayment, ""],
+    ["Retention held (SAR)", h.retentionHeld, ""],
+    ["Advance recovered (SAR)", h.advanceRecovered, ""],
+    ["Certified this period (SAR)", h.certifiedThisPeriod, ""],
+    ["Paid this period (SAR)", h.paidThisPeriod, ""],
+    ["Average days to certify", h.avgDaysToCertify, `${h.onTimeCertification ?? "–"}% within the contractual period`],
+    ["Average days to pay", h.avgDaysToPay, `${h.onTimePayment ?? "–"}% within the contractual period`],
+    ["Late certificates / payments", `${h.lateCertificates} / ${h.latePayments}`, "issued later than the contract allows"],
+  ];
+  for (const [k, v, n] of kp) {
+    const row = ws.addRow([k, v, n]);
+    if (typeof v === "number" && /SAR/.test(k)) row.getCell(2).numFmt = MONEY_FMT;
+  }
+  ws.addRow([]);
+  ws.addRow(["Commercial narrative"]).font = { bold: true, size: 12, color: { argb: NAVY } };
+  for (const p of r.narrative) {
+    ws.addRow([p.heading]).font = { bold: true };
+    const row = ws.addRow([p.text]);
+    ws.mergeCells(row.number, 1, row.number, 10);
+    row.alignment = { wrapText: true, vertical: "top" };
+    row.height = Math.min(120, 15 * Math.ceil(p.text.length / 150));
+  }
+  if (r.movement) {
+    ws.addRow([]);
+    ws.addRow([r.movement.label]).font = { bold: true, size: 12, color: { argb: NAVY } };
+    if (!r.movement.items.length) ws.addRow(["No movement in the payment registers."]);
+    for (const it of r.movement.items) ws.addRow([`• ${it}`]);
+  }
+  if (r.attention.length) {
+    ws.addRow([]);
+    ws.addRow(["Items requiring attention"]).font = { bold: true, size: 12, color: { argb: "FF7C2D12" } };
+    for (const it of r.attention) ws.addRow([`• ${it}`]);
+  }
+  ws.addRow([]);
+  ws.addRow(["Contract position at cut-off"]).font = { bold: true, size: 12, color: { argb: NAVY } };
+  header(ws.addRow(["PO / ref", "Contractor / consultant", "Package", "Revised value", "Applied (cum.)", "Certified (gross)", "% certified", "To certify", "Paid (net)", "Awaiting certification", "Awaiting payment", "Retention held", "Advance recovered", "IPCs", "Last certificate", "Avg days certify", "Avg days pay", "Status"]));
+  for (const l of r.contracts) {
+    const row = ws.addRow([l.po, l.contractor, l.package, l.revised, l.claimed, l.certified, l.pctCertified, l.balanceToCertify, l.netPaid, l.awaitingCertification, l.awaitingPayment, l.retentionHeld, l.advanceRecovered, l.applications, l.lastCertificate ? toDate(l.lastCertificate) : null, l.avgDaysToCertify, l.avgDaysToPay, l.status]);
+    [4, 5, 6, 8, 9, 10, 11, 12, 13].forEach((i) => (row.getCell(i).numFmt = MONEY_FMT));
+    row.getCell(7).numFmt = '0.0"%"';
+    row.getCell(15).numFmt = "DD-MMM-YY";
+    if (l.pctCertified !== null && l.pctCertified > 100) row.getCell(7).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEE2E2" } };
+    if (l.awaitingPayment > 0) row.getCell(11).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEF3C7" } };
+  }
+  const t = ws.addRow(["TOTAL", "", "", h.revised, h.claimed, h.certified, h.pctCertified, h.balanceToCertify, h.netPaid, h.awaitingCertification, h.awaitingPayment, h.retentionHeld, h.advanceRecovered]);
+  bold(t);
+  [4, 5, 6, 8, 9, 10, 11, 12, 13].forEach((i) => (t.getCell(i).numFmt = MONEY_FMT));
+  ws.addRow([]);
+  ws.addRow(["By contractor"]).font = { bold: true, size: 12, color: { argb: NAVY } };
+  header(ws.addRow(["Contractor / consultant", "Contracts", "Revised value", "Certified", "% certified", "Paid (net)", "% released", "Retention held", "Awaiting payment"]));
+  for (const c of r.byContractor) {
+    const row = ws.addRow([c.contractor, c.contracts, c.revised, c.certified, c.pctCertified, c.netPaid, c.pctPaid, c.retentionHeld, c.awaitingPayment]);
+    [3, 4, 6, 8, 9].forEach((i) => (row.getCell(i).numFmt = MONEY_FMT));
+    [5, 7].forEach((i) => (row.getCell(i).numFmt = '0.0"%"'));
+  }
+  ws.addRow([]);
+  ws.addRow(["Certified and unpaid – ageing"]).font = { bold: true, size: 12, color: { argb: NAVY } };
+  header(ws.addRow(["Age of certificate", "Certificates", "Net amount (SAR)"]));
+  for (const b of r.ageing) ws.addRow([b.bucket, b.n, b.value]).getCell(3).numFmt = MONEY_FMT;
+  if (r.overdue.length) {
+    ws.addRow([]);
+    ws.addRow(["Overdue against the contractual timetable"]).font = { bold: true, size: 12, color: { argb: "FF7C2D12" } };
+    header(ws.addRow(["Overdue", "PO / ref", "Contractor", "Application / IPC", "Applied", "Certified", "Due", "Days late", "Net amount (SAR)"]));
+    for (const o of r.overdue) {
+      const row = ws.addRow([o.stage, o.po, o.contractor, o.application, o.applicationDate ? toDate(o.applicationDate) : null, o.ipcDate ? toDate(o.ipcDate) : null, o.dueDate ? toDate(o.dueDate) : null, o.daysLate, o.amount]);
+      [5, 6, 7].forEach((i) => (row.getCell(i).numFmt = "DD-MMM-YY"));
+      row.getCell(9).numFmt = MONEY_FMT;
+    }
+  }
 }
 
 export async function renderMonthlyReportExcel(data: ReportData, link?: { url: string; label: string }): Promise<Buffer> {

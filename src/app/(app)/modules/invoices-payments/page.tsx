@@ -10,6 +10,8 @@ import type { ContractRow, ApplicationRow } from "@/lib/payments/compute";
 import { formatMoney, formatPercent } from "@/lib/format";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { RegisterPage } from "@/components/register/RegisterPage";
+import { ExportButtons } from "@/components/ui/ExportButtons";
+import { FileText } from "lucide-react";
 import { PaymentChart } from "@/components/payments/PaymentChart";
 
 export const metadata = { title: "Invoice & Payment Tracking" };
@@ -36,14 +38,41 @@ export default async function PaymentsPage() {
   const paid = contracts.reduce((t, r) => t + num(r.cum_paid), 0);
   const points = paymentTimeline(getDb(), ctx.programme.id, undefined, paymentSourceForView<ContractRow, ApplicationRow>(getDb(), ctx.programme.id));
 
+  // open items and cash held, from the IPC log of the report being viewed
+  const apps = recordsForView(getRegisterDef("payment_applications")!);
+  const awaitingCertification = apps.reduce((t, a) => t + (a.application_date && !a.ipc_date ? num(a.net_claimed) : 0), 0);
+  const awaitingPayment = apps.reduce((t, a) => t + (a.ipc_date && !a.paid_date ? num(a.net_certified) : 0), 0);
+  const retentionHeld = apps.reduce((t, a) => t + num(a.retention_certified), 0);
+  const advanceRecovered = apps.reduce((t, a) => t + Math.abs(num(a.advance_recovery_certified)), 0);
+  const late = apps.filter((a) => num(a.payment_days_late) > 0).length;
+
   return (
     <div className="space-y-5">
-      <PageHeader exportSection="H" eyebrow={`Module ${mod.no}`} title={mod.title} subtitle="Contract summary (one row per contract) and, behind each contract, its IPC log of payment applications, certificates and payments." />
+      <PageHeader
+        exportSection="H"
+        eyebrow={`Module ${mod.no}`}
+        title={mod.title}
+        subtitle="Contract summary (one row per contract) and, behind each contract, its IPC log of payment applications, certificates and payments."
+        actions={
+          ctx.period ? (
+            <span className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-2 py-1 shadow-sm" title="Executive payment report for the month: certification and payment position, performance against the contractual timetable, retention, ageing and overdue items">
+              <FileText size={14} className="text-navy" />
+              <ExportButtons section="payments_report" label="Payment status report" />
+            </span>
+          ) : undefined
+        }
+      />
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Stat label="Revised contract value" value={formatMoney(revised)} sub={`${contracts.length} contract(s)`} />
         <Stat label="Net cumulative applied" value={formatMoney(applied)} sub="after advance recovery and retention" />
         <Stat label="Certified to date (gross)" value={formatMoney(certified)} sub={revised ? `${formatPercent((certified / revised) * 100)} of revised value` : "no contract value yet"} />
         <Stat label="Paid to date (net)" value={formatMoney(paid)} sub={certified ? `${formatPercent((paid / certified) * 100)} of net certified released` : "nothing certified yet"} />
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <Stat label="Applied, awaiting certification" value={formatMoney(awaitingCertification)} sub="net of advance recovery and retention" />
+        <Stat label="Certified, awaiting payment" value={formatMoney(awaitingPayment)} sub={late ? `${late} past the contractual payment date` : "none past the payment date"} />
+        <Stat label="Retention held" value={formatMoney(retentionHeld)} sub="withheld from certified amounts" />
+        <Stat label="Advance recovered" value={formatMoney(advanceRecovered)} sub="recovered from certified amounts" />
       </div>
       <div className="card p-5">
         <h2 className="text-sm font-semibold text-ink">Cumulative claimed vs certified vs paid – all contracts</h2>

@@ -1,6 +1,8 @@
 import type Database from "better-sqlite3";
 import { getDb, getSetting } from "./db";
 import { listRecords, scopeFilter } from "./registers/engine";
+import { computeContracts, mergeComputed, type ContractRow, type ApplicationRow } from "./payments/compute";
+import { openStoredRegisters } from "./cost-report/stored";
 import type { RecordRow, RegisterDef } from "./registers/types";
 
 export interface ViewedPeriod {
@@ -45,11 +47,37 @@ export function recordsForView(def: RegisterDef, db: Database.Database = getDb()
       const stored = snapshotRows<RecordRow>(db, viewed.id, def.key);
       if (stored) {
         const [k, v] = Object.entries(scopeFilter(def))[0] ?? [];
-        return k ? stored.filter((r) => Number(r[k]) === Number(v)) : stored;
+        const mine = k ? stored.filter((r) => Number(r[k]) === Number(v)) : stored;
+        if (def.key === "contracts" || def.key === "payment_applications") {
+          // the calculated columns (revised value, certified, paid, days late) are worked out again from
+          // the report's own stored registers, so an issued report shows them even when the copy was
+          // taken before they were stored
+          const programmeId = Number(getSetting(db, "current_programme_id") ?? 0);
+          if (programmeId) mergeComputed(def.key, mine as unknown as Record<string, unknown>[], paymentComputedForPeriod(db, programmeId, viewed.id));
+        }
+        return mine;
       }
     }
   }
   return listRecords(def);
+}
+
+/**
+ * The payment calculations of a stored report: run against that report's own registers (its contracts,
+ * IPC log, change tracker and claims as they were), so the figures are the ones that report was issued
+ * with. Older stored copies without the registers fall back to their stored contracts and IPC log.
+ */
+export function paymentComputedForPeriod(db: Database.Database, programmeId: number, periodId: number) {
+  const stored = openStoredRegisters(db, periodId);
+  if (stored) {
+    try {
+      return computeContracts(stored, programmeId);
+    } finally {
+      stored.close();
+    }
+  }
+  const mine = <T>(rows: T[] | null) => (rows ?? []).filter((r) => Number((r as unknown as RecordRow).programme_id) === programmeId);
+  return computeContracts(db, programmeId, { contracts: mine(snapshotRows<ContractRow>(db, periodId, "contracts")), apps: mine(snapshotRows<ApplicationRow>(db, periodId, "payment_applications")) });
 }
 
 /** Contracts and payment applications as the top-bar period sees them (for the payment calculations). */

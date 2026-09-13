@@ -21,6 +21,7 @@ const NAMES: Record<string, string> = {
   cashflow: "Cash_Flow",
   claims_report: "Claims_Status_Report",
   fa_report: "Final_Account_Status_Report",
+  payments_report: "Invoice_and_Payment_Status_Report",
   deck: "Cost_Report_Presentation",
   dashboard: "Commercial_Dashboard",
 };

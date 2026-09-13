@@ -1,7 +1,7 @@
 import type { RecordRow, RegisterDef } from "./types";
 import { todayIso } from "../format";
 import { daysBetween } from "./enrich-utils";
-import { computeContracts } from "../payments/compute";
+import { computeContracts, mergeComputed } from "../payments/compute";
 import { resolveTransfers } from "../budget-transfers/compute";
 import { CHANGE_STAGES, CLOSED_STATUSES } from "./defs/changes";
 import { CLAIM_TYPES, NOTICE_LIMIT_DAYS, DETAIL_LIMIT_DAYS, claimCostReportAmount } from "./defs/claims";
@@ -24,26 +24,17 @@ export function enrichRows(def: RegisterDef, rows: RecordRow[]) {
   if (def.key === "risks") rows.forEach(enrichRisk);
   if (def.key === "provisional_sums") rows.forEach(enrichProvisionalSum);
   if ((def.key === "contracts" || def.key === "payment_applications") && rows.length) {
-    const programmeId = Number(rows[0].programme_id);
-    const { contracts, applications } = computeContracts(getDb(), programmeId);
+    // The rows can span projects (a report's stored copy is taken across all of them), and the payment
+    // calculations belong to one project at a time: each project's rows are calculated on their own,
+    // otherwise only the first project's rows came out with values and the others showed zero.
+    const byProgramme = new Map<number, RecordRow[]>();
     for (const r of rows) {
-      const comp = def.key === "contracts" ? contracts.get(r.id) : applications.get(r.id);
-      if (!comp) continue;
-      const { row_tone, ...values } = comp as unknown as Record<string, unknown> & { row_tone?: string | null };
-      Object.assign(r, values);
-      if (def.key === "payment_applications") {
-        r.__row_tone = row_tone ?? null;
-        const late = (k: string) => {
-          const v = r[k] as number | null;
-          r[`${k}__tone`] = v === null || v === undefined ? null : v > 0 ? "red" : v < 0 ? "green" : null;
-        };
-        late("ipc_days_late");
-        late("payment_days_late");
-      } else {
-        const pct = r.pct_certified as number | null;
-        r.pct_certified__tone = pct === null ? null : pct >= 100 ? "green" : null;
-      }
+      const p = Number(r.programme_id);
+      const group = byProgramme.get(p);
+      if (group) group.push(r);
+      else byProgramme.set(p, [r]);
     }
+    for (const [programmeId, group] of byProgramme) mergeComputed(def.key, group, computeContracts(getDb(), programmeId));
   }
   if (def.key === "actions") {
     const today = todayIso();
