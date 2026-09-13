@@ -267,7 +267,7 @@ function seed(db: Database.Database) {
     const prog = db
       .prepare(
         `INSERT INTO programmes(code, name, client_id, location_id, created_at, created_by, updated_at, updated_by)
-         VALUES('1TB01031', 'Marina Village (Programme 1 – Triple Bay)', ?, ?, ?, 'system', ?, 'system')`,
+         VALUES('1TB01031', 'The Marina', ?, ?, ?, 'system', ?, 'system')`,
       )
       .run(client.lastInsertRowid, loc.lastInsertRowid, stamp, stamp);
     const asset = db
@@ -353,7 +353,9 @@ function seed(db: Database.Database) {
   const rename = (table: string, from: string, to: string) => db.prepare(`UPDATE "${table}" SET name = ?, updated_at = ?, updated_by = 'system' WHERE name = ?`).run(to, stamp, from);
   rename("clients", "Client (edit me)", "The AMAALA Company");
   rename("locations", "Location (edit me)", "Triple Bay, AMAALA");
-  rename("programmes", "Programme 1TB01031 (edit me)", "Marina Village (Programme 1 – Triple Bay)");
+  rename("programmes", "Programme 1TB01031 (edit me)", "The Marina");
+  // The 1TB01031 project is "The Marina" wherever it is named, not the earlier "Marina Village" wording.
+  rename("programmes", "Marina Village (Programme 1 – Triple Bay)", "The Marina");
   rename("assets", "Asset 1TB01031.01 (edit me)", "The Marina");
   for (const table of ["clients", "locations", "programmes", "assets"]) db.prepare(`UPDATE "${table}" SET name = TRIM(REPLACE(name, '(edit me)', '')) WHERE name LIKE '%(edit me)%'`).run();
 }
