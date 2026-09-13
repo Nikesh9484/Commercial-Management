@@ -32,7 +32,7 @@ export async function traceFor(jobId: string): Promise<(ImportTrace & { ended?: 
   const local = lastImportTrace();
   const remote = (await getTrace()) as (ImportTrace & { ended?: string }) | null;
   const r = remote && remote.jobId === jobId ? remote : null;
-  const l = local && local.jobId === jobId ? local : null;
+  const l = local && local.jobId === jobId ? (local as ImportTrace & { ended?: string }) : null;
   if (!l && !r) return null;
   // the store's copy carries how the process ended; the local copy may be the more recent step
   return { ...(r ?? {}), ...(l ?? {}), ended: r?.ended ?? l?.ended } as ImportTrace & { ended?: string };
