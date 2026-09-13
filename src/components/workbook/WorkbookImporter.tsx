@@ -152,6 +152,7 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo,
       createMissingLookups: createLookups,
       allowedRegisters: standalone?.only ?? (excludeRegisters.length ? registers.map((r) => r.key) : undefined),
       fileName: analysis.fileName,
+      excelCheck: analysis.conversion?.level1 ?? null,
     };
     const res = await fetch("/api/workbook/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const j = await res.json().catch(() => ({}));
@@ -212,6 +213,7 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo,
         createMissingLookups: createLookups,
         allowedRegisters: excludeRegisters.length ? registers.map((r) => r.key) : undefined,
         fileName: a.fileName,
+        excelCheck: a.conversion?.level1 ?? null,
       };
       try {
         const res = await fetch("/api/workbook/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });

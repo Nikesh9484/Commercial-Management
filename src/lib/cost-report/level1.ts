@@ -9,9 +9,10 @@ import type { CostReport, CostLineRow } from "./columns";
  * variance this month and the comparison with last month's anticipated final account.
  *
  * Executive view: the budget rows include the "remaining budget" (budget hold) lines; the changes,
- * early warnings and claims are shown without the hold's offsets; the hold's remainder after it has
- * absorbed what it can is the "Remaining Budget Hold" commitment, so the anticipated final account
- * and the variance to budget are exactly the Excel's. Browser-safe (no database imports).
+ * early warnings and claims are shown without the hold's offsets. Where the project's Excel counts
+ * the hold's remainder as a commitment (report.holdInAfa – VBH) a "Remaining Budget Hold" row is
+ * part of Committed and of the anticipated final account; where it leaves the hold out (The Marina)
+ * the unallocated hold shows in the variance as under budget. Browser-safe (no database imports).
  */
 export interface L1Column {
   key: string;
@@ -96,8 +97,10 @@ export function level1Matrix(report: CostReport, prev: CostReport | null, keyMov
   group("commitments", "Commitments");
   const awards = money("awards", "Contract Awards", { col: "G", hold: "No", section: "Committed" });
   const dvo = money("H", "DVO's (Determined Variation Orders)", { col: "H", hold: "No" });
-  const hold = money("hold", "Remaining Budget Hold", { col: "N", hold: "Yes" });
-  const committed = derived("committed", "Committed", [awards, dvo, hold], [], { kind: "strong" });
+  const holdIn = report.holdInAfa;
+  const hold = holdIn ? money("hold", "Remaining Budget Hold", { col: "N", hold: "Yes" }) : null;
+  const committed = derived("committed", "Committed", hold ? [awards, dvo, hold] : [awards, dvo], [], { kind: "strong" });
+  const afaFilter: Filter = holdIn ? { col: "N" } : { col: "N", hold: "No" };
   group("outturn", "Potential Out-Turn Costs");
   const pvo = money("J", "PVO's (Potential Variation Orders)", { col: "J", hold: "No" });
   const rfc = money("K", "RFC's (Requests for Change)", { col: "K", hold: "No" });
@@ -107,7 +110,7 @@ export function level1Matrix(report: CostReport, prev: CostReport | null, keyMov
   const uncommitted = money("uncommitted", "Uncommitted Packages", { col: "G", hold: "No", section: "Uncommitted" });
   const afa = derived("N", "Anticipated Final Account", [committed, uncommitted, pvo, rfc, ew, claims], [], { kind: "strong" });
   const variance = derived("O", "Variance to Budget", [afa], [G], { kind: "strong", signed: true });
-  const prevVariance: L1Row = { key: "prevVariance", label: `Previous Report${prev ? ` (${prev.period?.label ?? ""})` : ""}`, kind: "muted", values: variance.previous === null ? columns.map(() => 0) : columns.map((c) => r2(pick(byCol(prevLines, c), { col: "N" }) - pick(byCol(prevLines, c), { col: "G" }))), total: variance.previous ?? 0, previous: null, movement: null, signed: true };
+  const prevVariance: L1Row = { key: "prevVariance", label: `Previous Report${prev ? ` (${prev.period?.label ?? ""})` : ""}`, kind: "muted", values: variance.previous === null ? columns.map(() => 0) : columns.map((c) => r2(pick(byCol(prevLines, c), afaFilter) - pick(byCol(prevLines, c), { col: "G" }))), total: variance.previous ?? 0, previous: null, movement: null, signed: true };
   if (havePrev) {
     rows.push(prevVariance);
     derived("difference", "Difference", [variance], [prevVariance], { kind: "strong", signed: true });
@@ -117,7 +120,7 @@ export function level1Matrix(report: CostReport, prev: CostReport | null, keyMov
   derived("Q", "Works to Complete", [afa], [certified], {});
   if (havePrev) {
     group("lastmonth", "Comparison with Last Month");
-    const lastAfa: L1Row = { key: "lastAfa", label: `Last Month Anticipated Final Account (${prev?.period?.label ?? ""})`, kind: "muted", values: columns.map((c) => pick(byCol(prevLines, c), { col: "N" })), total: afa.previous ?? 0, previous: null, movement: null };
+    const lastAfa: L1Row = { key: "lastAfa", label: `Last Month Anticipated Final Account (${prev?.period?.label ?? ""})`, kind: "muted", values: columns.map((c) => pick(byCol(prevLines, c), afaFilter)), total: afa.previous ?? 0, previous: null, movement: null };
     rows.push(lastAfa);
     derived("S", "Variance to Last Month (period movement)", [afa], [lastAfa], { kind: "strong", signed: true });
   }

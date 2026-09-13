@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { withUser } from "@/lib/api";
 import { AuthError } from "@/lib/auth";
-import { analyzeWorkbook } from "@/lib/workbook/analyze";
+import { analyzeWorkbook, type WorkbookAnalysis } from "@/lib/workbook/analyze";
 import { storeUpload, uploadPath, appendUploadPart, finishUploadParts, saveConverted } from "@/lib/workbook/import";
 import { readWorkbookValues } from "@/lib/workbook/read";
 import { withHeavyLock, releaseMemory } from "@/lib/workbook/heavy";
@@ -62,19 +62,19 @@ export async function POST(req: Request, ctx: unknown) {
     return withHeavyLock(async () => {
     releaseMemory();
     let worksheets = await readWorkbookValues(uploadPath(fileId));
-    let conversion: { notes: string[]; reportNo: number | null; periodEnd: string | null } | undefined;
+    let conversion: WorkbookAnalysis["conversion"];
     if (looksLikeMarinaReport(worksheets)) {
       // The Marina CM Report layout: convert the schedules into clean register sheets first.
       const conv = convertMarinaReport(worksheets);
       worksheets = toSheetValues(conv);
       saveConverted(fileId, worksheets);
-      conversion = { notes: conv.notes, reportNo: conv.reportNo, periodEnd: conv.periodEnd };
+      conversion = { notes: conv.notes, reportNo: conv.reportNo, periodEnd: conv.periodEnd, level1: conv.level1 ?? null };
     } else if (looksLikeVbhReport(worksheets)) {
       // The VBH Commercial Report layout (SCHD A–G + DATA): same idea, its own converter.
       const conv = convertVbhReport(worksheets);
       worksheets = toSheetValues(conv);
       saveConverted(fileId, worksheets);
-      conversion = { notes: conv.notes, reportNo: conv.reportNo, periodEnd: conv.periodEnd };
+      conversion = { notes: conv.notes, reportNo: conv.reportNo, periodEnd: conv.periodEnd, level1: conv.level1 ?? null };
     } else if (looksLikeClaimsTracker(worksheets)) {
       // The AMAALA Claims Tracker: keep our programme's claims and link them to our cost lines
       // (the main contract line – the one with the largest budget – when a contract has several lines).

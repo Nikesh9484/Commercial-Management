@@ -143,7 +143,18 @@ export function ReportLibrary({ rows, isAdmin, canEdit }: { rows: LibraryRow[]; 
                     </>
                   )}
                 </td>
-                <td className="whitespace-nowrap text-xs text-muted">{row.created_at ? formatDate(row.created_at) : "–"}</td>
+                <td className="whitespace-nowrap text-xs text-muted">
+                  {row.created_at ? formatDate(row.created_at) : "–"}
+                  {row.excel && (
+                    <div className="mt-1" title={`Dashboard anticipated final account ${row.excel.afa.toLocaleString("en", { minimumFractionDigits: 2 })} · difference to the Excel Level 1 ${row.excel.afaDiff.toLocaleString("en", { minimumFractionDigits: 2 })}${row.excel.moveDiff !== null ? ` · movement difference ${row.excel.moveDiff.toLocaleString("en", { minimumFractionDigits: 2 })}` : ""}`}>
+                      <Chip tone={row.excel.ok ? "green" : "amber"}>
+                        {row.excel.ok
+                          ? "Excel Level 1 ✓"
+                          : `Excel Level 1 differs: ${[Math.abs(row.excel.afaDiff) >= 1 ? `AFA ${row.excel.afaDiff > 0 ? "+" : ""}${Math.round(row.excel.afaDiff).toLocaleString("en")}` : "", row.excel.moveDiff !== null && Math.abs(row.excel.moveDiff) >= 1 ? `movement ${row.excel.moveDiff > 0 ? "+" : ""}${Math.round(row.excel.moveDiff).toLocaleString("en")}` : ""].filter(Boolean).join(", ")}`}
+                      </Chip>
+                    </div>
+                  )}
+                </td>
               </tr>
               <tr className={`${row.current ? "bg-blue-50/60" : ""} border-b-2 border-line`}>
                 <td colSpan={6} className="py-2">

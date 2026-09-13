@@ -43,7 +43,9 @@ interface RawLine {
 /** Full cost report for a programme at a reporting period. */
 export function computeCostReport(programmeId: number, periodId: number | null): CostReport {
   const db = getDb();
-  const programme = (db.prepare("SELECT id, code, name FROM programmes WHERE id = ?").get(programmeId) as CostReport["programme"]) ?? null;
+  const progRow = db.prepare("SELECT id, code, name, hold_in_afa FROM programmes WHERE id = ?").get(programmeId) as { id: number; code: string; name: string; hold_in_afa: number | null } | undefined;
+  const programme: CostReport["programme"] = progRow ? { id: progRow.id, code: progRow.code, name: progRow.name } : null;
+  const holdInAfa = !!progRow?.hold_in_afa;
   const period = periodId ? ((db.prepare("SELECT id, label, status, report_no FROM reporting_periods WHERE id = ?").get(periodId) as { id: number; label: string; status: string; report_no: number } | undefined) ?? null) : null;
   const prev = period
     ? ((db.prepare("SELECT id, label, status FROM reporting_periods WHERE programme_id = ? AND report_no < ? ORDER BY report_no DESC LIMIT 1").get(programmeId, period.report_no) as { id: number; label: string; status: string } | undefined) ?? null)
@@ -62,7 +64,7 @@ export function computeCostReport(programmeId: number, periodId: number | null):
       // previous period that was locked empty, or re-imported since, cannot leave S equal to N.
       const prevAfa = prev ? previousAfa(db, prev.id) : null;
       const previousPeriod = applyPrevious(lines, prev, prevAfa);
-      return withReportMovement(assembleReport(lines, { programme, period: { id: period.id, label: period.label, status: period.status }, previousPeriod, feeds: status }), prevAfa);
+      return withReportMovement(assembleReport(lines, { programme, holdInAfa, period: { id: period.id, label: period.label, status: period.status }, previousPeriod, feeds: status }), prevAfa);
     }
   }
 
@@ -125,6 +127,7 @@ export function computeCostReport(programmeId: number, periodId: number | null):
   return withReportMovement(
     assembleReport(lines, {
       programme,
+      holdInAfa,
       period: period ? { id: period.id, label: period.label, status: period.status } : null,
       previousPeriod,
       feeds: status,
@@ -154,7 +157,15 @@ function withReportMovement(report: CostReport, prevAfa: PreviousAfa | null): Co
  * instead of reporting the whole AFA as "movement".
  */
 function applyPrevious(lines: CostLineRow[], prev: { id: number; label: string; status: string } | null, prevAfa: PreviousAfa | null): CostReport["previousPeriod"] {
-  if (!prev) return null;
+  if (!prev) {
+    // no earlier report: nothing to move against (a stored copy may carry the R/S it had when it was live)
+    for (const l of lines) {
+      l.R = 0;
+      l.S = 0;
+      l.prev_available = false;
+    }
+    return null;
+  }
   if (!prevAfa) {
     for (const l of lines) {
       l.R = 0;
@@ -210,7 +221,7 @@ export function applyBudgetHold(lines: CostLineRow[]) {
 }
 
 /** Builds sections, totals, Level 1, the check line and the chart from a list of computed lines. */
-export function assembleReport(lines: CostLineRow[], meta: Pick<CostReport, "programme" | "period" | "previousPeriod" | "feeds">): CostReport {
+export function assembleReport(lines: CostLineRow[], meta: Pick<CostReport, "programme" | "holdInAfa" | "period" | "previousPeriod" | "feeds">): CostReport {
   const sections = (["Committed", "Uncommitted"] as const).map((name) => {
     const rows = lines.filter((l) => l.section === name);
     return { name, lines: rows, subtotal: rows.reduce((t, r) => addMoney(t, r), zeroMoney()) };

@@ -341,6 +341,12 @@ function seed(db: Database.Database) {
     }
     setSetting(db, "seeded_vbh", "1");
   }
+  // Level 1 convention per project: VBH's Excel counts the remaining budget hold as a commitment; The Marina's leaves it out.
+  if (getSetting(db, "seeded_hold_rule") !== "1") {
+    db.prepare("UPDATE programmes SET hold_in_afa = 1 WHERE code = '1TB01006'").run();
+    db.prepare("UPDATE programmes SET hold_in_afa = 0 WHERE hold_in_afa IS NULL").run();
+    setSetting(db, "seeded_hold_rule", "1");
+  }
 
   // Earlier versions seeded "(edit me)" placeholder names; give them their real names so no
   // report or cover page ever prints the placeholder.

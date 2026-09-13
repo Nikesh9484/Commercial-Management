@@ -15,6 +15,7 @@
  */
 import type { SheetValues } from "./read";
 import { cellText } from "./read";
+import { readLevel1Check, type Level1Check } from "./level1-check";
 
 export type Row = unknown[];
 export type Sheet = SheetValues;
@@ -33,6 +34,8 @@ export interface ConversionResult {
   notes: string[];
   periodEnd: string | null;
   reportNo: number | null;
+  /** the workbook's own Level 1 figures, for the reconciliation shown on the dashboard */
+  level1?: Level1Check | null;
 }
 
 /* ------------------------------------------------------------------ helpers */
@@ -737,8 +740,12 @@ export function convertMarinaReport(sheets: Sheet[]): ConversionResult {
   out.push({ name: "Project Team", register: "project_team", columns: cols([["#", "sort_order"], ["Role / position", "role"], ["Name", "name"], ["Organisation", "organisation"], ["On distribution", "in_distribution"]]), rows: teamRows });
 
   notes.push(`Converted from the Marina CM Report layout${reportNo ? ` (Report No ${reportNo}` + (periodEnd ? `, period ending ${periodEnd})` : ")") : ""}.`);
-  return { sheets: out.filter((s) => s.rows.length > 0), notes, periodEnd, reportNo };
+  const level1 = readLevel1Check(sheets);
+  if (level1) notes.push(`Excel Level 1: budget ${fmt(level1.budget)}, anticipated final account ${fmt(level1.afa)}, variance ${fmt(level1.variance)}, last month ${fmt(level1.lastMonthAfa)}, variance to last month ${fmt(level1.varianceToLastMonth)} – kept with the report for the dashboard's Excel check.`);
+  return { sheets: out.filter((s) => s.rows.length > 0), notes, periodEnd, reportNo, level1 };
 }
+
+export const fmt = (n: number | null) => (n === null ? "–" : n.toLocaleString("en", { maximumFractionDigits: 0 }));
 
 export function cols(pairs: [string, string][]) {
   return pairs.map(([label, key]) => ({ label, key }));

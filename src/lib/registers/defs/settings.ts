@@ -74,6 +74,7 @@ export const programmes: RegisterDef = {
     { key: "name", label: "Programme name", type: "text", required: true },
     { key: "client_id", label: "Client", type: "lookup", lookup: { register: "clients" } },
     { key: "location_id", label: "Location", type: "lookup", lookup: { register: "locations" } },
+    { key: "hold_in_afa", label: "Level 1: remaining budget hold is a commitment", type: "boolean", defaultValue: false, hideInTable: true, help: "Tick when the project's Excel Level 1 lists \"Remaining Budget Hold\" under Commitments (Village Boutique Hotel): the hold's remainder stays in the anticipated final account. Leave unticked when the Excel leaves the hold out of the anticipated final account (The Marina), so the unallocated hold shows as under budget. Set automatically when a monthly workbook is imported." },
     { key: "description", label: "Description", type: "textarea", hideInTable: true },
   ],
 };
@@ -119,6 +120,7 @@ export const reportingPeriods: RegisterDef = {
     { key: "source_file", label: "Imported from", type: "text", readonly: true, hideInForm: true, hideInTable: true },
     { key: "imported_at", label: "Imported at", type: "text", readonly: true, hideInForm: true, hideInTable: true },
     { key: "imported_by", label: "Imported by", type: "text", readonly: true, hideInForm: true, hideInTable: true },
+    { key: "excel_check", label: "Excel Level 1 figures", type: "text", readonly: true, hideInForm: true, hideInTable: true, help: "Development budget, anticipated final account, variance and movement as printed on the imported workbook's Level 1 sheet – shown next to the dashboard's own figures." },
     { key: "aconex_ref", label: "Aconex ref", type: "text", help: "Aconex document / transmittal reference for this report." },
     { key: "prepared_by", label: "Prepared by", type: "text", hideInTable: true },
     { key: "prepared_date", label: "Prepared date", type: "date", hideInTable: true },

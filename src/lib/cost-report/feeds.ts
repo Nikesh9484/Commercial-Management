@@ -45,7 +45,9 @@ export function sumByCostLine(db: Database.Database, table: string, amountSql: s
  *   DVO approved / review complete  -> H (Determined VO)      using the DVO cost-report amount
  *   otherwise VO or PVO stage live  -> J (Potential VO)       using that stage's cost-report amount
  *   otherwise RFC stage live        -> K (Request for Change) using the RFC cost-report amount
- * A stage is "live" unless its status is Cancelled / Rejected / Superseded / Transferred.
+ * A stage is "live" unless its status is Cancelled / Rejected / Superseded / Transferred, and a live
+ * stage whose cost-report amount is exactly 0 is passed over (the monthly workbook writes 0 when the
+ * stage is not the one it counts), so the change is taken at the next live stage down.
  * A change whose OVERALL status is one of those feeds nothing at all.
  */
 export function changeFeeds(db: Database.Database, programmeId: number): { dvo: Map<number, number>; pvo: Map<number, number>; rfc: Map<number, number> } {
@@ -74,7 +76,8 @@ export function changeFeeds(db: Database.Database, programmeId: number): { dvo: 
       add(dvo, id, r.dvo_cr_amount);
       continue;
     }
-    const potential = [...CHANGE_STAGES].reverse().find((s) => (s.prefix === "vo" || s.prefix === "pvo") && has(r, s.prefix) && live(r, s.prefix));
+    const counts = (r: Record<string, unknown>, p: string) => Number(r[`${p}_cr_amount`] ?? 0) !== 0;
+    const potential = [...CHANGE_STAGES].reverse().find((s) => (s.prefix === "vo" || s.prefix === "pvo") && has(r, s.prefix) && live(r, s.prefix) && counts(r, s.prefix));
     if (potential) {
       add(pvo, id, r[`${potential.prefix}_cr_amount`]);
       continue;

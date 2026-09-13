@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Download, Pencil, RefreshCw, AlertTriangle, CheckCircle2, Info } from "lucide-react";
 import { MONEY_COLUMNS, type CostReport, type CostLineRow, type Money, type MoneyKey } from "@/lib/cost-report/columns";
 import type { Level1Matrix } from "@/lib/cost-report/level1";
+import type { Level1Check } from "@/lib/workbook/level1-check";
 import type { LookupOption, RegisterDef } from "@/lib/registers/types";
 import { formatMoney } from "@/lib/format";
 import { Chip } from "@/components/ui/Chip";
@@ -22,7 +23,7 @@ export function CostReportPage({ canEdit, isAdmin, initialTab }: { canEdit: bool
   const toast = useToast();
   const router = useRouter();
   const [tab, setTab] = useState<Tab>(initialTab === "level1" || initialTab === "setup" ? initialTab : "level2");
-  const [report, setReport] = useState<(CostReport & { level1Matrix?: Level1Matrix }) | null>(null);
+  const [report, setReport] = useState<(CostReport & { level1Matrix?: Level1Matrix; excelCheck?: Level1Check | null }) | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [assetFilter, setAssetFilter] = useState<number | "all">("all");
   const [editing, setEditing] = useState<{ id: number; values: FormValues } | null>(null);
@@ -36,7 +37,7 @@ export function CostReportPage({ canEdit, isAdmin, initialTab }: { canEdit: bool
         .then(async (r) => {
           const j = await r.json();
           if (!r.ok) throw new Error(j.error ?? "Could not load the cost report.");
-          return j as CostReport & { level1Matrix?: Level1Matrix };
+          return j as CostReport & { level1Matrix?: Level1Matrix; excelCheck?: Level1Check | null };
         })
         .then(setReport, (e: Error) => setError(e.message)),
     [],
@@ -144,6 +145,7 @@ export function CostReportPage({ canEdit, isAdmin, initialTab }: { canEdit: bool
 
       {tab === "level1" && (
         <>
+          {report.level1Matrix ? <ExcelCheck m={report.level1Matrix} check={report.excelCheck ?? null} periodLabel={report.period?.label ?? ""} /> : null}
           {report.level1Matrix ? <Level1Table m={report.level1Matrix} /> : null}
           <ChartCard data={report.chart} />
         </>
@@ -360,6 +362,63 @@ function SectionRows({ name, subtotalLabel, rows, subtotal, showAsset, canEdit, 
 }
 
 /** Level 1 as the Excel "Level 01" sheet: categories across, report lines down. */
+/** The workbook's own Level 1 figures beside the dashboard's, so every period can be checked against the Excel at a glance. */
+function ExcelCheck({ m, check, periodLabel }: { m: Level1Matrix; check: Level1Check | null; periodLabel: string }) {
+  const row = (k: string) => m.rows.find((r) => r.key === k);
+  const items: { label: string; excel: number | null; app: number | null }[] = check
+    ? [
+        { label: "Development Budget", excel: check.budget, app: row("G")?.total ?? null },
+        { label: "Anticipated Final Account", excel: check.afa, app: row("N")?.total ?? null },
+        { label: "Variance to Budget", excel: check.variance, app: row("O")?.total ?? null },
+        { label: "Last Month Anticipated Final Account", excel: check.lastMonthAfa, app: row("lastAfa")?.total ?? null },
+        { label: "Variance to Last Month (period movement)", excel: check.varianceToLastMonth, app: row("S")?.total ?? null },
+      ].filter((i) => i.excel !== null)
+    : [];
+  if (!check || !items.length) {
+    return (
+      <div className="card border-l-4 border-l-slate-300 p-3 text-xs text-muted">
+        <b>Excel Level 1 check:</b> no Level 1 figures are stored for {periodLabel || "this report"}. Re-upload its monthly workbook (Monthly Report → All reports → Re-upload) and the workbook&apos;s own Development Budget, Anticipated Final Account, Variance and Variance to Last Month are kept here and compared with the dashboard.
+      </div>
+    );
+  }
+  const diff = (i: { excel: number | null; app: number | null }) => (i.excel === null || i.app === null ? null : Math.round((i.app - i.excel) * 100) / 100);
+  const allOk = items.every((i) => Math.abs(diff(i) ?? 0) < 1);
+  return (
+    <div className={`card border-l-4 p-4 ${allOk ? "border-l-emerald-500" : "border-l-amber-500"}`}>
+      <div className="mb-2 flex flex-wrap items-center gap-2 text-sm">
+        <span className="font-semibold text-ink">Excel Level 1 check</span>
+        <Chip tone={allOk ? "green" : "amber"}>{allOk ? "Matches the imported workbook" : "Differs from the imported workbook"}</Chip>
+        <span className="text-xs text-muted">figures printed on the workbook&apos;s {check.sheet} sheet · {check.holdInAfa ? "remaining budget hold counted as a commitment" : "remaining budget hold left out of the anticipated final account"}</span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="data w-full text-sm">
+          <thead>
+            <tr>
+              <th></th>
+              <th className="text-right">Excel Level 1</th>
+              <th className="text-right">Dashboard</th>
+              <th className="text-right">Difference</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((i) => {
+              const d = diff(i);
+              return (
+                <tr key={i.label}>
+                  <td>{i.label}</td>
+                  <td className="tnum text-right">{formatMoney(i.excel)}</td>
+                  <td className="tnum text-right">{i.app === null ? "–" : formatMoney(i.app)}</td>
+                  <td className={`tnum text-right ${d === null ? "text-muted" : Math.abs(d) < 1 ? "text-emerald-700" : "font-semibold text-amber-700"}`}>{d === null ? "–" : Math.abs(d) < 1 ? "✓" : formatMoney(d)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function Level1Table({ m }: { m: Level1Matrix }) {
   const cell = (v: number | null, signed?: boolean, strong?: boolean) => {
     if (v === null) return <td className="tnum text-right text-muted/60">–</td>;

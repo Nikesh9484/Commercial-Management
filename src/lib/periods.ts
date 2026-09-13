@@ -5,6 +5,9 @@ import { getPeriod, listPeriods, latestPeriod, storedCopyAt, type PeriodRow } fr
 import { logAudit } from "./audit";
 import { AuthError } from "./auth";
 import { formatMonthYear } from "./format";
+import { computeCostReport } from "./cost-report/compute";
+import { executiveTotals } from "./cost-report/executive";
+import type { Level1Check } from "./workbook/level1-check";
 import type { UserInfo } from "./registers/types";
 
 /**
@@ -33,6 +36,8 @@ export interface LibraryRow {
   cost_lines: number;
   current: boolean;
   created_at: string | null;
+  /** the dashboard's anticipated final account and movement against the workbook's Level 1 (null when no workbook figures are stored) */
+  excel: { afa: number; afaDiff: number; move: number | null; moveDiff: number | null; ok: boolean } | null;
 }
 
 export function listReportLibrary(): LibraryRow[] {
@@ -46,6 +51,19 @@ export function listReportLibrary(): LibraryRow[] {
     const s = snap.get(p.id) as { n: number; lines: number | null };
     // periods imported before the source was recorded: fall back to the change history
     const imp = row.imported_at ? { at: row.imported_at, user_name: row.imported_by ?? null } : (lastImport.get(p.id) as { at: string; user_name: string | null } | undefined);
+    let excel: LibraryRow["excel"] = null;
+    const rawCheck = (row as { excel_check?: string | null }).excel_check;
+    if (rawCheck) {
+      try {
+        const c = JSON.parse(rawCheck) as Level1Check;
+        const g = executiveTotals(computeCostReport(p.programme_id, p.id));
+        const afaDiff = c.afa === null ? 0 : Math.round((g.N - c.afa) * 100) / 100;
+        const moveDiff = c.varianceToLastMonth === null ? null : Math.round((g.S - c.varianceToLastMonth) * 100) / 100;
+        excel = { afa: g.N, afaDiff, move: c.varianceToLastMonth === null ? null : g.S, moveDiff, ok: Math.abs(afaDiff) < 1 && Math.abs(moveDiff ?? 0) < 1 };
+      } catch {
+        excel = null;
+      }
+    }
     return {
       id: p.id,
       report_no: p.report_no,
@@ -65,6 +83,7 @@ export function listReportLibrary(): LibraryRow[] {
       cost_lines: s.lines ?? 0,
       current: p.id === current,
       created_at: (p.created_at as string | null) ?? null,
+      excel,
     };
   });
 }

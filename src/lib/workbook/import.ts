@@ -10,6 +10,7 @@ import { logAudit } from "../audit";
 import { nowIso, formatMonthYear, parseDateInput } from "../format";
 import { importKeyFields, norm } from "./analyze";
 import { cellText, getSheet, readWorkbookValues, type SheetValues } from "./read";
+import type { Level1Check } from "./level1-check";
 
 /* ------------------------------------------------------------------ */
 /* Temporary storage of the uploaded workbook (30 minutes)             */
@@ -103,6 +104,8 @@ export interface ImportRequest {
   allowOlder?: boolean;
   /** Name of the uploaded workbook, kept on the period for the report library. */
   fileName?: string;
+  /** The workbook's own Level 1 figures (from the converter), kept on the period for the Excel check. */
+  excelCheck?: Level1Check | null;
 }
 
 export interface SheetResult {
@@ -376,6 +379,11 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo): Promis
   });
 
   db.prepare("UPDATE reporting_periods SET source_file = ?, imported_at = ?, imported_by = ? WHERE id = ?").run(String(req.fileName ?? "").slice(0, 200) || null, nowIso(), user.name, periodId);
+  if (monthly && req.excelCheck && typeof req.excelCheck === "object") {
+    // the Excel's own Level 1 figures travel with the report, and the workbook's layout decides the project's Level 1 convention
+    db.prepare("UPDATE reporting_periods SET excel_check = ? WHERE id = ?").run(JSON.stringify(req.excelCheck), periodId);
+    db.prepare("UPDATE programmes SET hold_in_afa = ? WHERE id = ?").run(req.excelCheck.holdInAfa ? 1 : 0, programmeId);
+  }
   // the imported month is stored as this report's own data
   takeSnapshot(periodId, user, "import");
   let locked = false;

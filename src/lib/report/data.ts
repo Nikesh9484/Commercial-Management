@@ -77,7 +77,7 @@ export function getReportData(programmeId: number, periodId: number): ReportData
   if (snapLines) {
     const assetIds = new Set((db.prepare("SELECT id FROM assets WHERE programme_id = ?").all(programmeId) as { id: number }[]).map((a) => a.id));
     const mine = snapLines.filter((l) => assetIds.has(l.asset_id));
-    costReport = assembleReport(mine, { programme: live.programme, period: live.period, previousPeriod: live.previousPeriod, feeds: live.feeds });
+    costReport = assembleReport(mine, { programme: live.programme, holdInAfa: live.holdInAfa, period: live.period, previousPeriod: live.previousPeriod, feeds: live.feeds });
     sources.cost_report = "snapshot";
   } else sources.cost_report = "live";
 

@@ -55,6 +55,8 @@ export interface Level1Row extends Money {
 
 export interface CostReport {
   programme: { id: number; code: string; name: string } | null;
+  /** Level 1 convention of the project: true when the remaining budget hold is a commitment (VBH), false when it is left out of the anticipated final account (The Marina). */
+  holdInAfa: boolean;
   period: { id: number; label: string; status: string } | null;
   previousPeriod: { id: number; label: string; status: string; snapshotAvailable: boolean; note?: string } | null;
   feeds: FeedStatus[];

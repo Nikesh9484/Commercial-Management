@@ -9,7 +9,8 @@
  * account status (FA Status). Every rule mirrors the Excel: DVO / PVO / RFC amounts feed the cost
  * report exactly as SCHD B does, and each cost category keeps its budget-hold line.
  */
-import { BOND_TYPES, cell, cols, date, findHeaderRow, findSheet, isNum, money, monthText, norm, rows, txt, type ConversionResult, type ConvertedSheet, type Row, type Sheet } from "./marina";
+import { BOND_TYPES, cell, cols, date, findHeaderRow, findSheet, fmt, isNum, money, monthText, norm, rows, txt, type ConversionResult, type ConvertedSheet, type Row, type Sheet } from "./marina";
+import { readLevel1Check } from "./level1-check";
 
 /* ------------------------------------------------------------------ detection */
 
@@ -469,15 +470,20 @@ export function convertVbhReport(sheets: Sheet[]): ConversionResult {
       const stage = txt(v, 3).replace("Post Contract", "Post-Contract").replace("Pre Contract", "Pre-Contract");
       const asset = assetCodeOf(txt(v, 12)) || lineByFrag.get(frag)?.asset || DEFAULT_ASSET;
       const note = [excelStatus ? `Excel status: ${excelStatus}` : "", txt(v, 58) ? `Comments: ${txt(v, 58)}` : "", pendingBy ? `Action pending by (Excel): ${pendingBy}` : "", txt(v, 56) ? `Funding: ${txt(v, 56)}${txt(v, 57) ? ` (${txt(v, 57)})` : ""}` : "", txt(v, 24).toUpperCase() === "NOT ACTIVE" && rfcAmt ? "RFC not active in Excel" : ""].filter(Boolean).join(" | ");
-      const rfcActive = txt(v, 24).toUpperCase() !== "NOT ACTIVE";
-      const pvoActive = txt(v, 32).toUpperCase() !== "NOT ACTIVE";
-      const dvoActive = txt(v, 52).toUpperCase() !== "NOT ACTIVE";
+      // The Excel's own decision per change (the ACTIVE flags feed SCHD B): DVO counted when its flag is
+      // active; else the PVO amount when the PVO flag is active (committed PVO when the ACC flag is active
+      // too); else the RFC amount when the RFC flag is active and no PVO / ACC flag is. Verified against
+      // every SCHD B line of Report No 47.
+      const on = (i: number) => txt(v, i).toUpperCase() === "ACTIVE";
+      const dvoActive = on(52);
+      const pvoActive = !dvoActive && on(32);
+      const rfcActive = !dvoActive && !on(32) && !on(33) && on(24);
       changeRows.push([
         itemNo, desc, overall, date(v, 20) ?? date(v, 16) ?? date(v, 28) ?? PERIOD_END, asset.startsWith(progCode) ? asset : DEFAULT_ASSET, pkgFor(frag, txt(v, 13) || txt(v, 14)), contractorFor(frag, txt(v, 14)), lineForFrag(frag), stage, txt(v, 4), txt(v, 8), rep, pending, closed,
         txt(v, 15), date(v, 16), money(v, 17),
         txt(v, 18), txt(v, 19), date(v, 20), rfcStatus, txt(v, 22), timeImpact(v, 23), rfcAmt, rfcAmt === null ? null : rfcActive ? rfcAmt : 0,
         txt(v, 26), txt(v, 27), date(v, 28), pvoStatus, txt(v, 30), timeImpact(v, 31), pvoAmt, pvoAmt === null ? null : pvoActive ? pvoAmt : 0, "",
-        txt(v, 35), date(v, 36), voStatus, txt(v, 38), txt(v, 35) ? pvoAmt : null,
+        txt(v, 35), date(v, 36), voStatus, txt(v, 38), txt(v, 35) ? (pvoActive ? pvoAmt : 0) : null,
         txt(v, 39), date(v, 40), txt(v, 41),
         txt(v, 42), txt(v, 43), date(v, 51) ?? date(v, 48) ?? date(v, 45), dvoStatus, dvoAmt, dvoAmt === null ? null : dvoActive ? dvoAmt : 0,
         txt(v, 44), date(v, 45), money(v, 46), txt(v, 47), date(v, 48), money(v, 49), txt(v, 50), date(v, 51), dvoAmt,
@@ -613,5 +619,7 @@ export function convertVbhReport(sheets: Sheet[]): ConversionResult {
   });
 
   notes.push(`Converted from the VBH Commercial Report layout (${assetName || "Village Boutique Hotel"}, ${progCode}${reportNo ? `, Report No ${reportNo}` : ""}${periodEnd ? `, period ending ${periodEnd}` : ""}).`);
-  return { sheets: out.filter((s) => s.rows.length > 0), notes, periodEnd, reportNo };
+  const level1 = readLevel1Check(sheets);
+  if (level1) notes.push(`Excel Level 1: budget ${fmt(level1.budget)}, anticipated final account ${fmt(level1.afa)}, variance ${fmt(level1.variance)}, last month ${fmt(level1.lastMonthAfa)}, variance to last month ${fmt(level1.varianceToLastMonth)} – kept with the report for the dashboard's Excel check.`);
+  return { sheets: out.filter((s) => s.rows.length > 0), notes, periodEnd, reportNo, level1 };
 }
