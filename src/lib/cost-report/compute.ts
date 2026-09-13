@@ -62,7 +62,7 @@ export function computeCostReport(programmeId: number, periodId: number | null):
       // previous period that was locked empty, or re-imported since, cannot leave S equal to N.
       const prevAfa = prev ? previousAfa(db, prev.id) : null;
       const previousPeriod = applyPrevious(lines, prev, prevAfa);
-      return assembleReport(lines, { programme, period: { id: period.id, label: period.label, status: period.status }, previousPeriod, feeds: status });
+      return withReportMovement(assembleReport(lines, { programme, period: { id: period.id, label: period.label, status: period.status }, previousPeriod, feeds: status }), prevAfa);
     }
   }
 
@@ -122,12 +122,29 @@ export function computeCostReport(programmeId: number, periodId: number | null):
   applyBudgetHold(lines);
   const previousPeriod = applyPrevious(lines, prev, prevAfa);
 
-  return assembleReport(lines, {
-    programme,
-    period: period ? { id: period.id, label: period.label, status: period.status } : null,
-    previousPeriod,
-    feeds: status,
-  });
+  return withReportMovement(
+    assembleReport(lines, {
+      programme,
+      period: period ? { id: period.id, label: period.label, status: period.status } : null,
+      previousPeriod,
+      feeds: status,
+    }),
+    prevAfa,
+  );
+}
+
+/**
+ * The report-level period movement is report total against report total – the Excel "Variance to
+ * Last Month" – so a line that existed last month and not this month still counts. (The line-level
+ * R and S columns stay matched line by line for the Level 2 sheet.)
+ */
+function withReportMovement(report: CostReport, prevAfa: PreviousAfa | null): CostReport {
+  if (!prevAfa || !report.previousPeriod?.snapshotAvailable) return report;
+  report.grandTotal.R = prevAfa.total;
+  report.grandTotal.S = round2(report.grandTotal.N - prevAfa.total);
+  report.totalsExclHold.R = prevAfa.totalExclHold;
+  report.totalsExclHold.S = round2(report.totalsExclHold.N - prevAfa.totalExclHold);
+  return report;
 }
 
 /**
@@ -239,6 +256,9 @@ export function assembleReport(lines: CostLineRow[], meta: Pick<CostReport, "pro
 }
 
 interface PreviousAfa {
+  /** the previous report's anticipated final account, all lines and without the budget-hold lines */
+  total: number;
+  totalExclHold: number;
   byId: Map<number, number>;
   byCode: Map<string, number>;
 }
@@ -252,11 +272,15 @@ function previousAfa(db: Database.Database, periodId: number): PreviousAfa | nul
   // the stored lines are re-run through the budget-hold rule so an older stored report compares like for like
   const lines = rows.map((r) => ({ ...(JSON.parse(r.data) as CostLineRow), id: r.record_id }));
   applyBudgetHold(lines.map((l) => ({ ...l, category: l.category ?? "", is_budget_hold: !!l.is_budget_hold })).map((l) => Object.assign(lines.find((x) => x.id === l.id)!, l)));
+  let total = 0;
+  let totalExclHold = 0;
   for (const d of lines) {
     byId.set(d.id, Number(d.N ?? 0));
     if (d.code) byCode.set(`${d.asset_code ?? ""}|${d.code}`, Number(d.N ?? 0));
+    total += Number(d.N ?? 0);
+    if (!d.is_budget_hold) totalExclHold += Number(d.N ?? 0);
   }
-  return { byId, byCode };
+  return { total: round2(total), totalExclHold: round2(totalExclHold), byId, byCode };
 }
 
 /** Stores the computed report of the period's project (called when a period is stored or locked). Returns rows stored. */
