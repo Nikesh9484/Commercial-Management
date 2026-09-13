@@ -89,7 +89,7 @@ ${rows
 <p>Dear all,</p>
 <p>Please find attached the <b>${esc(attachments)}</b> for <b>${esc(title)}</b> (cut-off ${esc(cutOff)}${data.locked ? "" : ", draft from live data"}). The headline position is:</p>
 ${tableHtml}
-<p style="margin:6px 0 0 0;font-size:11px;color:#6b7280">Budget columns include the budget hold; change and forecast columns exclude it. Variance to Latest Budget: negative = under budget.</p>
+<p style="margin:6px 0 0 0;font-size:11px;color:#6b7280">Budget and anticipated final account include the remaining budget hold (as on the Excel Level 1). Variance to Latest Budget: positive = over budget, negative = under budget.</p>
 ${
   keyMoves.length
     ? `<h3 style="font-size:14px;margin:16px 0 4px 0;color:#0f2b4c">Key movements since ${esc(prevLabel)}</h3><ul style="margin:0;padding-left:18px">${keyMoves

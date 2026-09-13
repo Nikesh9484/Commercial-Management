@@ -207,7 +207,7 @@ export function CostReportPage({ canEdit, isAdmin, initialTab }: { canEdit: bool
                   {report.lines.length > 0 && (
                     <>
                       <TotalRow label="GRAND TOTAL" m={assetFilter === "all" ? report.grandTotal : sum(report.lines.filter((l) => l.asset_id === assetFilter))} colSpan={assetFilter === "all" ? 5 : 4} strong trailing={canEdit} />
-                      {assetFilter === "all" && <TotalRow label="Total excluding budget hold (executive view)" m={report.totalsExclHold} colSpan={5} trailing={canEdit} />}
+                      {assetFilter === "all" && <TotalRow label="Total excluding budget-hold lines" m={report.totalsExclHold} colSpan={5} trailing={canEdit} />}
                       {assetFilter === "all" && (
                         <tr className={report.checkOk ? "text-emerald-700" : "bg-red-50 font-semibold text-red-700"}>
                           <td className={`sticky left-0 z-[1] ${report.checkOk ? "bg-white" : "bg-red-50"}`} colSpan={5}>

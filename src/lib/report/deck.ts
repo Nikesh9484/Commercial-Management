@@ -289,7 +289,7 @@ export function buildDeck(d: ReportData): Deck {
       unit: "SAR million",
       decimals: 1,
     };
-    push(compose({ title: "Cost Report – Level 1 (Executive)", subtitle: "By cost category, executive view (budget includes the unallocated hold; other lines exclude it)", accent: nextAccent(), stack: true, blocks: [{ kind: "table", table: t, weight: 1.4 }, { kind: "chart", title: "Development budget vs anticipated final account by category (SAR million)", chart, weight: 1 }] }));
+    push(compose({ title: "Cost Report – Level 1 (Executive)", subtitle: "By cost category, as on the Excel Level 1 (the remaining budget hold is a commitment; variance = what the hold could not absorb)", accent: nextAccent(), stack: true, blocks: [{ kind: "table", table: t, weight: 1.4 }, { kind: "chart", title: "Development budget vs anticipated final account by category (SAR million)", chart, weight: 1 }] }));
   }
 
   /* 4. Packages */

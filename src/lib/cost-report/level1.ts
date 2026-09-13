@@ -8,9 +8,10 @@ import type { CostReport, CostLineRow } from "./columns";
  * Final Account, Variance to Budget, previous report and difference, then the reasons for the
  * variance this month and the comparison with last month's anticipated final account.
  *
- * Executive view: the budget rows include the unallocated "remaining budget" (budget hold) lines;
- * every other row excludes them, so the unallocated budget shows in the variance as under budget –
- * exactly as the Excel sub-totals do. Browser-safe (no database imports).
+ * Executive view: the budget rows include the "remaining budget" (budget hold) lines; the changes,
+ * early warnings and claims are shown without the hold's offsets; the hold's remainder after it has
+ * absorbed what it can is the "Remaining Budget Hold" commitment, so the anticipated final account
+ * and the variance to budget are exactly the Excel's. Browser-safe (no database imports).
  */
 export interface L1Column {
   key: string;
@@ -32,7 +33,7 @@ export interface L1Row {
   /** positive is adverse (over budget / increase) – shown red */
   signed?: boolean;
   /** what the figure is, for the Excel formulas: money column + filters */
-  source?: { col: string; hold?: "No"; section?: "Committed" | "Uncommitted" };
+  source?: { col: string; hold?: "No" | "Yes"; section?: "Committed" | "Uncommitted" };
   /** for rows that are a formula of other rows (Excel) */
   formula?: { plus: string[]; minus: string[] };
 }
@@ -52,8 +53,8 @@ export interface Level1Matrix {
 }
 
 const r2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
-type Filter = { col: keyof CostLineRow; hold?: "No"; section?: "Committed" | "Uncommitted" };
-const pick = (lines: CostLineRow[], f: Filter) => r2(lines.filter((l) => (f.hold ? !l.is_budget_hold : true) && (f.section ? l.section === f.section : true)).reduce((t, l) => t + Number(l[f.col] ?? 0), 0));
+type Filter = { col: keyof CostLineRow; hold?: "No" | "Yes"; section?: "Committed" | "Uncommitted" };
+const pick = (lines: CostLineRow[], f: Filter) => r2(lines.filter((l) => (f.hold === "No" ? !l.is_budget_hold : f.hold === "Yes" ? l.is_budget_hold : true) && (f.section ? l.section === f.section : true)).reduce((t, l) => t + Number(l[f.col] ?? 0), 0));
 
 export function level1Matrix(report: CostReport, prev: CostReport | null, keyMovements?: { col: string; label: string; items: { title: string; delta: number; note: string }[] }[] | null): Level1Matrix {
   // columns: asset + category, in report order
@@ -95,7 +96,8 @@ export function level1Matrix(report: CostReport, prev: CostReport | null, keyMov
   group("commitments", "Commitments");
   const awards = money("awards", "Contract Awards", { col: "G", hold: "No", section: "Committed" });
   const dvo = money("H", "DVO's (Determined Variation Orders)", { col: "H", hold: "No" });
-  const committed = derived("committed", "Committed", [awards, dvo], [], { kind: "strong" });
+  const hold = money("hold", "Remaining Budget Hold", { col: "N", hold: "Yes" });
+  const committed = derived("committed", "Committed", [awards, dvo, hold], [], { kind: "strong" });
   group("outturn", "Potential Out-Turn Costs");
   const pvo = money("J", "PVO's (Potential Variation Orders)", { col: "J", hold: "No" });
   const rfc = money("K", "RFC's (Requests for Change)", { col: "K", hold: "No" });
@@ -105,7 +107,7 @@ export function level1Matrix(report: CostReport, prev: CostReport | null, keyMov
   const uncommitted = money("uncommitted", "Uncommitted Packages", { col: "G", hold: "No", section: "Uncommitted" });
   const afa = derived("N", "Anticipated Final Account", [committed, uncommitted, pvo, rfc, ew, claims], [], { kind: "strong" });
   const variance = derived("O", "Variance to Budget", [afa], [G], { kind: "strong", signed: true });
-  const prevVariance: L1Row = { key: "prevVariance", label: `Previous Report${prev ? ` (${prev.period?.label ?? ""})` : ""}`, kind: "muted", values: variance.previous === null ? columns.map(() => 0) : columns.map((c) => r2(pick(byCol(prevLines, c), { col: "N", hold: "No" }) - pick(byCol(prevLines, c), { col: "G" }))), total: variance.previous ?? 0, previous: null, movement: null, signed: true };
+  const prevVariance: L1Row = { key: "prevVariance", label: `Previous Report${prev ? ` (${prev.period?.label ?? ""})` : ""}`, kind: "muted", values: variance.previous === null ? columns.map(() => 0) : columns.map((c) => r2(pick(byCol(prevLines, c), { col: "N" }) - pick(byCol(prevLines, c), { col: "G" }))), total: variance.previous ?? 0, previous: null, movement: null, signed: true };
   if (havePrev) {
     rows.push(prevVariance);
     derived("difference", "Difference", [variance], [prevVariance], { kind: "strong", signed: true });
@@ -115,7 +117,7 @@ export function level1Matrix(report: CostReport, prev: CostReport | null, keyMov
   derived("Q", "Works to Complete", [afa], [certified], {});
   if (havePrev) {
     group("lastmonth", "Comparison with Last Month");
-    const lastAfa: L1Row = { key: "lastAfa", label: `Last Month Anticipated Final Account (${prev?.period?.label ?? ""})`, kind: "muted", values: columns.map((c) => pick(byCol(prevLines, c), { col: "N", hold: "No" })), total: afa.previous ?? 0, previous: null, movement: null };
+    const lastAfa: L1Row = { key: "lastAfa", label: `Last Month Anticipated Final Account (${prev?.period?.label ?? ""})`, kind: "muted", values: columns.map((c) => pick(byCol(prevLines, c), { col: "N" })), total: afa.previous ?? 0, previous: null, movement: null };
     rows.push(lastAfa);
     derived("S", "Variance to Last Month (period movement)", [afa], [lastAfa], { kind: "strong", signed: true });
   }

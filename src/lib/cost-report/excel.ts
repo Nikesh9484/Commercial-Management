@@ -90,7 +90,7 @@ export function writeLevel2(ws: ExcelJS.Worksheet, report: CostReport, title: st
   const g = ws.addRow(["GRAND TOTAL"]);
   for (const c of MONEY_COLUMNS) g.getCell(money[c.key]).value = formula(subtotalRows.map((r) => `${L(c.key)}${r}`).join("+"), report.grandTotal[c.key]);
   totalRow(g, XL.totalFill);
-  const x = ws.addRow(["Total excluding budget hold (executive view)"]);
+  const x = ws.addRow(["Total excluding budget-hold lines"]);
   for (const c of MONEY_COLUMNS) x.getCell(money[c.key]).value = formula(`SUMIFS(${L(c.key)}${first}:${L(c.key)}${last},$G$${first}:$G$${last},"No")`, report.totalsExclHold[c.key]);
   totalRow(x, XL.sectionFill, XL.muted);
   [14, 24, 32, 26, 14, 20, 10, 12].forEach((w, i) => (ws.getColumn(i + 1).width = w));
@@ -139,7 +139,7 @@ export function writeLevel1(ws: ExcelJS.Worksheet, report: CostReport, m: Level1
     if (!col) return null;
     const c = m.columns[ci];
     let f = `SUMIFS(${ref(col)},${catRef(c)}`;
-    if (row.source.hold) f += `,${ref(l2.holdCol)},"No"`;
+    if (row.source.hold) f += `,${ref(l2.holdCol)},"${row.source.hold}"`;
     if (row.source.section) f += `,${ref(l2.sectionCol)},"${row.source.section}"`;
     return `${f})`;
   };
@@ -192,8 +192,8 @@ export function writeLevel1(ws: ExcelJS.Worksheet, report: CostReport, m: Level1
   if (l2 && gRow && nRow) {
     const c1 = ws.addRow(["Check: Development Budget total − Level 2 grand total G (must be zero)"]);
     c1.getCell(TOTAL).value = formula(`${colLetter(TOTAL)}${gRow}-'${l2.sheet}'!${colLetter(l2.money.G)}${l2.grandTotalRow}`, 0);
-    const c2 = ws.addRow(["Check: Anticipated Final Account total − Level 2 total excluding budget hold N (must be zero)"]);
-    c2.getCell(TOTAL).value = formula(`${colLetter(TOTAL)}${nRow}-'${l2.sheet}'!${colLetter(l2.money.N)}${l2.exclHoldRow}`, 0);
+    const c2 = ws.addRow(["Check: Anticipated Final Account total − Level 2 grand total N (must be zero)"]);
+    c2.getCell(TOTAL).value = formula(`${colLetter(TOTAL)}${nRow}-'${l2.sheet}'!${colLetter(l2.money.N)}${l2.grandTotalRow}`, 0);
     for (const c of [c1, c2]) c.font = { bold: true, color: { argb: report.checkOk ? XL.greenInk : XL.redInk } };
   }
   ws.getColumn(1).width = 46;

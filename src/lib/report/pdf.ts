@@ -407,7 +407,7 @@ function movementSection(ctx: Ctx) {
     const n = Number(v ?? 0);
     return Math.abs(n) < 0.005 ? "–" : `${n > 0 ? "+" : ""}${formatMoney(n)}`;
   };
-  subheading(ctx, `Cost report: ${m.previous.label} -> ${m.current.label}`, "Executive view (budget columns include the budget hold; change and forecast columns exclude it).");
+  subheading(ctx, `Cost report: ${m.previous.label} -> ${m.current.label}`, "Executive view: budget and anticipated final account include the remaining budget hold; changes, early warnings and claims are shown without the hold's offsets.");
   if (m.warning) {
     doc.fillColor("#92400e").font("Helvetica-Bold").fontSize(8.5).text(m.warning, { width: PAGE.width - PAGE.margin * 2 });
     doc.moveDown(0.4);
@@ -839,7 +839,7 @@ function costLevel2(ctx: Ctx) {
       rowStyle: (row) => (row.is_budget_hold ? { color: MUTED } : undefined),
       totals: [
         { label: "GRAND TOTAL", values: r.grandTotal, labelKey: "code" },
-        { label: "Total excl. budget hold (executive)", values: r.totalsExclHold, labelKey: "code" },
+        { label: "Total excl. budget-hold lines", values: r.totalsExclHold, labelKey: "code" },
         { label: "Check: L1 - L2 (must be zero)", values: r.check, labelKey: "code", tone: r.checkOk ? "green" : "red" },
       ],
     });

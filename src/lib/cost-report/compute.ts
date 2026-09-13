@@ -56,6 +56,8 @@ export function computeCostReport(programmeId: number, periodId: number | null):
       const assetIds = new Set((db.prepare("SELECT id FROM assets WHERE programme_id = ?").all(programmeId) as { id: number }[]).map((a) => a.id));
       const { status } = getCostFeeds(db, programmeId, period.id);
       const lines = snap.filter((l) => assetIds.has(l.asset_id)).map((l) => ({ ...l, category: l.category ?? "", is_budget_hold: !!l.is_budget_hold }));
+      // the budget-hold rule is re-applied to a stored report, so reports stored under an earlier rule read the same way
+      applyBudgetHold(lines);
       // Column R/S (previous AFA, period movement) are re-read from the previous issued report so a
       // previous period that was locked empty, or re-imported since, cannot leave S equal to N.
       const prevAfa = prev ? previousAfa(db, prev.id) : null;
@@ -164,22 +166,27 @@ function applyPrevious(lines: CostLineRow[], prev: { id: number; label: string; 
 }
 
 /**
- * Budget-hold lines (the unallocated remaining budget of an asset + category) absorb the changes,
- * early warnings and claims of the other lines in that group, so the group's anticipated final
- * account stays at the approved budget until the hold is used up – as in the Excel Schedule A.
+ * Budget-hold lines (the unallocated "remaining budget" of an asset + category) absorb the changes,
+ * early warnings and claims of the other lines in that group – but only as far as the hold's own
+ * budget goes, exactly as the Excel Schedule B does: the hold's anticipated final account is its
+ * budget less what it absorbed, never below zero. Whatever the hold cannot absorb stays in the
+ * group's anticipated final account and shows as over budget in the variance (Excel Level 1
+ * "Variance to Budget"). A hold with room left shows the remainder as "Remaining Budget Hold".
  */
-function applyBudgetHold(lines: CostLineRow[]) {
+export function applyBudgetHold(lines: CostLineRow[]) {
   const holds = lines.filter((l) => l.is_budget_hold);
+  const keys = ["H", "J", "K", "L", "M"] as const;
   for (const hold of holds) {
     const others = lines.filter((l) => !l.is_budget_hold && l.asset_id === hold.asset_id && l.category === hold.category);
-    const sum = (k: "H" | "J" | "K" | "L" | "M") => round2(others.reduce((t, l) => t + l[k], 0));
-    hold.H = -sum("H");
-    hold.J = -sum("J");
-    hold.K = -sum("K");
-    hold.L = -sum("L");
-    hold.M = -sum("M");
+    const sum = (k: (typeof keys)[number]) => round2(others.reduce((t, l) => t + l[k], 0));
+    const offsets = Object.fromEntries(keys.map((k) => [k, sum(k)])) as Record<(typeof keys)[number], number>;
+    const total = round2(keys.reduce((t, k) => t + offsets[k], 0));
+    const room = Math.max(0, hold.G);
+    // absorb fully while the hold can pay for it; beyond that only up to the hold's budget (pro rata by column)
+    const factor = total > room && total > 0 ? room / total : 1;
+    for (const k of keys) hold[k] = round2(-offsets[k] * factor);
     hold.I = round2(hold.G + hold.H);
-    hold.N = round2(hold.I + hold.J + hold.K + hold.L + hold.M);
+    hold.N = round2(Math.max(0, hold.G - round2(total * factor)));
     hold.O = round2(hold.N - hold.G);
     hold.Q = round2(hold.N - hold.P);
   }
@@ -242,9 +249,11 @@ function previousAfa(db: Database.Database, periodId: number): PreviousAfa | nul
   if (!rows.length) return null;
   const byId = new Map<number, number>();
   const byCode = new Map<string, number>();
-  for (const r of rows) {
-    const d = JSON.parse(r.data) as { N?: number; asset_code?: string; code?: string };
-    byId.set(r.record_id, Number(d.N ?? 0));
+  // the stored lines are re-run through the budget-hold rule so an older stored report compares like for like
+  const lines = rows.map((r) => ({ ...(JSON.parse(r.data) as CostLineRow), id: r.record_id }));
+  applyBudgetHold(lines.map((l) => ({ ...l, category: l.category ?? "", is_budget_hold: !!l.is_budget_hold })).map((l) => Object.assign(lines.find((x) => x.id === l.id)!, l)));
+  for (const d of lines) {
+    byId.set(d.id, Number(d.N ?? 0));
     if (d.code) byCode.set(`${d.asset_code ?? ""}|${d.code}`, Number(d.N ?? 0));
   }
   return { byId, byCode };
