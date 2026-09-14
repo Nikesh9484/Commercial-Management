@@ -9,7 +9,7 @@ import { getMovement, type Movement } from "../dashboard/movement";
 import { level1Matrix, type Level1Matrix } from "../cost-report/level1";
 import { getPeriod, getPreviousPeriod, readsStoredCopy, type PeriodRow } from "../snapshots";
 import { mergeComputed } from "../payments/compute";
-import { paymentComputedForPeriod } from "../view-mode";
+import { paymentComputedForPeriod, backfillDerived } from "../view-mode";
 import { lookupOptions } from "../registers/engine";
 import type { RecordRow, RegisterDef } from "../registers/types";
 import { REPORT_SCHEDULES } from "./schedules";
@@ -71,6 +71,9 @@ export function getReportData(programmeId: number, periodId: number): ReportData
       rows = rows.filter((r) => Number(r.programme_id) === programmeId);
       // the payment columns are calculated again from the report's own stored registers (see view-mode)
       if (key === "contracts" || key === "payment_applications") mergeComputed(key, rows as unknown as Record<string, unknown>[], paymentComputedForPeriod(db, programmeId, periodId));
+      // a flag added after the copy was taken is worked out now, exactly as the pages do, so a
+      // downloaded report never disagrees with the screen it came from
+      backfillDerived(def, rows);
     }
     registers[key] = { def, rows };
     sources[key] = snap ? "snapshot" : "live";

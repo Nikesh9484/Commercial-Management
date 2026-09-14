@@ -70,7 +70,7 @@ export function recordsForView(def: RegisterDef, db: Database.Database = getDb()
  * fields it never had are worked out now. Without this, a filter on a flag added later (a released
  * bond, a change on a contract since closed) quietly matches nothing on an older report.
  */
-function backfillDerived(def: RegisterDef, rows: RecordRow[]) {
+export function backfillDerived(def: RegisterDef, rows: RecordRow[]) {
   if (!rows.length) return;
   const fresh = rows.map((r) => ({ ...r }));
   enrichRows(def, fresh);

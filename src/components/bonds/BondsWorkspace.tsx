@@ -9,6 +9,7 @@ import { formatMoney } from "@/lib/format";
 import { Chip } from "@/components/ui/Chip";
 import { RegisterPage } from "@/components/register/RegisterPage";
 import { ExpiringSoonCard } from "@/components/bonds/ExpiringSoonCard";
+import { BondsAlertSummaries } from "@/components/bonds/BondsAlertSummaries";
 import { ExportButtons } from "@/components/ui/ExportButtons";
 import { HorizontalBars } from "@/components/charts/HorizontalBars";
 
@@ -112,6 +113,10 @@ export function BondsWorkspace({ rows, isAdmin, hasPeriod }: { rows: RecordRow[]
           </div>
         </div>
       </div>
+
+      {/* the two chase lists, each downloadable on its own, worked out from every row rather than the
+          page filter – they are the same two lists whatever is filtered above */}
+      <BondsAlertSummaries rows={rows} hasPeriod={hasPeriod} />
 
       <ExpiringSoonCard items={summary.expiring} expired={summary.expired} released={summary.released} superseded={summary.superseded} />
 
