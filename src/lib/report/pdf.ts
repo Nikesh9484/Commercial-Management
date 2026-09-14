@@ -12,6 +12,7 @@ import { buildChangesReport } from "./changes-report";
 import { buildEwReport } from "./ew-report";
 import { buildPsReport } from "./provisional-sums-report";
 import { buildBondsReport } from "./bonds-report";
+import { NO_BONDS_FILTER, bondsFilterLabel, type BondsFilter } from "../bonds/filter";
 import { buildTransfersReport } from "./transfers-report";
 import { buildFaReport } from "./fa-report";
 
@@ -39,9 +40,14 @@ interface Ctx {
   sectionTitle: string;
 }
 
+/** Page-level choices carried into a section, so a download matches what the page was showing. */
+export interface SectionOptions {
+  bonds?: BondsFilter;
+}
+
 /** Renders the full monthly report and returns the PDF bytes. */
 /** Section keys accepted by the per-page export: "minutes", "exec", "movement", schedule letters, register keys, "level1", "level2", "cashflow". */
-export function resolveSections(keys: string[]): { title: string; run: (ctx: Ctx) => void }[] {
+export function resolveSections(keys: string[], opts: SectionOptions = {}): { title: string; run: (ctx: Ctx) => void }[] {
   const out: { title: string; run: (ctx: Ctx) => void }[] = [];
   for (const raw of keys) {
     const k = raw.trim();
@@ -54,7 +60,11 @@ export function resolveSections(keys: string[]): { title: string; run: (ctx: Ctx
     else if (k === "changes_report") out.push({ title: "Change Management Status Report", run: changesStatusReport });
     else if (k === "ew_report") out.push({ title: "Early Warnings & Risks / Opportunities Status Report", run: ewStatusReport });
     else if (k === "ps_report") out.push({ title: "Provisional Sums Status Report", run: psStatusReport });
-    else if (k === "bonds_report") out.push({ title: "Bonds & Insurance Status Report", run: bondsStatusReport });
+    else if (k === "bonds_report") {
+      const f = opts.bonds ?? NO_BONDS_FILTER;
+      const tag = bondsFilterLabel(f);
+      out.push({ title: `Bonds & Insurance Status Report${tag ? ` – ${tag}` : ""}`, run: (ctx) => bondsStatusReport(ctx, f) });
+    }
     else if (k === "transfers_report") out.push({ title: "Budget Transfers Status Report", run: transfersStatusReport });
     else if (k === "level1") out.push({ title: "Schedule A – Cost Report Level 1 (Executive)", run: costLevel1 });
     else if (k === "level2") out.push({ title: "Schedule B – Cost Report Level 2 (Detailed)", run: costLevel2 });
@@ -79,8 +89,8 @@ export function resolveSections(keys: string[]): { title: string; run: (ctx: Ctx
 }
 
 /** One or more sections only (no cover / index): used by the "Download PDF" buttons on each page. */
-export async function renderSectionsPdf(data: ReportData, keys: string[]): Promise<Buffer> {
-  const parts = resolveSections(keys);
+export async function renderSectionsPdf(data: ReportData, keys: string[], opts: SectionOptions = {}): Promise<Buffer> {
+  const parts = resolveSections(keys, opts);
   const doc = new PDFDocument({ size: "A4", layout: "landscape", margin: PAGE.margin, bufferPages: true, info: { Title: `${data.period.label} – ${parts.map((p) => p.title).join(", ")}`, Author: APP_NAME } });
   const chunks: Buffer[] = [];
   doc.on("data", (c: Buffer) => chunks.push(c));
@@ -1334,13 +1344,21 @@ function psStatusReport(ctx: Ctx) {
 /* ------------------------------------------------------------------ */
 /* Bonds & Insurance Status Report (executive)                         */
 
-function bondsStatusReport(ctx: Ctx) {
+function bondsStatusReport(ctx: Ctx, filter: BondsFilter = NO_BONDS_FILTER) {
   const { doc, data } = ctx;
-  const r = buildBondsReport(data);
+  const r = buildBondsReport(data, filter);
   const h = r.headline;
   const sar = (n: number) => formatMoney(n);
+  if (r.filterLabel) {
+    const w = PAGE.width - PAGE.margin * 2;
+    const y0 = doc.y;
+    doc.rect(PAGE.margin, y0, w, 20).fillAndStroke("#eff6ff", "#bfdbfe");
+    doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(9).text(`Filtered report:  ${r.filterLabel}`, PAGE.margin + 8, y0 + 6, { width: w - 16 });
+    doc.y = y0 + 28;
+    doc.x = PAGE.margin;
+  }
   const kpis: [string, string, string][] = [
-    ["Bonds & policies", String(h.total), `${h.expired} expired · ${h.expiring30} within 30d · ${h.expiring60} within 60d`],
+    ["Bonds & policies", String(h.total), `${h.expired} expired · ${h.expiring15} within 15d · ${h.expiring30} within 30d · ${h.expiring60} within 60d`],
     ["Cover held vs required", `${sar(h.provided)} / ${sar(h.required)}`, "total face value vs total requirement"],
     ["Shortfalls", String(h.shortfallCount), h.shortfallCount ? `${sar(h.shortfallValue)} below requirement` : "every item meets its requirement"],
     ["Checks outstanding", `${h.notApproved} / ${h.notVerified}`, "not approved / not bank-verified"],
@@ -1385,7 +1403,22 @@ function bondsStatusReport(ctx: Ctx) {
   }
 
   const money = (v: unknown) => (v === null || v === undefined ? "" : formatMoney(v as number));
-  if (r.expiring.length) {
+  const detailColumns: Col[] = [
+    { key: "ref", label: "Ref", width: 0.6 },
+    { key: "contractor", label: "Contractor / consultant", width: 1.8 },
+    { key: "package", label: "Package", width: 1.4 },
+    { key: "type", label: "Type", width: 1.5 },
+    { key: "required", label: "Required (SAR)", width: 1.1, align: "right", format: money },
+    { key: "provided", label: "Provided (SAR)", width: 1.1, align: "right", format: money },
+    { key: "expiryDate", label: "Expiry", width: 0.85, format: (v) => formatDate(v as string) },
+    { key: "daysToExpiry", label: "Days", width: 0.55, align: "right" },
+    { key: "status", label: "Status", width: 0.75 },
+  ];
+  if (r.filterLabel) {
+    // a filtered report is a working list: print every item it selected, not just the expiry window
+    subheading(ctx, `${r.filterLabel} – full list`, `${r.rows.length} item(s), earliest expiry first.`);
+    table(ctx, detailColumns, r.rows as unknown as Record<string, unknown>[], { zebra: true });
+  } else if (r.expiring.length) {
     subheading(ctx, "Expired or expiring soon", "Earliest expiry first.");
     table(
       ctx,
@@ -1399,6 +1432,20 @@ function bondsStatusReport(ctx: Ctx) {
         { key: "status", label: "Status", width: 0.8 },
       ],
       r.expiring as unknown as Record<string, unknown>[],
+      { zebra: true },
+    );
+  }
+  if (r.byCategory.length > 1) {
+    subheading(ctx, "Bonds vs insurance");
+    table(
+      ctx,
+      [
+        { key: "category", label: "Category", width: 2.5 },
+        { key: "n", label: "Items", width: 1, align: "right" },
+        { key: "required", label: "Required (SAR)", width: 1.5, align: "right", format: money },
+        { key: "provided", label: "Provided (SAR)", width: 1.5, align: "right", format: money },
+      ],
+      r.byCategory as unknown as Record<string, unknown>[],
       { zebra: true },
     );
   }
@@ -1416,7 +1463,7 @@ function bondsStatusReport(ctx: Ctx) {
   );
 
   doc.moveDown(0.5);
-  doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(`Prepared from the Bonds & Insurance register of ${APP_NAME} as at ${formatDate(r.asOf)}${data.locked ? "" : " (draft – period not locked)"}. Released and superseded items are excluded from the cover totals.`, { width });
+  doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(`Prepared from the Bonds & Insurance register of ${APP_NAME} as at ${formatDate(r.asOf)}${data.locked ? "" : " (draft – period not locked)"}${r.filterLabel ? `, filtered to ${r.filterLabel.toLowerCase()}` : ""}. Released and superseded items are excluded from the cover totals.`, { width });
 }
 
 /* ------------------------------------------------------------------ */

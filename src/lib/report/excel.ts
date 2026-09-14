@@ -7,9 +7,11 @@ import { buildChangesReport } from "./changes-report";
 import { buildEwReport } from "./ew-report";
 import { buildPsReport } from "./provisional-sums-report";
 import { buildBondsReport } from "./bonds-report";
+import { NO_BONDS_FILTER, type BondsFilter } from "../bonds/filter";
 import { buildTransfersReport } from "./transfers-report";
 import { buildFaReport } from "./fa-report";
 import type { ReportData } from "./data";
+import type { SectionOptions } from "./pdf";
 import { REPORT_SCHEDULES } from "./schedules";
 import { formatDate, formatDateTime, formatMoney, toDate } from "../format";
 import type { FieldDef, RecordRow, RegisterDef } from "../registers/types";
@@ -41,7 +43,7 @@ function costPair(wb: ExcelJS.Workbook, data: ReportData, nameA: string | null, 
 }
 
 /** One or more sections only, used by the "Download Excel" buttons on each page. */
-export async function renderSectionsExcel(data: ReportData, keys: string[], link?: { url: string; label: string }): Promise<Buffer> {
+export async function renderSectionsExcel(data: ReportData, keys: string[], link?: { url: string; label: string }, opts: SectionOptions = {}): Promise<Buffer> {
   const wb = new ExcelJS.Workbook();
   wb.creator = APP_NAME;
   setWorkbookLink(wb, link);
@@ -59,7 +61,7 @@ export async function renderSectionsExcel(data: ReportData, keys: string[], link
     else if (k === "changes_report") changesReportSheet(wb, data);
     else if (k === "ew_report") ewReportSheet(wb, data);
     else if (k === "ps_report") psReportSheet(wb, data);
-    else if (k === "bonds_report") bondsReportSheet(wb, data);
+    else if (k === "bonds_report") bondsReportSheet(wb, data, opts.bonds);
     else if (k === "transfers_report") transfersReportSheet(wb, data);
     else if (k === "level1" || k === "level2" || k.toUpperCase() === "A" || k.toUpperCase() === "B") {
       if (!costDone) costPair(wb, data, wantsL1 ? "Level 1 - Executive" : null, wantsL2 ? "Level 2 - Detailed" : null);
@@ -622,16 +624,21 @@ export function psReportSheet(wb: ExcelJS.Workbook, d: ReportData) {
   }
 }
 
-export function bondsReportSheet(wb: ExcelJS.Workbook, d: ReportData) {
-  const r = buildBondsReport(d);
+export function bondsReportSheet(wb: ExcelJS.Workbook, d: ReportData, filter: BondsFilter = NO_BONDS_FILTER) {
+  const r = buildBondsReport(d, filter);
   const ws = wb.addWorksheet("Bonds & Insurance Status Report");
-  [10, 30, 20, 16, 14, 10, 12].forEach((w, i) => (ws.getColumn(i + 1).width = w));
-  titleBlock(ws, r.title, `${sub(d)} · as at ${formatDate(r.asOf)}`, 7);
+  [10, 30, 20, 20, 16, 16, 14, 10, 12].forEach((w, i) => (ws.getColumn(i + 1).width = w));
+  titleBlock(ws, r.title, `${sub(d)} · as at ${formatDate(r.asOf)}${r.filterLabel ? ` · filtered to ${r.filterLabel.toLowerCase()}` : ""}`, 9);
+  if (r.filterLabel) {
+    const fr = ws.addRow([`Filtered report: ${r.filterLabel}`]);
+    fr.font = { bold: true, color: { argb: NAVY } };
+    ws.addRow([]);
+  }
   const h = r.headline;
   header(ws.addRow(["Headline", "Value", "Note"]));
   const kp: [string, unknown, string][] = [
     ["Bonds & policies", h.total, `${h.active} active · ${h.expired} expired · ${h.released} released · ${h.superseded} superseded`],
-    ["Expiring within 30 / 60 days", `${h.expiring30} / ${h.expiring60}`, ""],
+    ["Expiring within 15 / 30 / 60 days", `${h.expiring15} / ${h.expiring30} / ${h.expiring60}`, "each window counts only the items in it"],
     ["Cover required (SAR)", h.required, ""],
     ["Cover provided (SAR)", h.provided, ""],
     ["Shortfalls", h.shortfallCount, h.shortfallCount ? `${formatMoney(h.shortfallValue)} below requirement` : ""],
@@ -661,7 +668,17 @@ export function bondsReportSheet(wb: ExcelJS.Workbook, d: ReportData) {
     ws.addRow(["Items requiring attention"]).font = { bold: true, size: 12, color: { argb: "FF7C2D12" } };
     for (const it of r.attention) ws.addRow([`• ${it}`]);
   }
-  if (r.expiring.length) {
+  if (r.filterLabel) {
+    // a filtered report is a working list: every item it selected, not just the expiry window
+    ws.addRow([]);
+    ws.addRow([`${r.filterLabel} – full list (${r.rows.length} item(s), earliest expiry first)`]).font = { bold: true, size: 12, color: { argb: NAVY } };
+    header(ws.addRow(["Ref", "Contractor / consultant", "Package", "Type", "Category", "Required (SAR)", "Provided (SAR)", "Expiry", "Days", "Status"]));
+    for (const l of r.rows) {
+      const row = ws.addRow([l.ref, l.contractor, l.package, l.type, l.category, l.required, l.provided, l.expiryDate ? toDate(l.expiryDate) : null, l.daysToExpiry, l.status]);
+      [6, 7].forEach((i) => (row.getCell(i).numFmt = MONEY_FMT));
+      row.getCell(8).numFmt = "DD-MMM-YY";
+    }
+  } else if (r.expiring.length) {
     ws.addRow([]);
     ws.addRow(["Expired or expiring soon"]).font = { bold: true, size: 12, color: { argb: NAVY } };
     header(ws.addRow(["Ref", "Contractor / consultant", "Type", "Provided (SAR)", "Expiry", "Days", "Status"]));
@@ -669,6 +686,15 @@ export function bondsReportSheet(wb: ExcelJS.Workbook, d: ReportData) {
       const row = ws.addRow([l.ref, l.contractor, l.type, l.provided, l.expiryDate ? toDate(l.expiryDate) : null, l.daysToExpiry, l.status]);
       row.getCell(4).numFmt = MONEY_FMT;
       row.getCell(5).numFmt = "DD-MMM-YY";
+    }
+  }
+  if (r.byCategory.length > 1) {
+    ws.addRow([]);
+    ws.addRow(["Bonds vs insurance"]).font = { bold: true, size: 12, color: { argb: NAVY } };
+    header(ws.addRow(["Category", "Items", "Required (SAR)", "Provided (SAR)"]));
+    for (const c of r.byCategory) {
+      const row = ws.addRow([c.category, c.n, c.required, c.provided]);
+      [3, 4].forEach((i) => (row.getCell(i).numFmt = MONEY_FMT));
     }
   }
   ws.addRow([]);

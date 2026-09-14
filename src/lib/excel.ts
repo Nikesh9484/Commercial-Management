@@ -18,12 +18,13 @@ function exportFields(def: RegisterDef): FieldDef[] {
  * dates as real dates, money with 2 decimals, SUM totals, status colouring, filter and frozen header.
  * The file re-imports as it is (the header row is found automatically).
  */
-export async function exportRegister(def: RegisterDef, link?: { url: string; label: string }): Promise<Buffer> {
+export async function exportRegister(def: RegisterDef, link?: { url: string; label: string }, rowFilter?: (r: RecordRow) => boolean): Promise<Buffer> {
   const wb = new ExcelJS.Workbook();
   setWorkbookLink(wb, link);
   const ws = wb.addWorksheet(def.title.slice(0, 31).replace(/[\\/?*[\]:]/g, " "));
   const fields = exportFields(def);
-  const rows = recordsForView(def);
+  const all = recordsForView(def);
+  const rows = rowFilter ? all.filter(rowFilter) : all;
   const cols = [{ header: "ID", key: "id", width: 8, type: "number" }, ...fields.map((f) => ({ header: f.label, key: f.key, width: f.type === "textarea" ? 40 : Math.max(14, Math.min(34, f.label.length + 4)), type: f.type })), { header: "Last updated", key: "updated_at", width: 14, type: "date" }, { header: "Updated by", key: "updated_by", width: 18, type: "text" }];
   titleBlock(ws, def.title, `${rows.length} row(s) · exported ${formatDate(todayIso())} · ${APP_NAME}`, Math.min(cols.length, 10));
   headerRow(ws.addRow(cols.map((c) => c.header)));

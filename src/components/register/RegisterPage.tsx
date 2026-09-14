@@ -37,12 +37,18 @@ export function RegisterPage({
   registerKey,
   isAdmin = false,
   fixedFilter,
+  rowFilter,
+  exportParams,
   hideFields = [],
 }: {
   registerKey: string;
   isAdmin?: boolean;
   /** Only show rows matching these values (scalar = equals, and new records get it by default; { in } / { notIn } = set filters). */
   fixedFilter?: Record<string, number | string | { in?: (number | string)[]; notIn?: (number | string)[] }>;
+  /** Only show rows this returns true for – for filters the page owns (see the Bonds & Insurance page). */
+  rowFilter?: (row: RecordRow) => boolean;
+  /** Query string added to the table's own Export, so it downloads the same rows the page filter shows. */
+  exportParams?: string;
   /** Fields to leave out of the table (e.g. the one fixed by fixedFilter). */
   hideFields?: string[];
 }) {
@@ -108,6 +114,7 @@ export function RegisterPage({
         }),
       );
     }
+    if (rowFilter) rows = rows.filter(rowFilter);
     if (q) {
       rows = rows.filter((r) => data.def.fields.some((f) => String(displayValue(f, r) ?? "").toLowerCase().includes(q)) || String(r.id) === q);
     }
@@ -133,7 +140,7 @@ export function RegisterPage({
       });
     }
     return rows;
-  }, [data, search, filters, effectiveSort, fixedFilter]);
+  }, [data, search, filters, effectiveSort, fixedFilter, rowFilter]);
 
   const pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount);
@@ -258,7 +265,7 @@ export function RegisterPage({
           <button className="btn btn-secondary" onClick={load} title="Refresh">
             <RefreshCw size={16} />
           </button>
-          <a className="btn btn-secondary" href={`/api/registers/${registerKey}/export`}>
+          <a className="btn btn-secondary" href={`/api/registers/${registerKey}/export${exportParams ? `?${exportParams}` : ""}`} title={exportParams ? "Download this table as Excel, with the page's filter applied" : "Download this table as Excel"}>
             <Download size={16} /> Export
           </a>
           {data.canEdit && (
@@ -398,6 +405,7 @@ export function RegisterPage({
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line px-3 py-2 text-xs text-muted">
           <span>
             {visible.length} of {fixedFilter ? visible.length : data.rows.length} {def.title.toLowerCase()}
+            {rowFilter && visible.length !== data.rows.length && <span> (page filter applied)</span>}
             {data.canEdit && <span className="hidden sm:inline"> · double-click a row to edit</span>}
           </span>
           {pageCount > 1 && (

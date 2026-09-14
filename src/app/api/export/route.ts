@@ -3,6 +3,7 @@ import { withHeavyLock } from "@/lib/workbook/heavy";
 import { withUser } from "@/lib/api";
 import { getAppContext } from "@/lib/context";
 import { getReportData } from "@/lib/report/data";
+import { parseBondsFilter, bondsFilterSlug } from "@/lib/bonds/filter";
 import { renderSectionsPdf } from "@/lib/report/pdf";
 import { renderSectionsExcel } from "@/lib/report/excel";
 import { todayIso } from "@/lib/format";
@@ -55,8 +56,12 @@ async function heavyGET(req: Request, ctx: unknown) {
       return new Response(new Uint8Array(buffer), { headers: { "Content-Type": "application/vnd.ms-excel.sheet.macroEnabled.12", "Content-Disposition": `attachment; filename="Commercial_Dashboard_The_Marina_${app.programme.code}_${todayIso()}.xlsm"` } });
     }
     const data = getReportData(app.programme.id, periodId);
+    // page-level filters travel with the download, so a filtered report matches what was on screen
+    const bonds = parseBondsFilter(url.searchParams);
+    const opts = { bonds };
+    const tag = sections.includes("bonds_report") ? bondsFilterSlug(bonds) : "";
     const name = sections.map((s) => NAMES[s] ?? s.replace(/[^A-Za-z0-9]+/g, "_")).join("_");
-    const base = `${name}_${app.programme.code}_No${data.period.report_no}_${todayIso()}${data.locked ? "" : "_DRAFT"}`;
+    const base = `${name}${tag ? `_${tag}` : ""}_${app.programme.code}_No${data.period.report_no}_${todayIso()}${data.locked ? "" : "_DRAFT"}`;
     if (sections.includes("deck")) {
       // the presentation: editable PowerPoint, or the same slides as a PDF
       const deck = buildDeck(data);
@@ -74,10 +79,10 @@ async function heavyGET(req: Request, ctx: unknown) {
     }
     if (format === "xlsx") {
       const origin = url.origin;
-      const buffer = await renderSectionsExcel(data, sections, { url: `${origin}/`, label: "Open the dashboard" });
+      const buffer = await renderSectionsExcel(data, sections, { url: `${origin}/`, label: "Open the dashboard" }, opts);
       return new Response(new Uint8Array(buffer), { headers: { "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "Content-Disposition": `attachment; filename="${base}.xlsx"` } });
     }
-    const buffer = await renderSectionsPdf(data, sections);
+    const buffer = await renderSectionsPdf(data, sections, opts);
     return new Response(new Uint8Array(buffer), { headers: { "Content-Type": "application/pdf", "Content-Disposition": `attachment; filename="${base}.pdf"` } });
   })(req, ctx);
 }
