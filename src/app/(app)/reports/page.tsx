@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { AlertTriangle, FileDown, FileSpreadsheet, BookOpen, Lock, Unlock, Presentation } from "lucide-react";
+import { AlertTriangle, FileDown, FileSpreadsheet, BookOpen, Lock, Unlock, Presentation, SlidersHorizontal } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth";
 import { getAppContext } from "@/lib/context";
 import { listPeriods } from "@/lib/snapshots";
@@ -86,6 +86,19 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
             </div>
             <p className="px-5 py-3 text-xs text-muted">Cover, index, minutes, executive summary, movement and Schedules A to J in one file.</p>
           </div>
+
+          <Link href="/reports/builder" className="card flex flex-wrap items-center justify-between gap-3 p-5 transition hover:border-navy hover:shadow-md">
+            <div className="min-w-0">
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-ink">
+                <SlidersHorizontal size={16} className="text-navy" /> Customise my reports
+              </h2>
+              <p className="mt-1 text-xs leading-relaxed text-muted">
+                Build your own: pick any register or one of the purpose-built reports (payments due &amp; ageing, the EOT and claims tracker, what needs attention across the whole project, the contract
+                scorecard, the contract value bridge), filter it on every field, choose the columns, group and total it – then take it as a PDF, an Excel workbook or a written Word summary.
+              </p>
+            </div>
+            <span className="btn btn-primary btn-sm shrink-0">Open the report builder</span>
+          </Link>
 
           {groups.map((g) => (
             <div key={g.heading} className="card overflow-hidden p-0">

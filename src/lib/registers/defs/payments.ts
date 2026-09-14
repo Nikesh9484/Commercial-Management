@@ -2,6 +2,8 @@ import type { RegisterDef } from "../types";
 
 export const CONTRACT_STATUSES = ["Active", "Completed", "Suspended", "Terminated", "Closed"];
 export const VAT_DEFAULT = 15;
+/** VAT is added on top of the certified amount; withholding tax is deducted from it. */
+export const TAX_TYPES = ["VAT added", "Withholding tax deducted", "No tax"];
 
 const SETTINGS = "Contract settings (used by the IPC log)";
 const CASHFLOW = "Cash flow coding";
@@ -51,6 +53,7 @@ export const contracts: RegisterDef = {
     { key: "ipc_days", label: "Days to issue IPC", type: "number", defaultValue: 28, section: SETTINGS, hideInTable: true, help: "Contractual days from the payment application to the IPC." },
     { key: "payment_days", label: "Days to pay", type: "number", defaultValue: 30, section: SETTINGS, hideInTable: true, help: "Contractual days from the IPC to payment." },
     { key: "vat_pct", label: "VAT %", type: "percent", defaultValue: VAT_DEFAULT, section: SETTINGS, hideInTable: true },
+    { key: "tax_type", label: "Tax on payment", type: "select", options: TAX_TYPES, defaultValue: TAX_TYPES[0], section: SETTINGS, hideInTable: true, filter: true, help: "VAT is added to the certified amount; withholding tax is deducted from it. Used by the Payments due report; the rate is the VAT % above." },
     { key: "transaction_no", label: "Transaction No", type: "text", section: CASHFLOW, hideInTable: true, help: "Finance system transaction / commitment number." },
     { key: "coding", label: "Coding", type: "text", section: CASHFLOW, hideInTable: true, help: "Account / cost coding." },
     { key: "cbs", label: "CBS", type: "text", section: CASHFLOW, hideInTable: true, help: "Cost breakdown structure code." },
