@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 import { getDb, getSetting } from "./db";
 import { listRecords, scopeFilter } from "./registers/engine";
+import { enrichRows } from "./registers/enrich";
 import { computeContracts, mergeComputed, type ContractRow, type ApplicationRow } from "./payments/compute";
 import { openStoredRegisters } from "./cost-report/stored";
 import type { RecordRow, RegisterDef } from "./registers/types";
@@ -55,11 +56,27 @@ export function recordsForView(def: RegisterDef, db: Database.Database = getDb()
           const programmeId = Number(getSetting(db, "current_programme_id") ?? 0);
           if (programmeId) mergeComputed(def.key, mine as unknown as Record<string, unknown>[], paymentComputedForPeriod(db, programmeId, viewed.id));
         }
+        backfillDerived(def, mine);
         return mine;
       }
     }
   }
   return listRecords(def);
+}
+
+/**
+ * A report issued before a field existed carries no value for it. Everything the stored copy does hold
+ * is left exactly as it was issued – the amounts and dates are the historical record – and only the
+ * fields it never had are worked out now. Without this, a filter on a flag added later (a released
+ * bond, a change on a contract since closed) quietly matches nothing on an older report.
+ */
+function backfillDerived(def: RegisterDef, rows: RecordRow[]) {
+  if (!rows.length) return;
+  const fresh = rows.map((r) => ({ ...r }));
+  enrichRows(def, fresh);
+  rows.forEach((r, i) => {
+    for (const [k, v] of Object.entries(fresh[i])) if (!(k in r)) r[k] = v;
+  });
 }
 
 /**

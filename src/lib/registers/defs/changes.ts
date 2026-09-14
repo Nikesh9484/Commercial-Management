@@ -67,6 +67,7 @@ export const changes: RegisterDef = {
     { key: "package_id", label: "Package", type: "lookup", lookup: { register: "packages" }, section: HEADER, filter: true },
     { key: "contractor_id", label: "Contractor / Consultant", type: "lookup", lookup: { register: "contractors" }, section: HEADER, filter: true },
     { key: "cost_line_id", label: "Cost report line", type: "lookup", lookup: { register: "cost_lines" }, section: HEADER, hideInTable: true, help: "Which Level 2 line this change feeds (columns H, J, K of the cost report)." },
+    { key: "contract_closed", label: "Contract closed (final account)", type: "boolean", virtual: true, readonly: true, hideInForm: true, hideInTable: true, filter: true, help: "Worked out from the Final Account Status: the final account for this contract is signed, not required or a direct payment. The standard pending reports leave these out." },
     { key: "project_stage_id", label: "Project stage", type: "lookup", lookup: { register: "project_stages" }, section: HEADER, filter: true },
     { key: "change_category_id", label: "Change category", type: "lookup", lookup: { register: "change_categories" }, section: HEADER, filter: true },
     { key: "initiated_by_id", label: "Initiated by", type: "lookup", lookup: { register: "change_initiators" }, section: HEADER, filter: true },

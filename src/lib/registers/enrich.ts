@@ -20,6 +20,12 @@ import { FA_AMBER_DAYS } from "./defs/final-accounts";
  */
 export function enrichRows(def: RegisterDef, rows: RecordRow[]) {
   if (def.key === "changes") rows.forEach(enrichChange);
+  // A change or a claim on a contract whose final account is signed (or not required) is history: the
+  // same rule the bonds use, so "pending" never means an item on a contract that is already finished.
+  if ((def.key === "changes" || def.key === "claims") && rows.length) {
+    const closed = closedContracts(getDb(), Number(rows[0].programme_id));
+    for (const r of rows) markContractClosed(r, closed);
+  }
   if (def.key === "claims") rows.forEach(enrichClaim);
   if (def.key === "risks") rows.forEach(enrichRisk);
   if (def.key === "provisional_sums") rows.forEach(enrichProvisionalSum);
@@ -101,6 +107,19 @@ export { daysBetween };
 /** True when a stage has anything recorded against it. */
 export function stageHasData(row: RecordRow, prefix: string): boolean {
   return [`${prefix}_ref`, `${prefix}_date`, `${prefix}_status_id`, `${prefix}_tracker_amount`, `${prefix}_cr_amount`].some((k) => row[k] !== null && row[k] !== undefined && row[k] !== "");
+}
+
+/**
+ * Flags a row whose contract is finished, by the cost report line it feeds, or – when it has no line –
+ * by the contractor having no open contract left. Same source of truth as the bonds: the Final Account
+ * Status register first, then Payment Tracking for contracts with no final account row.
+ */
+function markContractClosed(row: RecordRow, closed: ClosedContracts) {
+  const lineId = row.cost_line_id === null || row.cost_line_id === undefined ? null : Number(row.cost_line_id);
+  const byLine = lineId !== null && closed.lines.has(lineId);
+  const byContractor = lineId === null && row.contractor_id !== null && row.contractor_id !== undefined && closed.contractors.has(Number(row.contractor_id));
+  row.contract_closed = byLine || byContractor;
+  row.contract_closed_reason = byLine ? "The final account for this cost report line is closed" : byContractor ? "Every contract of this contractor is closed" : null;
 }
 
 function enrichChange(row: RecordRow) {

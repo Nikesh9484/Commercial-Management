@@ -73,7 +73,11 @@ export const STANDARD_REPORTS: StandardReport[] = [
     source: "changes",
     build: () => ({
       title: "DVO pending – by contractor",
-      conditions: [{ field: "dvo_status_id", op: "in", values: ["Pending"] }],
+      conditions: [
+        { field: "dvo_status_id", op: "in", values: ["Pending"] },
+        // nothing is pending on a contract whose final account is already signed
+        { field: "contract_closed", op: "is_false" },
+      ],
       groupBy: "contractor_id",
       sort: [{ field: "dvo_date", dir: "asc" }],
       columns: ["item_no", "description", "dvo_ref", "dvo_date", "dvo_tracker_amount", "dvo_time_impact", "overall_status_id"],
@@ -88,7 +92,11 @@ export const STANDARD_REPORTS: StandardReport[] = [
     source: "changes",
     build: () => ({
       title: "PVO pending – by contractor",
-      conditions: [{ field: "pvo_status_id", op: "in", values: ["Pending"] }],
+      conditions: [
+        { field: "pvo_status_id", op: "in", values: ["Pending"] },
+        // nothing is pending on a contract whose final account is already signed
+        { field: "contract_closed", op: "is_false" },
+      ],
       groupBy: "contractor_id",
       sort: [{ field: "pvo_date", dir: "asc" }],
       columns: ["item_no", "description", "pvo_ref", "pvo_date", "pvo_tracker_amount", "pvo_time_impact", "overall_status_id"],
@@ -107,6 +115,7 @@ export const STANDARD_REPORTS: StandardReport[] = [
       conditions: [
         { field: "state", op: "in", values: ["Open"] },
         { field: "pending_with", op: "contains", value: "Commercial" },
+        { field: "contract_closed", op: "is_false" },
       ],
       groupBy: "contractor",
       sort: [{ field: "days_since", dir: "desc" }],
@@ -180,7 +189,10 @@ export const STANDARD_REPORTS: StandardReport[] = [
     needs: "Reads “Action with”, “Date of last action” and “Target date” on each claim.",
     build: () => ({
       title: "EOT & claims action tracker",
-      conditions: [{ field: "state", op: "in", values: ["Open"] }],
+      conditions: [
+        { field: "state", op: "in", values: ["Open"] },
+        { field: "contract_closed", op: "is_false" },
+      ],
       groupBy: "pending_with",
       sort: [{ field: "days_since", dir: "desc" }],
       columns: ["claim_no", "contract_no", "contractor", "assessment_type", "owner", "last_action_date", "days_since", "flag", "target_date", "days_to_target"],
