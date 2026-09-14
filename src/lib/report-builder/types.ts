@@ -190,6 +190,30 @@ export function opsFor(field: SourceField): OpDef[] {
   }
 }
 
+/** How many values an operator needs filled in; 0 for the ones that stand on their own. */
+export function opInputs(op: FilterOp): 0 | 1 | 2 {
+  for (const list of [TEXT_OPS, NUM_OPS, DATE_OPS, SET_OPS, BOOL_OPS]) {
+    const hit = list.find((o) => o.op === op);
+    if (hit) return hit.inputs;
+  }
+  return 1;
+}
+
+/**
+ * True when a condition has been filled in far enough to mean something. A condition that has been
+ * added but not yet given a value is ignored rather than matching nothing, so a half-typed filter
+ * never silently empties the report.
+ */
+export function isConditionReady(c: Condition): boolean {
+  if (!c.field || !c.op) return false;
+  const n = opInputs(c.op);
+  if (n === 0) return true;
+  const given = (v: unknown) => v !== undefined && v !== null && v !== "";
+  if (Array.isArray(c.values)) return c.values.length > 0;
+  if (!given(c.value)) return false;
+  return n === 1 || given(c.value2);
+}
+
 export function opLabel(op: FilterOp): string {
   for (const list of [TEXT_OPS, NUM_OPS, DATE_OPS, SET_OPS, BOOL_OPS]) {
     const hit = list.find((o) => o.op === op);

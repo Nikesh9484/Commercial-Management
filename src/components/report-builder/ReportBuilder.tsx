@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, ArrowUp, ChevronLeft, FileDown, FileSpreadsheet, FileText, Filter, Loader2, Plus, Save, Sparkles, Trash2, X } from "lucide-react";
-import { emptySpec, opsFor, type Condition, type ReportSpec, type SourceField, type SourceInfo } from "@/lib/report-builder/types";
+import { ArrowDown, ArrowUp, FileDown, FileSpreadsheet, FileText, Filter, Loader2, Play, Plus, Save, Trash2, X } from "lucide-react";
+import { emptySpec, isConditionReady, opsFor, type Condition, type ReportSpec, type SourceField, type SourceInfo } from "@/lib/report-builder/types";
 import { useToast } from "@/components/ui/Toast";
 
 /**
@@ -81,6 +81,8 @@ export function ReportBuilder({ canSave }: { canSave: boolean }) {
   const [info, setInfo] = useState<(SourceInfo & { count: number }) | null>(null);
   const [spec, setSpec] = useState<ReportSpec | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
+  /** True once the set-up has been changed since the report on screen was built. */
+  const [stale, setStale] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState<string | null>(null);
@@ -102,17 +104,27 @@ export function ReportBuilder({ canSave }: { canSave: boolean }) {
   const fields = useMemo(() => info?.fields ?? [], [info]);
   const byKey = useMemo(() => new Map(fields.map((f) => [f.key, f])), [fields]);
 
-  /** Loads a source and starts a fresh (or supplied) spec. */
+  /**
+   * Loads a source and starts a fresh (or a saved) set-up. The columns are filled in straight away so
+   * they can be changed before anything is built, and nothing is generated until Generate is clicked.
+   */
   const choose = useCallback(async (id: string, start?: ReportSpec) => {
+    if (!id) {
+      setInfo(null);
+      setSpec(null);
+      setPreview(null);
+      return;
+    }
     setBusy(true);
     setError(null);
     setPreview(null);
+    setStale(false);
     try {
       const res = await fetch(`/api/custom-report?source=${encodeURIComponent(id)}`);
       const j = await res.json();
       if (!res.ok) throw new Error(j.error ?? "Could not open that report.");
       setInfo(j.info);
-      setSpec(start ?? { ...emptySpec(id), groupBy: j.info.suggestGroupBy ?? null });
+      setSpec(start ?? { ...emptySpec(id), columns: j.defaultColumns ?? [], groupBy: j.info.suggestGroupBy ?? null });
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -120,29 +132,34 @@ export function ReportBuilder({ canSave }: { canSave: boolean }) {
     }
   }, []);
 
-  // the preview follows the spec, a moment behind so typing stays smooth
-  useEffect(() => {
+  /**
+   * Builds the report. Nothing is built until this is asked for: the filters are set first and the
+   * report is produced once, when it is wanted, rather than rebuilding itself on every change.
+   */
+  async function generate() {
     if (!spec) return;
     const mine = ++seq.current;
-    const t = setTimeout(async () => {
-      setBusy(true);
-      try {
-        const res = await fetch("/api/custom-report", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ spec, format: "preview" }) });
-        const j = await res.json();
-        if (mine !== seq.current) return;
-        if (!res.ok) throw new Error(j.error ?? "Could not build the report.");
-        setPreview(j);
-        setError(null);
-      } catch (e) {
-        if (mine === seq.current) setError((e as Error).message);
-      } finally {
-        if (mine === seq.current) setBusy(false);
-      }
-    }, 350);
-    return () => clearTimeout(t);
-  }, [spec]);
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/custom-report", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ spec, format: "preview" }) });
+      const j = await res.json();
+      if (mine !== seq.current) return;
+      if (!res.ok) throw new Error(j.error ?? "Could not build the report.");
+      setPreview(j);
+      setStale(false);
+    } catch (e) {
+      if (mine === seq.current) setError((e as Error).message);
+    } finally {
+      if (mine === seq.current) setBusy(false);
+    }
+  }
 
-  const patch = (p: Partial<ReportSpec>) => setSpec((s) => (s ? { ...s, ...p } : s));
+  // any change to the set-up makes what is on screen out of date until it is built again
+  const patch = (p: Partial<ReportSpec>) => {
+    setSpec((s) => (s ? { ...s, ...p } : s));
+    setStale(true);
+  };
 
   async function download(format: "pdf" | "xlsx" | "docx") {
     if (!spec) return;
@@ -185,75 +202,98 @@ export function ReportBuilder({ canSave }: { canSave: boolean }) {
     setSaved(j.saved);
   }
 
-  /* ---------------------------------------------------------------- choosing */
-  if (!spec || !info) {
-    const groups = [...new Set(sources.map((s) => s.group))];
-    return (
-      <div className="space-y-5">
-        {error && <div className="card p-4 text-sm text-red-700">{error}</div>}
+  /* ---------------------------------------------------------------- the page */
+  const sourceGroups = [...new Set(sources.map((s) => s.group))];
+
+  /** The bar that carries Generate and the three downloads – shown once a report has been set up. */
+  const picker = (
+    <div className="card p-4">
+      <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
+        <div className="min-w-0">
+          <Label>What do you want to report on?</Label>
+          <select className="input" value={spec?.source ?? ""} onChange={(e) => choose(e.target.value)} disabled={busy}>
+            <option value="">Choose the records…</option>
+            {sourceGroups.map((g) => (
+              <optgroup key={g} label={g}>
+                {sources
+                  .filter((s) => s.group === g)
+                  .map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.title}
+                    </option>
+                  ))}
+              </optgroup>
+            ))}
+          </select>
+          {info && (
+            <p className="mt-1.5 text-xs leading-relaxed text-muted">
+              {info.description} <span className="whitespace-nowrap">· {info.count.toLocaleString("en")} record(s) before filtering</span>
+            </p>
+          )}
+        </div>
         {saved.length > 0 && (
-          <div className="card p-4">
-            <h2 className="mb-2 flex items-center gap-2 text-sm font-semibold text-ink">
-              <Save size={15} className="text-navy" /> Your saved reports
-            </h2>
-            <div className="flex flex-wrap gap-2">
+          <div className="min-w-0 md:w-64">
+            <Label>Or re-run one you saved</Label>
+            <select
+              className="input"
+              value=""
+              onChange={(e) => {
+                const s = saved.find((x) => x.id === e.target.value);
+                if (s) choose(s.source, s.spec);
+              }}
+            >
+              <option value="">Saved reports…</option>
               {saved.map((s) => (
-                <span key={s.id} className="inline-flex items-center gap-1 rounded-full border border-line bg-white pl-3 pr-1 py-1 text-xs">
-                  <button className="font-medium text-ink hover:text-accent" onClick={() => choose(s.source, s.spec)}>
-                    {s.name}
-                  </button>
-                  {canSave && (
-                    <button className="rounded-full p-1 text-muted hover:text-red-600" title="Delete" onClick={() => deleteConfig(s.id)}>
-                      <X size={12} />
-                    </button>
-                  )}
-                </span>
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
               ))}
-            </div>
+            </select>
           </div>
         )}
-        {groups.map((g) => (
-          <div key={g}>
-            <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-muted">{g}</h2>
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {sources
-                .filter((s) => s.group === g)
-                .map((s) => (
-                  <button key={s.id} className="card p-4 text-left transition hover:border-navy hover:shadow-md" onClick={() => choose(s.id)} disabled={busy}>
-                    <div className="flex items-center gap-2">
-                      {g.startsWith("Smart") && <Sparkles size={14} className="shrink-0 text-navy" />}
-                      <span className="font-semibold text-ink">{s.title}</span>
-                    </div>
-                    <p className="mt-1 text-xs leading-relaxed text-muted">{s.description}</p>
-                  </button>
-                ))}
-            </div>
-          </div>
-        ))}
+      </div>
+    </div>
+  );
+
+  if (!spec || !info) {
+    return (
+      <div className="space-y-4">
+        {error && <div className="card p-4 text-sm text-red-700">{error}</div>}
+        {picker}
+        <div className="card p-10 text-center text-sm text-muted">
+          Choose the records above. You can then filter on any field, pick the columns, group and total them, and click <b className="text-ink">Generate report</b> to build it.
+        </div>
       </div>
     );
   }
 
-  /* ---------------------------------------------------------------- building */
   const chosenColumns = spec.columns.length ? spec.columns : (preview?.columns.map((c) => c.key) ?? []);
   const available = fields.filter((f) => !chosenColumns.includes(f.key));
+  const applied = spec.conditions.filter(isConditionReady).length;
+  const unfilled = spec.conditions.length - applied;
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <button className="btn btn-secondary btn-sm" onClick={() => { setSpec(null); setInfo(null); setPreview(null); }}>
-          <ChevronLeft size={15} /> All reports
-        </button>
+      {picker}
+
+      <div className="sticky top-2 z-10 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-white/95 p-3 shadow-sm backdrop-blur">
+        <div className="flex min-w-0 items-center gap-2 text-xs text-muted">
+          {busy && <Loader2 size={15} className="animate-spin" />}
+          {preview && !stale && <span>{preview.count.toLocaleString("en")} of {preview.countAll.toLocaleString("en")} record(s) in this report</span>}
+          {stale && preview && <span className="font-medium text-amber-700">The set-up has changed – generate it again to see it.</span>}
+          {!preview && !busy && <span>{applied === 0 ? "No filters set – every record will be included." : `${applied} filter(s) set.`} Nothing is built until you click Generate.</span>}
+        </div>
         <div className="flex flex-wrap items-center gap-2">
-          {busy && <Loader2 size={15} className="animate-spin text-muted" />}
-          <span className="text-xs text-muted">{preview ? `${preview.count.toLocaleString("en")} of ${preview.countAll.toLocaleString("en")} record(s)` : "building…"}</span>
-          <button className="btn btn-sm btn-pdf" onClick={() => download("pdf")} disabled={!!downloading}>
+          <button className="btn btn-sm btn-primary" onClick={generate} disabled={busy}>
+            {busy ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />} Generate report
+          </button>
+          <button className="btn btn-sm btn-pdf" onClick={() => download("pdf")} disabled={!!downloading || !preview || stale} title={!preview || stale ? "Generate the report first" : "Download as a PDF"}>
             {downloading === "pdf" ? <Loader2 size={14} className="animate-spin" /> : <FileDown size={14} />} PDF
           </button>
-          <button className="btn btn-sm btn-excel" onClick={() => download("xlsx")} disabled={!!downloading}>
+          <button className="btn btn-sm btn-excel" onClick={() => download("xlsx")} disabled={!!downloading || !preview || stale} title={!preview || stale ? "Generate the report first" : "Download as an Excel workbook"}>
             {downloading === "xlsx" ? <Loader2 size={14} className="animate-spin" /> : <FileSpreadsheet size={14} />} Excel
           </button>
-          <button className="btn btn-sm btn-primary" onClick={() => download("docx")} disabled={!!downloading} title="A written summary in Word">
+          <button className="btn btn-sm btn-secondary" onClick={() => download("docx")} disabled={!!downloading || !preview || stale} title={!preview || stale ? "Generate the report first" : "A written summary in Word"}>
             {downloading === "docx" ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />} Word summary
           </button>
         </div>
@@ -261,38 +301,47 @@ export function ReportBuilder({ canSave }: { canSave: boolean }) {
 
       {error && <div className="card p-4 text-sm text-red-700">{error}</div>}
 
-      <div className="grid min-w-0 gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
-        {/* ------------------------------------------------ controls */}
-        <div className="min-w-0 space-y-3">
-          <Panel title={info.title} hint={info.description}>
-            {info.presets.length > 0 && (
-              <div className="mb-3">
-                <Label>Start from</Label>
-                <div className="flex flex-wrap gap-1.5">
-                  {info.presets.map((p) => (
-                    <button
-                      key={p.id}
-                      title={p.description}
-                      className="rounded-full border border-line bg-white px-2.5 py-1 text-xs font-medium text-ink transition hover:border-navy hover:text-navy"
-                      onClick={async () => {
-                        const res = await fetch("/api/custom-report", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ spec, preset: p.id, format: "preview" }) });
-                        const j = await res.json();
-                        if (res.ok && j.spec) setSpec(j.spec);
-                      }}
-                    >
-                      {p.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
+      <div className="min-w-0 space-y-4">
+        {/* ---------------------------------- the set-up, across the full width */}
+        <div className="grid min-w-0 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
+          <Panel title="Title and note" hint="What the report is called and anything you want printed under the title.">
             <Label>Report title (optional)</Label>
             <input className="input mb-2" placeholder={info.title} value={spec.title ?? ""} onChange={(e) => patch({ title: e.target.value })} />
             <Label>Your note, printed under the title</Label>
             <textarea className="input" rows={2} placeholder="e.g. For the commercial review on 3 October." value={spec.notes ?? ""} onChange={(e) => patch({ notes: e.target.value })} />
           </Panel>
 
-          <Panel title="Filter" icon={<Filter size={14} />} hint="Every column can be filtered. Add as many conditions as you need.">
+          <Panel
+            className="md:col-span-2"
+            title="Filters"
+            icon={<Filter size={14} />}
+            hint="Every field can be filtered, and you can add as many conditions as you like."
+          >
+            {info.presets.length > 0 && (
+              <div className="mb-3 rounded-lg border border-line bg-page/40 p-2">
+                <Label>Fill the filters in for me</Label>
+                <div className="flex flex-wrap gap-1.5">
+                  {info.presets.map((p) => (
+                    <button
+                      key={p.id}
+                      title={`${p.description} – this only fills in the filters below; change them as you like, then Generate.`}
+                      className="rounded-full border border-line bg-white px-2.5 py-1 text-xs font-medium text-ink transition hover:border-navy hover:text-navy"
+                      onClick={async () => {
+                        const res = await fetch("/api/custom-report", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ spec, preset: p.id, format: "preview" }) });
+                        const j = await res.json();
+                        if (res.ok && j.spec) {
+                          setSpec(j.spec);
+                          setStale(true);
+                        }
+                      }}
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-1.5 text-[11px] leading-relaxed text-muted">A starting point only – it fills in the filters below, which you can then change. Nothing is built until you click Generate.</p>
+              </div>
+            )}
             <div className="mb-2 flex items-center gap-2 text-xs text-muted">
               Records must match
               <select className="input h-8 w-28 py-0 text-xs" value={spec.match} onChange={(e) => patch({ match: e.target.value as "all" | "any" })}>
@@ -300,23 +349,32 @@ export function ReportBuilder({ canSave }: { canSave: boolean }) {
                 <option value="any">any of these</option>
               </select>
             </div>
+            {spec.conditions.length === 0 && <p className="mb-2 text-xs text-muted">No filters yet – the report will cover every record.</p>}
             <div className="space-y-2">
               {spec.conditions.map((c, i) => (
                 <ConditionEditor
                   key={i}
                   condition={c}
                   fields={fields}
+                  ready={isConditionReady(c)}
                   onChange={(next) => patch({ conditions: spec.conditions.map((x, j) => (j === i ? next : x)) })}
                   onRemove={() => patch({ conditions: spec.conditions.filter((_, j) => j !== i) })}
                 />
               ))}
             </div>
-            <button
-              className="btn btn-secondary btn-sm mt-2"
-              onClick={() => patch({ conditions: [...spec.conditions, { field: fields[0]?.key ?? "", op: opsFor(fields[0] ?? { key: "", label: "", type: "text" })[0].op }] })}
-            >
-              <Plus size={14} /> Add a condition
-            </button>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={() => patch({ conditions: [...spec.conditions, { field: fields[0]?.key ?? "", op: opsFor(fields[0] ?? { key: "", label: "", type: "text" })[0].op }] })}
+              >
+                <Plus size={14} /> Add a filter
+              </button>
+              {unfilled > 0 && (
+                <span className="text-xs text-amber-700">
+                  {unfilled} filter{unfilled === 1 ? " has" : "s have"} no value yet, so {unfilled === 1 ? "it is" : "they are"} not being applied.
+                </span>
+              )}
+            </div>
           </Panel>
 
           <Panel title="Columns" hint="Choose what is printed, and the order it is printed in.">
@@ -453,11 +511,29 @@ export function ReportBuilder({ canSave }: { canSave: boolean }) {
           )}
         </div>
 
-        {/* ------------------------------------------------ preview */}
+        {/* ------------------------------------------------ the report itself */}
         <div className="min-w-0 space-y-3">
+          {preview && stale && (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm text-amber-900">
+              <span>The set-up has changed since this was built, so what is below is the older report.</span>
+              <button className="btn btn-sm btn-primary" onClick={generate} disabled={busy}>
+                {busy ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />} Generate it again
+              </button>
+            </div>
+          )}
           {!preview ? (
             <div className="card p-10 text-center text-sm text-muted">
-              <Loader2 size={18} className="mx-auto mb-2 animate-spin" /> Building the report…
+              {busy ? (
+                <>
+                  <Loader2 size={18} className="mx-auto mb-2 animate-spin" /> Building the report…
+                </>
+              ) : (
+                <>
+                  <Play size={20} className="mx-auto mb-2 text-navy" />
+                  <p className="font-medium text-ink">Nothing built yet.</p>
+                  <p className="mt-1">Set your filters and columns above, then click <b className="text-ink">Generate report</b>.</p>
+                </>
+              )}
             </div>
           ) : (
             <>
@@ -589,9 +665,9 @@ function move(list: string[], i: number, by: number): string[] {
   return next;
 }
 
-function Panel({ title, hint, icon, children }: { title: string; hint?: string; icon?: React.ReactNode; children: React.ReactNode }) {
+function Panel({ title, hint, icon, className, children }: { title: string; hint?: string; icon?: React.ReactNode; className?: string; children: React.ReactNode }) {
   return (
-    <div className="card p-4">
+    <div className={`card p-4${className ? ` ${className}` : ""}`}>
       <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold text-ink">
         {icon}
         {title}
@@ -672,14 +748,14 @@ function BandCard({ title, bands, first }: { title: string; bands: Band[]; first
   );
 }
 
-function ConditionEditor({ condition, fields, onChange, onRemove }: { condition: Condition; fields: SourceField[]; onChange: (c: Condition) => void; onRemove: () => void }) {
+function ConditionEditor({ condition, fields, ready, onChange, onRemove }: { condition: Condition; fields: SourceField[]; ready: boolean; onChange: (c: Condition) => void; onRemove: () => void }) {
   const field = fields.find((f) => f.key === condition.field) ?? fields[0];
   const ops = field ? opsFor(field) : [];
   const op = ops.find((o) => o.op === condition.op) ?? ops[0];
   if (!field || !op) return null;
 
   return (
-    <div className="rounded-lg border border-line bg-page/40 p-2">
+    <div className={`rounded-lg border p-2 ${ready ? "border-line bg-page/40" : "border-amber-300 bg-amber-50/60"}`}>
       <div className="flex gap-1">
         <select
           className="input flex-1 text-xs"

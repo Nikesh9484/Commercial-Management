@@ -1,6 +1,6 @@
 import type { RecordRow } from "../registers/types";
 import type { Condition, ReportSpec, SourceField } from "./types";
-import { opLabel } from "./types";
+import { isConditionReady, opLabel } from "./types";
 
 /**
  * Applies the builder's filter conditions to a set of rows. Pure and free of server imports so the
@@ -137,7 +137,8 @@ export function matchesCondition(row: RecordRow, c: Condition, field: SourceFiel
 
 /** Applies every condition of a spec. */
 export function applyFilter(rows: RecordRow[], spec: ReportSpec, fields: SourceField[]): RecordRow[] {
-  const live = spec.conditions.filter((c) => c.field && c.op);
+  // a condition that has been added but not yet filled in is ignored, not treated as "matches nothing"
+  const live = spec.conditions.filter(isConditionReady);
   if (!live.length) return rows;
   const byKey = new Map(fields.map((f) => [f.key, f]));
   return rows.filter((r) => {
@@ -162,7 +163,8 @@ export function describeCondition(c: Condition, fields: SourceField[]): string {
 }
 
 export function describeFilter(spec: ReportSpec, fields: SourceField[]): string[] {
-  return spec.conditions.filter((c) => c.field && c.op).map((c) => describeCondition(c, fields));
+  // only the conditions that actually filtered anything are printed on the report
+  return spec.conditions.filter(isConditionReady).map((c) => describeCondition(c, fields));
 }
 
 /** Sorts rows by the spec's sort list, falling back to the first column. */
