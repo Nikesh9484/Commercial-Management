@@ -155,7 +155,12 @@ export function describeCondition(c: Condition, fields: SourceField[]): string {
   const f = fields.find((x) => x.key === c.field);
   const name = f?.label ?? c.field;
   const op = opLabel(c.op);
-  if (c.op === "in" || c.op === "not_in") return `${name} ${op} ${(c.values ?? []).join(", ") || "–"}`;
+  if (c.op === "in" || c.op === "not_in") {
+    // one ticked value reads better without the "one of": "DVO status is Pending"
+    const list = (c.values ?? []).map(String);
+    if (list.length === 1) return `${name} ${c.op === "in" ? "is" : "is not"} ${list[0]}`;
+    return `${name} ${op} ${list.join(", ") || "–"}`;
+  }
   if (c.op === "num_between" || c.op === "date_between") return `${name} ${op} ${c.value ?? "–"} and ${c.value2 ?? "–"}`;
   if (c.op === "last_days" || c.op === "next_days") return `${name} ${op.replace("…", String(c.value ?? "?"))}`;
   if (c.value === undefined || c.value === null || c.value === "") return `${name} ${op}`;

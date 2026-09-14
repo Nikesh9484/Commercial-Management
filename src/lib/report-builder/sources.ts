@@ -79,7 +79,7 @@ function registerFields(def: RegisterDef, rows: RecordRow[]): SourceField[] {
       }
       if (seen.size && seen.size <= 40) options = [...seen].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
     }
-    out.push({ key: f.key, label: f.label, type: f.type, options, numeric, inDefault: !f.hideInTable, help: f.help });
+    out.push({ key: f.key, label: f.label, type: f.type, options, numeric, inDefault: !f.hideInTable, section: f.section, help: f.help });
   }
   return out;
 }

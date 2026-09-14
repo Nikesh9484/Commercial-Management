@@ -150,6 +150,8 @@ export interface SourceField {
   numeric?: boolean;
   /** Shown in the default column set. */
   inDefault?: boolean;
+  /** The part of the record this field belongs to, used to group the long field lists. */
+  section?: string;
   help?: string;
 }
 
@@ -183,41 +185,41 @@ export interface OpDef {
 }
 
 const TEXT_OPS: OpDef[] = [
-  { op: "contains", label: "contains", inputs: 1 },
-  { op: "not_contains", label: "does not contain", inputs: 1 },
+  { op: "contains", label: "contains the words", inputs: 1 },
   { op: "eq", label: "is exactly", inputs: 1 },
-  { op: "neq", label: "is not", inputs: 1 },
   { op: "starts", label: "starts with", inputs: 1 },
+  { op: "not_contains", label: "does not contain", inputs: 1 },
+  { op: "neq", label: "is not", inputs: 1 },
+  { op: "not_blank", label: "is not empty", inputs: 0 },
   { op: "blank", label: "is empty", inputs: 0 },
-  { op: "not_blank", label: "is filled in", inputs: 0 },
 ];
 
 const NUM_OPS: OpDef[] = [
-  { op: "num_between", label: "is between", inputs: 2 },
   { op: "num_gte", label: "is at least", inputs: 1 },
   { op: "num_lte", label: "is at most", inputs: 1 },
-  { op: "num_eq", label: "equals", inputs: 1 },
+  { op: "num_between", label: "is between", inputs: 2 },
+  { op: "num_eq", label: "is exactly", inputs: 1 },
+  { op: "not_blank", label: "is not empty", inputs: 0 },
   { op: "blank", label: "is empty", inputs: 0 },
-  { op: "not_blank", label: "has a value", inputs: 0 },
 ];
 
 const DATE_OPS: OpDef[] = [
-  { op: "date_between", label: "is between", inputs: 2 },
-  { op: "date_on", label: "is on", inputs: 1 },
+  { op: "overdue", label: "is already past", inputs: 0 },
+  { op: "next_days", label: "is in the next … days", inputs: 1, days: true },
+  { op: "last_days", label: "was in the last … days", inputs: 1, days: true },
   { op: "date_before", label: "is before", inputs: 1 },
   { op: "date_after", label: "is after", inputs: 1 },
-  { op: "last_days", label: "is in the last … days", inputs: 1, days: true },
-  { op: "next_days", label: "is in the next … days", inputs: 1, days: true },
-  { op: "overdue", label: "is in the past (overdue)", inputs: 0 },
+  { op: "date_between", label: "is between", inputs: 2 },
+  { op: "date_on", label: "is on", inputs: 1 },
+  { op: "not_blank", label: "is not empty", inputs: 0 },
   { op: "blank", label: "is empty", inputs: 0 },
-  { op: "not_blank", label: "is filled in", inputs: 0 },
 ];
 
 const SET_OPS: OpDef[] = [
-  { op: "in", label: "is any of", inputs: 1, set: true },
-  { op: "not_in", label: "is none of", inputs: 1, set: true },
+  { op: "in", label: "is one of", inputs: 1, set: true },
+  { op: "not_in", label: "is not one of", inputs: 1, set: true },
+  { op: "not_blank", label: "is not empty", inputs: 0 },
   { op: "blank", label: "is empty", inputs: 0 },
-  { op: "not_blank", label: "is filled in", inputs: 0 },
 ];
 
 const BOOL_OPS: OpDef[] = [

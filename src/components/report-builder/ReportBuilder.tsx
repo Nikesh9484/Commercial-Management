@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, FileDown, FileSpreadsheet, FileText, Filter, Loader2, Play, Plus, Save, Trash2, X } from "lucide-react";
 import { emptySpec, isConditionReady, layoutOf, LAYOUTS, opsFor, type Condition, type ReportSpec, type SourceField, type SourceInfo } from "@/lib/report-builder/types";
+import { describeCondition } from "@/lib/report-builder/filter";
 import { useToast } from "@/components/ui/Toast";
 
 /**
@@ -350,10 +351,10 @@ export function ReportBuilder({ canSave }: { canSave: boolean }) {
               </div>
             )}
             <div className="mb-2 flex items-center gap-2 text-xs text-muted">
-              Records must match
-              <select className="input h-8 w-28 py-0 text-xs" value={spec.match} onChange={(e) => patch({ match: e.target.value as "all" | "any" })}>
-                <option value="all">all of these</option>
-                <option value="any">any of these</option>
+              Show a record when it matches
+              <select className="input h-8 w-40 py-0 text-xs" value={spec.match} onChange={(e) => patch({ match: e.target.value as "all" | "any" })}>
+                <option value="all">every filter below</option>
+                <option value="any">any one filter below</option>
               </select>
             </div>
             {spec.conditions.length === 0 && <p className="mb-2 text-xs text-muted">No filters yet – the report will cover every record.</p>}
@@ -364,11 +365,25 @@ export function ReportBuilder({ canSave }: { canSave: boolean }) {
                   condition={c}
                   fields={fields}
                   ready={isConditionReady(c)}
+                  index={i}
+                  match={spec.match}
                   onChange={(next) => patch({ conditions: spec.conditions.map((x, j) => (j === i ? next : x)) })}
                   onRemove={() => patch({ conditions: spec.conditions.filter((_, j) => j !== i) })}
                 />
               ))}
             </div>
+            {applied > 0 && (
+              // the filter written out as a sentence, so it can be read back before it is run
+              <p className="mt-2 rounded-lg border border-line bg-white px-2.5 py-2 text-xs leading-relaxed text-ink">
+                <span className="font-semibold">In plain English: </span>
+                Show the {info.title} records where{" "}
+                {spec.conditions
+                  .filter(isConditionReady)
+                  .map((c) => describeCondition(c, fields))
+                  .join(spec.match === "any" ? ", or " : ", and ")}
+                .
+              </p>
+            )}
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <button
                 className="btn btn-secondary btn-sm"
@@ -429,11 +444,7 @@ export function ReportBuilder({ canSave }: { canSave: boolean }) {
             <Label>Group by (with a subtotal per group)</Label>
             <select className="input mb-2" value={spec.groupBy ?? ""} onChange={(e) => patch({ groupBy: e.target.value || null })}>
               <option value="">No grouping</option>
-              {fields.map((f) => (
-                <option key={f.key} value={f.key}>
-                  {f.label}
-                </option>
-              ))}
+              <FieldOptions fields={fields} />
             </select>
             <Label>Sort by</Label>
             {[0, 1].map((i) => (
@@ -449,11 +460,7 @@ export function ReportBuilder({ canSave }: { canSave: boolean }) {
                   }}
                 >
                   <option value="">{i === 0 ? "Default order" : "then…"}</option>
-                  {fields.map((f) => (
-                    <option key={f.key} value={f.key}>
-                      {f.label}
-                    </option>
-                  ))}
+                  <FieldOptions fields={fields} />
                 </select>
                 <select
                   className="input w-28 text-xs"
@@ -779,60 +786,105 @@ function BandCard({ title, bands, first }: { title: string; bands: Band[]; first
   );
 }
 
-function ConditionEditor({ condition, fields, ready, onChange, onRemove }: { condition: Condition; fields: SourceField[]; ready: boolean; onChange: (c: Condition) => void; onRemove: () => void }) {
+/** The field list broken into its sections, so a register with a hundred fields stays navigable. */
+function FieldOptions({ fields }: { fields: SourceField[] }) {
+  const groups: { name: string; list: SourceField[] }[] = [];
+  for (const f of fields) {
+    const name = f.section ?? "Main";
+    const g = groups.find((x) => x.name === name);
+    if (g) g.list.push(f);
+    else groups.push({ name, list: [f] });
+  }
+  if (groups.length < 2) return <>{fields.map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}</>;
+  return (
+    <>
+      {groups.map((g) => (
+        <optgroup key={g.name} label={g.name}>
+          {g.list.map((f) => (
+            <option key={f.key} value={f.key}>
+              {f.label}
+            </option>
+          ))}
+        </optgroup>
+      ))}
+    </>
+  );
+}
+
+function ConditionEditor({ condition, fields, ready, index, match, onChange, onRemove }: { condition: Condition; fields: SourceField[]; ready: boolean; index: number; match: "all" | "any"; onChange: (c: Condition) => void; onRemove: () => void }) {
+  const [find, setFind] = useState("");
   const field = fields.find((f) => f.key === condition.field) ?? fields[0];
   const ops = field ? opsFor(field) : [];
   const op = ops.find((o) => o.op === condition.op) ?? ops[0];
   if (!field || !op) return null;
 
+  const chosen = (condition.values ?? []).map(String);
+  const options = field.options ?? [];
+  const shown = find.trim() ? options.filter((o) => o.toLowerCase().includes(find.trim().toLowerCase())) : options;
+  const toggle = (o: string) => onChange({ ...condition, values: chosen.includes(o) ? chosen.filter((x) => x !== o) : [...chosen, o] });
+
   return (
     <div className={`rounded-lg border p-2 ${ready ? "border-line bg-page/40" : "border-amber-300 bg-amber-50/60"}`}>
-      <div className="flex gap-1">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="w-10 shrink-0 text-xs font-semibold uppercase tracking-wide text-muted">{index === 0 ? "Where" : match === "any" ? "or" : "and"}</span>
         <select
-          className="input flex-1 text-xs"
+          className="input min-w-0 flex-1 text-xs"
           value={condition.field}
           onChange={(e) => {
             const next = fields.find((f) => f.key === e.target.value)!;
-            onChange({ field: next.key, op: opsFor(next)[0].op });
+            setFind("");
+            onChange({ field: next.key, op: opsFor(next)[0].op, value: null, value2: null, values: [] });
           }}
         >
-          {fields.map((f) => (
-            <option key={f.key} value={f.key}>
-              {f.label}
-            </option>
-          ))}
+          <FieldOptions fields={fields} />
         </select>
-        <button className="rounded p-1 text-muted hover:text-red-600" onClick={onRemove} title="Remove">
-          <X size={14} />
-        </button>
-      </div>
-      <div className="mt-1 flex gap-1">
-        <select className="input flex-1 text-xs" value={op.op} onChange={(e) => onChange({ ...condition, op: e.target.value as Condition["op"], value: null, value2: null, values: [] })}>
+        <select className="input w-44 shrink-0 text-xs" value={op.op} onChange={(e) => onChange({ ...condition, op: e.target.value as Condition["op"], value: null, value2: null, values: [] })}>
           {ops.map((o) => (
             <option key={o.op} value={o.op}>
               {o.label}
             </option>
           ))}
         </select>
+        <button className="shrink-0 rounded p-1 text-muted hover:text-red-600" onClick={onRemove} title="Remove this filter">
+          <X size={14} />
+        </button>
       </div>
+
       {op.set ? (
-        <select
-          multiple
-          size={Math.min(6, Math.max(3, field.options?.length ?? 3))}
-          className="input mt-1 text-xs"
-          value={(condition.values ?? []).map(String)}
-          onChange={(e) => onChange({ ...condition, values: [...e.target.selectedOptions].map((o) => o.value) })}
-        >
-          {(field.options ?? []).map((o) => (
-            <option key={o} value={o}>
-              {o}
-            </option>
-          ))}
-        </select>
+        // tick boxes, not a multi-select list: a list box needs ctrl-click to pick more than one,
+        // which is the single easiest way to end up with a filter that quietly selects nothing
+        <div className="mt-1.5 rounded-lg border border-line bg-white p-1.5">
+          {options.length > 8 && (
+            <input className="input mb-1.5 h-7 py-0 text-xs" placeholder={`Search ${options.length} options…`} value={find} onChange={(e) => setFind(e.target.value)} />
+          )}
+          <div className="max-h-44 space-y-0.5 overflow-y-auto">
+            {shown.length === 0 && <p className="px-1 py-2 text-xs text-muted">Nothing matches “{find}”.</p>}
+            {shown.map((o) => (
+              <label key={o} className="flex cursor-pointer items-start gap-2 rounded px-1 py-0.5 text-xs text-ink hover:bg-page">
+                <input type="checkbox" className="mt-0.5 shrink-0" checked={chosen.includes(o)} onChange={() => toggle(o)} />
+                <span className="min-w-0 break-words">{o}</span>
+              </label>
+            ))}
+          </div>
+          <div className="mt-1 flex items-center gap-2 border-t border-line pt-1 text-[11px]">
+            <span className={chosen.length ? "font-medium text-ink" : "text-amber-700"}>{chosen.length ? `${chosen.length} ticked` : "Tick at least one"}</span>
+            {chosen.length > 0 && (
+              <button className="ml-auto text-muted hover:text-red-600" onClick={() => onChange({ ...condition, values: [] })}>
+                Clear
+              </button>
+            )}
+          </div>
+        </div>
       ) : op.inputs > 0 ? (
-        <div className="mt-1 flex gap-1">
+        <div className="mt-1.5 flex items-center gap-1.5">
+          <span className="w-10 shrink-0" />
           <ValueInput field={field} days={op.days} value={condition.value ?? ""} onChange={(v) => onChange({ ...condition, value: v })} />
-          {op.inputs === 2 && <ValueInput field={field} days={op.days} value={condition.value2 ?? ""} onChange={(v) => onChange({ ...condition, value2: v })} />}
+          {op.inputs === 2 && (
+            <>
+              <span className="shrink-0 text-xs text-muted">and</span>
+              <ValueInput field={field} days={op.days} value={condition.value2 ?? ""} onChange={(v) => onChange({ ...condition, value2: v })} />
+            </>
+          )}
         </div>
       ) : null}
       {field.help && <p className="mt-1 text-[11px] leading-snug text-muted">{field.help}</p>}
