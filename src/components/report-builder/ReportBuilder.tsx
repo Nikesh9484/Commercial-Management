@@ -71,7 +71,9 @@ const fmt = (v: unknown, type: string): string => {
   return s.length > 80 ? `${s.slice(0, 77)}…` : s;
 };
 
-const TONE: Record<string, string> = { red: "text-[#8a3d00] font-semibold", amber: "text-[#7a5400] font-semibold", green: "text-[#00573f] font-semibold" };
+// the same muted palette the PDF, Excel and Word use, so the screen is a true preview
+const TONE: Record<string, string> = { red: "text-[#87362d] font-semibold", amber: "text-[#8a5f1c] font-semibold", green: "text-[#3c7e66] font-semibold" };
+const GLYPH: Record<string, string> = { red: "▲", amber: "■", green: "●" };
 
 export function ReportBuilder({ canSave }: { canSave: boolean }) {
   const toast = useToast();
@@ -466,7 +468,7 @@ export function ReportBuilder({ canSave }: { canSave: boolean }) {
                     {l}
                   </p>
                 ))}
-                <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-semibold text-navy">{preview.headline}</div>
+                <div className="mt-3 rounded-r-lg border-l-4 border-[#0f2b4c] bg-[#f5f1ea] px-3 py-2.5 text-sm font-semibold text-[#0b2137]">{preview.headline}</div>
                 {preview.filterSummary.length > 0 && (
                   <p className="mt-2 text-xs text-muted">
                     Filtered to: {preview.filterSummary.join(" · ")}
@@ -500,11 +502,14 @@ export function ReportBuilder({ canSave }: { canSave: boolean }) {
               )}
 
               {preview.attention.length > 0 && (
-                <div className="card border border-amber-200 p-5">
-                  <h3 className="mb-1 text-sm font-semibold text-ink">Needs attention</h3>
-                  <ul className="space-y-1 text-sm text-[#7c2d12]">
+                <div className="card p-5">
+                  <h3 className="mb-2 text-sm font-semibold text-ink">Needs attention</h3>
+                  <ul className="space-y-1.5 text-sm">
                     {preview.attention.map((a, i) => (
-                      <li key={i}>• {a}</li>
+                      <li key={i} className="rounded-r border-l-[3px] border-[#87362d] bg-[#f3e6e3] px-3 py-1.5 text-[#87362d]">
+                        <span className="mr-1.5">▲</span>
+                        {a}
+                      </li>
                     ))}
                   </ul>
                 </div>
@@ -602,18 +607,22 @@ const Label = ({ children }: { children: React.ReactNode }) => <div className="m
 function Row({ row, columns }: { row: Record<string, unknown>; columns: { key: string; label: string; type: string; numeric: boolean }[] }) {
   const tone = String(row.__row_tone ?? "");
   return (
-    <tr className={tone === "red" ? "bg-red-50/60" : tone === "amber" ? "bg-amber-50/60" : ""}>
+    <tr className={tone === "red" || tone === "amber" ? "bg-[#f7f8fa]" : ""}>
       {columns.map((c) => {
         const cell = String(row[`${c.key}__tone`] ?? "");
+        const text = fmt(row[c.key], c.type);
         return (
           <td key={c.key} className={`${c.numeric ? "tnum text-right" : ""} ${TONE[cell] ?? ""}`} title={String(row[c.key] ?? "")}>
-            {fmt(row[c.key], c.type)}
+            {cell && !c.numeric && text !== "–" && <span className="mr-1">{GLYPH[cell]}</span>}
+            {text}
           </td>
         );
       })}
     </tr>
   );
 }
+
+const RAMP = ["#0f2b4c", "#2f4f73", "#4d6d8f", "#7d95ad", "#a9bac9"];
 
 function BandCard({ title, bands, first }: { title: string; bands: Band[]; first: string }) {
   if (!bands.length) return null;
@@ -634,7 +643,7 @@ function BandCard({ title, bands, first }: { title: string; bands: Band[]; first
           </tr>
         </thead>
         <tbody>
-          {bands.map((b) => (
+          {bands.map((b, i) => (
             <tr key={b.label}>
               <td>{b.label}</td>
               <td className="tnum text-right">{b.n.toLocaleString("en")}</td>
@@ -642,7 +651,7 @@ function BandCard({ title, bands, first }: { title: string; bands: Band[]; first
               {hasValue && <td className="tnum text-right">{b.share.toFixed(1)}%</td>}
               <td>
                 <div className="h-2 w-full rounded bg-page">
-                  <div className="h-2 rounded bg-[#2a78d6]" style={{ width: `${Math.max(2, ((hasValue ? b.value : b.n) / max) * 100)}%` }} />
+                  <div className="h-2 rounded" style={{ width: `${Math.max(2, ((hasValue ? b.value : b.n) / max) * 100)}%`, background: RAMP[i % RAMP.length] }} />
                 </div>
               </td>
             </tr>

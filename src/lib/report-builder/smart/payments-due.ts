@@ -113,7 +113,7 @@ export const paymentsDue: SmartSource = {
         application_date: a.application_date ?? null,
         retention_held: num(a.retention_certified),
         advance_recovered: Math.abs(num(a.advance_recovery_certified)),
-        __row_tone: bucket === "Overdue" ? "red" : bucket === "Due within 14 days" ? "amber" : null,
+        bucket__tone: bucket === "Overdue" ? "red" : bucket === "Due within 14 days" ? "amber" : bucket === "Certified – invoice not yet raised" ? "amber" : "green",
         days__tone: days === null ? null : days < 0 ? "red" : days <= 14 ? "amber" : null,
       });
     }

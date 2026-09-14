@@ -113,7 +113,6 @@ export const eotTracker: SmartSource = {
         sar_determined: num(c.determination_cost_view),
         nod: c.nod_dispute === true ? "Notice of dispute" : c.nod_issued === true ? "Notice of dissatisfaction" : "–",
         notice_complies: txt(c.notice_complies),
-        __row_tone: closed ? null : flag === "Stuck" || (daysToTarget !== null && daysToTarget < 0) ? "red" : flag === "Watch" ? "amber" : null,
         flag__tone: flag === "Stuck" ? "red" : flag === "Watch" ? "amber" : flag === "On track" ? "green" : null,
         days_to_target__tone: daysToTarget === null ? null : daysToTarget < 0 ? "red" : daysToTarget <= 7 ? "amber" : null,
       });

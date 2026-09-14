@@ -122,7 +122,6 @@ export const scorecard: SmartSource = {
         fa_status: faStatus,
         applications: own.length,
         health,
-        __row_tone: watch ? "amber" : null,
         health__tone: watch ? "amber" : health === "On track" ? "green" : null,
         overdue_count__tone: overdue.length ? "red" : null,
         bond_status__tone: expired ? "red" : soon ? "amber" : null,

@@ -88,7 +88,6 @@ export const attention: SmartSource = {
         consequence,
         action,
         priority: Math.round((value / 1000) * (1 + late / 30) * weight),
-        __row_tone: severity === "Critical" ? "red" : severity === "High" ? "amber" : null,
         severity__tone: severity === "Critical" ? "red" : severity === "High" ? "amber" : severity === "Medium" ? null : "green",
         days__tone: days !== null && days < 0 ? "red" : null,
       });

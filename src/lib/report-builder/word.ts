@@ -4,6 +4,7 @@ import { formatDate, formatDateTime } from "../format";
 import type { RecordRow } from "../registers/types";
 import type { BuiltReport, ResultColumn } from "./build";
 import { fmtMoney } from "./build";
+import { PALETTE, TONE_GLYPH, TONE_TEXT, bare } from "./palette";
 
 /**
  * The Word version: the report written up as a document rather than printed as a table. It follows
@@ -19,12 +20,13 @@ import { fmtMoney } from "./build";
 
 const SERIF = "Cambria";
 const SANS = "Calibri";
-const NAVY = "0F2B4C";
-const MUTED = "5B6577";
-const INK = "172033";
-const RULE = "D9DEE8";
-/** Okabe-Ito, chosen so the flags survive a colour-blind reader and a greyscale photocopy. */
-const TONE: Record<string, string> = { red: "8A3D00", amber: "7A5400", green: "00573F" };
+const NAVY = bare(PALETTE.brand);
+const DEEP = bare(PALETTE.brandDeep);
+const MUTED = bare(PALETTE.muted);
+const INK = bare(PALETTE.ink);
+const RULE = bare(PALETTE.line);
+const PANEL = bare(PALETTE.panel);
+const TONE: Record<string, string> = { red: bare(TONE_TEXT.red), amber: bare(TONE_TEXT.amber), green: bare(TONE_TEXT.green) };
 
 const A4 = { w: 11906, h: 16838 };
 const MARGIN = 1134; // 2cm
@@ -89,7 +91,15 @@ function titleBlock(r: BuiltReport): Paragraph[] {
 /** One page: the bottom line, the points that carry it, and what is being asked for. */
 function executiveSummary(r: BuiltReport): Paragraph[] {
   const out: Paragraph[] = [h1("1.  Executive summary")];
-  out.push(new Paragraph({ spacing: { after: 160, line: 280, lineRule: "exact" }, children: [new TextRun({ text: r.headline, bold: true, font: SERIF, size: 24, color: NAVY })] }));
+  out.push(
+    new Paragraph({
+      spacing: { before: 60, after: 200, line: 280, lineRule: "exact" },
+      shading: { type: ShadingType.CLEAR, fill: bare(PALETTE.calloutWarm), color: "auto" },
+      border: { left: { style: BorderStyle.SINGLE, size: 18, color: NAVY, space: 8 } },
+      indent: { left: 120, right: 120 },
+      children: [new TextRun({ text: r.headline, bold: true, font: SERIF, size: 24, color: DEEP })],
+    }),
+  );
 
   if (r.notes) out.push(body(r.notes, true));
 
@@ -101,7 +111,7 @@ function executiveSummary(r: BuiltReport): Paragraph[] {
 
   if (r.attention.length) {
     out.push(h3("What is needed, and from whom"));
-    for (const a of r.attention.slice(0, 6)) out.push(bullet(a));
+    for (const a of r.attention.slice(0, 6)) out.push(alertBullet(a));
     out.push(new Paragraph({ spacing: { before: 80, after: 200 }, children: [new TextRun({ text: "Each point above sits with the commercial team unless a name is given against it. Dates for action are the dates shown in the tables that follow.", italics: true, font: SERIF, size: 20, color: MUTED })] }));
   }
   return out;
@@ -159,12 +169,12 @@ function detailTable(r: BuiltReport, width: number): (Paragraph | Table)[] {
   if (r.groups) {
     for (const g of r.groups) {
       rows.push(groupRow(`${g.label} (${g.rows.length})`, widths));
-      for (const row of g.rows) rows.push(dataRow(row, r.columns, widths));
+      g.rows.forEach((row, i) => rows.push(dataRow(row, r.columns, widths, i % 2 === 1)));
       rows.push(totalRow(r.columns, g.totals, `${g.label} total`, widths, false));
     }
     rows.push(totalRow(r.columns, r.totals, "Grand total", widths, true));
   } else {
-    for (const row of r.rows) rows.push(dataRow(row, r.columns, widths));
+    r.rows.forEach((row, i) => rows.push(dataRow(row, r.columns, widths, i % 2 === 1)));
     if (r.totalKeys.length) rows.push(totalRow(r.columns, r.totals, "Total", widths, true));
   }
   out.push(new Table({ columnWidths: widths, width: { size: width, type: WidthType.DXA }, rows, borders: noBorders() }));
@@ -181,7 +191,12 @@ function basisBlock(r: BuiltReport): Paragraph[] {
 /* ------------------------------------------------------------------ text helpers */
 
 const h1 = (text: string) =>
-  new Paragraph({ heading: HeadingLevel.HEADING_1, spacing: { before: 320, after: 140 }, children: [new TextRun({ text, bold: true, font: SANS, size: 26, color: NAVY })] });
+  new Paragraph({
+    heading: HeadingLevel.HEADING_1,
+    spacing: { before: 320, after: 140 },
+    border: { bottom: { style: BorderStyle.SINGLE, size: 8, color: NAVY, space: 4 } },
+    children: [new TextRun({ text, bold: true, font: SANS, size: 26, color: NAVY })],
+  });
 const h2 = (text: string) =>
   new Paragraph({ heading: HeadingLevel.HEADING_2, spacing: { before: 220, after: 100 }, children: [new TextRun({ text, bold: true, font: SANS, size: 22, color: NAVY })] });
 const h3 = (text: string) =>
@@ -195,6 +210,16 @@ const bullet = (text: string) =>
   new Paragraph({ spacing: { after: 90, line: 270, lineRule: "exact" }, indent: { left: 360, hanging: 200 }, children: [new TextRun({ text: `—   ${text}`, font: SERIF, size: 21, color: INK })] });
 
 const spacer = () => new Paragraph({ spacing: { after: 120 }, children: [] });
+
+/** A point that needs action: its own marker, its own colour and its own tint. */
+const alertBullet = (text: string) =>
+  new Paragraph({
+    spacing: { after: 90, line: 270, lineRule: "exact" },
+    shading: { type: ShadingType.CLEAR, fill: bare(PALETTE.badTint), color: "auto" },
+    border: { left: { style: BorderStyle.SINGLE, size: 12, color: bare(PALETTE.bad), space: 6 } },
+    indent: { left: 180, right: 120 },
+    children: [new TextRun({ text: `${TONE_GLYPH.red}   ${text}`, font: SERIF, size: 21, color: bare(PALETTE.bad) })],
+  });
 
 /* ------------------------------------------------------------------ table helpers */
 
@@ -234,14 +259,17 @@ function headRow(columns: ResultColumn[], widths: number[]): TableRow {
 
 function groupRow(label: string, widths: number[]): TableRow {
   const total = widths.reduce((t, w) => t + w, 0);
-  return new TableRow({ children: [cell(label, total, { bold: true, color: NAVY, shade: "F6F8FB", top: true })] });
+  return new TableRow({ children: [cell(label, total, { bold: true, color: NAVY, shade: PANEL, top: true })] });
 }
 
-function dataRow(row: RecordRow, columns: ResultColumn[], widths: number[]): TableRow {
+function dataRow(row: RecordRow, columns: ResultColumn[], widths: number[], banded = false): TableRow {
   return new TableRow({
     children: columns.map((c, i) => {
       const tone = row[`${c.key}__tone`] as string | undefined;
-      return cell(format(row[c.key], c), widths[i], { align: c.numeric ? AlignmentType.RIGHT : AlignmentType.LEFT, color: tone && TONE[tone] ? TONE[tone] : INK, bold: !!(tone && TONE[tone]) });
+      const toned = tone && TONE[tone];
+      const text = format(row[c.key], c);
+      const marked = toned && !c.numeric && text !== "–" ? `${TONE_GLYPH[tone as keyof typeof TONE_GLYPH] ?? ""}  ${text}` : text;
+      return cell(marked, widths[i], { align: c.numeric ? AlignmentType.RIGHT : AlignmentType.LEFT, color: toned ? TONE[tone!] : INK, bold: !!toned, shade: banded ? bare(PALETTE.zebra) : undefined });
     }),
   });
 }

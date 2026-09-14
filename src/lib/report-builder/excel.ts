@@ -3,6 +3,7 @@ import { APP_NAME } from "../brand";
 import { formatDate, toDate } from "../format";
 import type { RecordRow } from "../registers/types";
 import type { BuiltReport, ResultColumn } from "./build";
+import { PALETTE, TONE_GLYPH, TONE_TEXT, TONE_TINT, argb } from "./palette";
 
 /**
  * The Excel of a custom report. Two sheets on purpose: "Report" is the presented version with the
@@ -11,18 +12,18 @@ import type { BuiltReport, ResultColumn } from "./build";
  * are written as numbers with real Excel formats (never as text), so totals and pivots work.
  */
 
-const NAVY = "FF0F2B4C";
-const MUTED = "FF5B6577";
-const BAND = "FFEFF6FF";
-const LINE = "FFD9DEE8";
+const NAVY = argb(PALETTE.brand);
+const MUTED = argb(PALETTE.muted);
+const LINE = argb(PALETTE.line);
+const ZEBRA = argb(PALETTE.zebra);
+const PANEL = argb(PALETTE.panel);
 /** Accounting style: thousands, negatives in brackets, nothing shown for zero. */
 const MONEY = '#,##0;(#,##0);"–"';
 const NUMBER = '#,##0;(#,##0);"–"';
 const PERCENT = '0.0"%";(0.0)"%";"–"';
 const DATE_FMT = "DD-MMM-YY";
-/** Okabe-Ito, so the flags survive a colour-blind reader and a greyscale photocopier. */
-const TONE_FILL: Record<string, string> = { red: "FFFDE7DC", amber: "FFFDF3DC", green: "FFDFF5EC" };
-const TONE_FONT: Record<string, string> = { red: "FF8A3D00", amber: "FF7A5400", green: "FF00573F" };
+const TONE_FILL: Record<string, string> = { red: argb(TONE_TINT.red), amber: argb(TONE_TINT.amber), green: argb(TONE_TINT.green) };
+const TONE_FONT: Record<string, string> = { red: argb(TONE_TEXT.red), amber: argb(TONE_TEXT.amber), green: argb(TONE_TEXT.green) };
 
 export async function renderBuilderExcel(r: BuiltReport): Promise<Buffer> {
   const wb = new ExcelJS.Workbook();
@@ -47,7 +48,8 @@ function reportSheet(wb: ExcelJS.Workbook, r: BuiltReport) {
 
   const h = ws.addRow([r.headline]);
   h.font = { bold: true, size: 11, color: { argb: NAVY } };
-  h.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: BAND } };
+  h.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: argb(PALETTE.calloutWarm) } };
+  h.getCell(1).border = { left: { style: "thick", color: { argb: NAVY } } };
   h.alignment = { wrapText: true, vertical: "top" };
   h.height = Math.min(60, 14 * Math.ceil(r.headline.length / 110));
   if (r.notes) ws.addRow([r.notes]).font = { italic: true, size: 10 };
@@ -72,8 +74,10 @@ function reportSheet(wb: ExcelJS.Workbook, r: BuiltReport) {
   if (r.attention.length) {
     sectionTitle(ws, "Needs attention");
     for (const a of r.attention) {
-      const row = ws.addRow([`• ${a}`]);
+      const row = ws.addRow([`${TONE_GLYPH.red}  ${a}`]);
       row.alignment = { wrapText: true, vertical: "top" };
+      row.font = { color: { argb: argb(PALETTE.bad) } };
+      row.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: argb(PALETTE.badTint) } };
       row.height = Math.min(70, 13 * Math.ceil(a.length / 110));
     }
     ws.addRow([]);
@@ -97,12 +101,13 @@ function reportSheet(wb: ExcelJS.Workbook, r: BuiltReport) {
       for (const g of r.groups) {
         const gr = ws.addRow([`${g.label} (${g.rows.length})`]);
         gr.font = { bold: true, color: { argb: NAVY } };
-        for (const row of g.rows) writeRow(ws, row, r.columns);
+        for (let i = 1; i <= r.columns.length; i++) gr.getCell(i).fill = { type: "pattern", pattern: "solid", fgColor: { argb: PANEL } };
+        g.rows.forEach((row, i) => writeRow(ws, row, r.columns, i % 2 === 1));
         totalLine(ws, r.columns, g.totals, `${g.label} total`, false);
       }
       totalLine(ws, r.columns, r.totals, "Grand total", true);
     } else {
-      for (const row of r.rows) writeRow(ws, row, r.columns);
+      r.rows.forEach((row, i) => writeRow(ws, row, r.columns, i % 2 === 1));
       if (r.totalKeys.length) totalLine(ws, r.columns, r.totals, "Total", true);
     }
     // the header of the detail table repeats when printed
@@ -120,9 +125,12 @@ function reportSheet(wb: ExcelJS.Workbook, r: BuiltReport) {
   ws.headerFooter = { oddFooter: `&L${r.title} · as at ${formatDate(r.asOf)}&R Page &P of &N` };
 }
 
-function sectionTitle(ws: ExcelJS.Worksheet, text: string, hint?: string) {
+function sectionTitle(ws: ExcelJS.Worksheet, text: string, hint?: string, width = 4) {
   const row = ws.addRow([text]);
   row.font = { bold: true, size: 12, color: { argb: NAVY } };
+  for (let i = 1; i <= width; i++) row.getCell(i).fill = { type: "pattern", pattern: "solid", fgColor: { argb: PANEL } };
+  row.height = 20;
+  row.alignment = { vertical: "middle" };
   if (hint) ws.addRow([hint]).font = { size: 8, color: { argb: MUTED } };
 }
 
@@ -172,20 +180,22 @@ function bandBlock(ws: ExcelJS.Worksheet, bands: { label: string; n: number; val
   ws.addRow([]);
 }
 
-function writeRow(ws: ExcelJS.Worksheet, row: RecordRow, columns: ResultColumn[]) {
+function writeRow(ws: ExcelJS.Worksheet, row: RecordRow, columns: ResultColumn[], banded = false) {
   const values = columns.map((c) => cellValue(row[c.key], c));
   const r = ws.addRow(values);
   columns.forEach((c, i) => {
     const cell = r.getCell(i + 1);
+    if (banded) cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: ZEBRA } };
     if (c.type === "money") cell.numFmt = MONEY;
     else if (c.type === "number") cell.numFmt = NUMBER;
     else if (c.type === "percent") cell.numFmt = PERCENT;
     else if (c.type === "date") cell.numFmt = DATE_FMT;
     if (c.numeric) cell.alignment = { horizontal: "right" };
     const tone = row[`${c.key}__tone`] as string | undefined;
-    if (tone && TONE_FILL[tone]) {
-      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: TONE_FILL[tone] } };
+    if (tone && TONE_FONT[tone]) {
       cell.font = { color: { argb: TONE_FONT[tone] }, bold: true };
+      if (!c.numeric && typeof cell.value === "string") cell.value = `${TONE_GLYPH[tone as keyof typeof TONE_GLYPH] ?? ""}  ${cell.value}`;
+      else if (c.numeric) cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: TONE_FILL[tone] } };
     }
   });
 }

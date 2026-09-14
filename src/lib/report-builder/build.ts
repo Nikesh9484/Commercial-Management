@@ -164,7 +164,9 @@ export function buildReport(spec: ReportSpec, ctx: BuildContext): BuiltReport {
     return { key: k, label: f.label, type: f.type, numeric: !!f.numeric };
   });
 
-  const totalKeys = columns.filter((c) => c.numeric && c.type !== "percent").map((c) => c.key);
+  // money always totals; a count of records does; a number of days, an age or a score does not
+  const NOT_ADDITIVE = /day|age|%|percent|pct|rate|score|year|month|no\.|number of days/i;
+  const totalKeys = columns.filter((c) => c.numeric && c.type !== "percent" && (c.type === "money" || !NOT_ADDITIVE.test(`${c.key} ${c.label}`))).map((c) => c.key);
   const totalsOf = (set: RecordRow[]) => Object.fromEntries(totalKeys.map((k) => [k, r2(set.reduce((t, r) => t + num(r[k]), 0))]));
   const totals = totalsOf(rows);
 
