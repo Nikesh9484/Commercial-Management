@@ -8,6 +8,7 @@ import { useToast } from "@/components/ui/Toast";
 import { formatDate, formatDateTime, formatMoney } from "@/lib/format";
 import type { LibraryDoc, LibraryKey } from "@/lib/library/store";
 import type { ChipTone } from "@/lib/registers/types";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 
 interface ContractOption {
   id: number;
@@ -327,29 +328,30 @@ export function DocumentLibrary({ library, info, docs: initial, contracts, contr
           <Filter size={13} /> Filter the library
         </div>
         <div className="grid gap-2 md:grid-cols-5">
-          <select className="input" value={fContractor} onChange={(e) => { setFContractor(e.target.value); setFContract(""); }}>
-            <option value="">All contractors</option>
-            {contractors.filter((c) => docs.some((d) => d.contractor_id === c.id) || contracts.some((k) => k.contractor_id === c.id)).map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
-          </select>
-          <select className="input" value={fContract} onChange={(e) => setFContract(e.target.value)}>
-            <option value="">All contract codes</option>
-            {contractsForFilter.map((c) => (
-              <option key={c.id} value={c.id}>{c.acc || c.po} · {c.title}</option>
-            ))}
-          </select>
-          <select className="input" value={fType} onChange={(e) => setFType(e.target.value)}>
-            <option value="">All document types</option>
-            {usedTypes.map((t) => (
-              <option key={t} value={t}>{t}</option>
-            ))}
-          </select>
-          <select className="input" value={fStatus} onChange={(e) => setFStatus(e.target.value)}>
-            <option value="">Filed and unfiled</option>
-            <option value="filed">Filed under a contractor</option>
-            <option value="unfiled">Not yet filed ({unfiled})</option>
-          </select>
+          <SearchableSelect
+            placeholder="All contractors"
+            value={fContractor}
+            onChange={(v) => { setFContractor(v); setFContract(""); }}
+            options={contractors
+              .filter((c) => docs.some((d) => d.contractor_id === c.id) || contracts.some((k) => k.contractor_id === c.id))
+              .map((c) => ({ value: String(c.id), label: c.name }))}
+          />
+          <SearchableSelect
+            placeholder="All contract codes"
+            value={fContract}
+            onChange={setFContract}
+            options={contractsForFilter.map((c) => ({ value: String(c.id), label: c.acc || c.po, hint: c.title }))}
+          />
+          <SearchableSelect placeholder="All document types" value={fType} onChange={setFType} options={usedTypes.map((t) => ({ value: t, label: t }))} />
+          <SearchableSelect
+            placeholder="Filed and unfiled"
+            value={fStatus}
+            onChange={setFStatus}
+            options={[
+              { value: "filed", label: "Filed under a contractor" },
+              { value: "unfiled", label: `Not yet filed (${unfiled})` },
+            ]}
+          />
           <label className="relative">
             <Search size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
             <input className="input pl-8" placeholder="Search title, reference, summary, text…" value={q} onChange={(e) => setQ(e.target.value)} />

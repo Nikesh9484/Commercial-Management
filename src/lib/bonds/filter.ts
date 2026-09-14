@@ -13,9 +13,12 @@ export type BondsCategory = "all" | "bond" | "insurance" | "other";
 export interface BondsFilter {
   expiry: BondsExpiry;
   category: BondsCategory;
+  /** One contractor by name, or "" for every contractor. The name is matched, not the id, so the
+   *  filter survives into a stored report that carries the label rather than the lookup. */
+  contractor: string;
 }
 
-export const NO_BONDS_FILTER: BondsFilter = { expiry: "all", category: "all" };
+export const NO_BONDS_FILTER: BondsFilter = { expiry: "all", category: "all", contractor: "" };
 
 export const EXPIRY_OPTIONS: { value: BondsExpiry; label: string; help: string }[] = [
   { value: "all", label: "All", help: "Every bond and policy on the register." },
@@ -65,6 +68,7 @@ export function bondExpiryBucket(row: RecordRow): "expired" | "d15" | "d30" | "d
 
 /** Does this bond / policy belong in the filtered view? */
 export function matchesBondsFilter(row: RecordRow, filter: BondsFilter): boolean {
+  if (filter.contractor && String(row.contractor_id__label ?? "") !== filter.contractor) return false;
   if (filter.category !== "all" && bondCategory(row.type_id__label) !== filter.category) return false;
   if (filter.expiry === "all") return true;
   const bucket = bondExpiryBucket(row);
@@ -90,12 +94,12 @@ export function matchesBondsFilter(row: RecordRow, filter: BondsFilter): boolean
 }
 
 export function filterBonds(rows: RecordRow[], filter: BondsFilter): RecordRow[] {
-  if (filter.expiry === "all" && filter.category === "all") return rows;
+  if (filter.expiry === "all" && filter.category === "all" && !filter.contractor) return rows;
   return rows.filter((r) => matchesBondsFilter(r, filter));
 }
 
 export function isFiltered(filter: BondsFilter): boolean {
-  return filter.expiry !== "all" || filter.category !== "all";
+  return filter.expiry !== "all" || filter.category !== "all" || !!filter.contractor;
 }
 
 /** "Expiring within 15 days · insurance only", or null when nothing is filtered. */
@@ -104,6 +108,7 @@ export function bondsFilterLabel(filter: BondsFilter): string | null {
   const parts: string[] = [];
   if (filter.expiry !== "all") parts.push(EXPIRY_OPTIONS.find((o) => o.value === filter.expiry)?.label ?? filter.expiry);
   if (filter.category !== "all") parts.push((CATEGORY_OPTIONS.find((o) => o.value === filter.category)?.label ?? filter.category).toLowerCase());
+  if (filter.contractor) parts.push(filter.contractor);
   return parts.join(" · ");
 }
 
@@ -124,6 +129,7 @@ export function parseBondsFilter(params: URLSearchParams): BondsFilter {
   return {
     expiry: EXPIRY_VALUES.has(expiry) ? (expiry as BondsExpiry) : "all",
     category: CATEGORY_VALUES.has(category) ? (category as BondsCategory) : "all",
+    contractor: (params.get("bondsContractor") ?? "").slice(0, 200),
   };
 }
 
@@ -132,5 +138,6 @@ export function bondsFilterQuery(filter: BondsFilter): string {
   const p: string[] = [];
   if (filter.expiry !== "all") p.push(`bondsExpiry=${filter.expiry}`);
   if (filter.category !== "all") p.push(`bondsCategory=${filter.category}`);
+  if (filter.contractor) p.push(`bondsContractor=${encodeURIComponent(filter.contractor)}`);
   return p.join("&");
 }

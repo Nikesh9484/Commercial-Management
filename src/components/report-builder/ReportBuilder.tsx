@@ -1018,7 +1018,7 @@ function ConditionEditor({ condition, fields, ready, index, match, onChange, onR
         // tick boxes, not a multi-select list: a list box needs ctrl-click to pick more than one,
         // which is the single easiest way to end up with a filter that quietly selects nothing
         <div className="mt-1.5 rounded-lg border border-line bg-white p-1.5">
-          {options.length > 8 && (
+          {options.length > 5 && (
             <input className="input mb-1.5 h-7 py-0 text-xs" placeholder={`Search ${options.length} options…`} value={find} onChange={(e) => setFind(e.target.value)} />
           )}
           <div className="max-h-44 space-y-0.5 overflow-y-auto">

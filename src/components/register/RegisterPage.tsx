@@ -12,6 +12,7 @@ import { useToast } from "@/components/ui/Toast";
 import { RecordForm, type FormValues } from "./RecordForm";
 import { RecordHistory } from "./HistoryPanel";
 import { ImportDialog } from "./ImportDialog";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 
 const PAGE_SIZE = 50;
 
@@ -284,25 +285,23 @@ export function RegisterPage({
       {showFilters && filterFields.length > 0 && (
         <div className="card flex flex-wrap items-end gap-3 p-3">
           {filterFields.map((f) => (
-            <label key={f.key} className="flex min-w-40 flex-col gap-1 text-xs text-muted">
+            <div key={f.key} className="flex min-w-48 flex-col gap-1 text-xs text-muted">
               {f.label}
-              <select className="input" value={filters[f.key] ?? ""} onChange={(e) => changeFilter(f.key, e.target.value)}>
-                <option value="">All</option>
-                {f.type === "boolean" && (
-                  <>
-                    <option value="Yes">Yes</option>
-                    <option value="No">No</option>
-                  </>
-                )}
-                {f.type === "select" && (f.options ?? []).map((o) => <option key={o}>{o}</option>)}
-                {f.type === "lookup" &&
-                  (data.lookups[f.key] ?? []).map((o) => (
-                    <option key={o.id} value={o.id}>
-                      {o.label}
-                    </option>
-                  ))}
-              </select>
-            </label>
+              <SearchableSelect
+                value={filters[f.key] ?? ""}
+                onChange={(v) => changeFilter(f.key, v)}
+                options={
+                  f.type === "boolean"
+                    ? [
+                        { value: "Yes", label: "Yes" },
+                        { value: "No", label: "No" },
+                      ]
+                    : f.type === "select"
+                      ? (f.options ?? []).map((o) => ({ value: o, label: o }))
+                      : (data.lookups[f.key] ?? []).map((o) => ({ value: String(o.id), label: o.label }))
+                }
+              />
+            </div>
           ))}
           {activeFilterCount > 0 && (
             <button className="btn btn-ghost btn-sm" onClick={() => setFilters({})}>

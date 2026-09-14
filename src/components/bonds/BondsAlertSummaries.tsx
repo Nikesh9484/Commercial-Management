@@ -13,12 +13,13 @@ import { ExportButtons } from "@/components/ui/ExportButtons";
  * conversation per contractor rather than one per policy, and both leave out bonds whose contract is
  * closed or that a newer policy has replaced – the same rule the rest of the page follows.
  */
-export function BondsAlertSummaries({ rows, hasPeriod }: { rows: RecordRow[]; hasPeriod: boolean }) {
+export function BondsAlertSummaries({ rows, hasPeriod, contractor = "" }: { rows: RecordRow[]; hasPeriod: boolean; /** Narrow both lists to one contractor; "" for all of them. */ contractor?: string }) {
   return (
     <div className="grid gap-3 xl:grid-cols-2">
       <Summary
         rows={rows}
         hasPeriod={hasPeriod}
+        contractor={contractor}
         bucket="expired"
         title="Expired bonds & insurance"
         blurb="Past the expiry date with the contract still live. Chase a replacement or confirm the contract is closed."
@@ -28,6 +29,7 @@ export function BondsAlertSummaries({ rows, hasPeriod }: { rows: RecordRow[]; ha
       <Summary
         rows={rows}
         hasPeriod={hasPeriod}
+        contractor={contractor}
         bucket="d30"
         title="Expiring within 30 days"
         blurb="Still in force, but runs out inside the next 30 days. Renewals are usually asked for now."
@@ -46,6 +48,7 @@ interface Group {
 function Summary({
   rows,
   hasPeriod,
+  contractor,
   bucket,
   title,
   blurb,
@@ -54,13 +57,14 @@ function Summary({
 }: {
   rows: RecordRow[];
   hasPeriod: boolean;
+  contractor: string;
   bucket: Extract<BondsExpiry, "expired" | "d30">;
   title: string;
   blurb: string;
   empty: string;
   tone: "red" | "amber";
 }) {
-  const items = filterBonds(rows, { expiry: bucket, category: "all" }).sort((a, b) => Number(a.days_to_expiry ?? 0) - Number(b.days_to_expiry ?? 0));
+  const items = filterBonds(rows, { expiry: bucket, category: "all", contractor }).sort((a, b) => Number(a.days_to_expiry ?? 0) - Number(b.days_to_expiry ?? 0));
 
   const groups: Group[] = [];
   for (const r of items) {
@@ -83,9 +87,9 @@ function Summary({
           {title}
           <Chip tone={none ? "green" : tone}>{items.length}</Chip>
         </h2>
-        {hasPeriod && <ExportButtons section="bonds_report" params={`bondsExpiry=${bucket}`} title={title} />}
+        {hasPeriod && <ExportButtons section="bonds_report" params={`bondsExpiry=${bucket}${contractor ? `&bondsContractor=${encodeURIComponent(contractor)}` : ""}`} title={contractor ? `${title} – ${contractor}` : title} />}
       </div>
-      <p className="mb-3 text-xs leading-relaxed text-muted">{blurb}</p>
+      <p className="mb-3 text-xs leading-relaxed text-muted">{blurb}{contractor ? ` Showing ${contractor} only.` : ""}</p>
 
       {none ? (
         <p className="text-sm text-muted">{empty}</p>

@@ -12,6 +12,7 @@ import { ExpiringSoonCard } from "@/components/bonds/ExpiringSoonCard";
 import { BondsAlertSummaries } from "@/components/bonds/BondsAlertSummaries";
 import { ExportButtons } from "@/components/ui/ExportButtons";
 import { HorizontalBars } from "@/components/charts/HorizontalBars";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 
 const num = (v: unknown) => (v === null || v === undefined || v === "" ? 0 : Number(v));
 
@@ -30,13 +31,13 @@ export function BondsWorkspace({ rows, isAdmin, hasPeriod }: { rows: RecordRow[]
 
   // each list counts against the other choice, so the numbers always add up to what a click would show
   const expiryCounts = useMemo(() => {
-    const base = filterBonds(rows, { expiry: "all", category: filter.category });
-    return new Map(EXPIRY_OPTIONS.map((o) => [o.value, base.filter((r) => matchesBondsFilter(r, { expiry: o.value, category: "all" })).length]));
-  }, [rows, filter.category]);
+    const base = filterBonds(rows, { expiry: "all", category: filter.category, contractor: filter.contractor });
+    return new Map(EXPIRY_OPTIONS.map((o) => [o.value, base.filter((r) => matchesBondsFilter(r, { expiry: o.value, category: "all", contractor: "" })).length]));
+  }, [rows, filter.category, filter.contractor]);
   const categoryCounts = useMemo(() => {
-    const base = filterBonds(rows, { expiry: filter.expiry, category: "all" });
-    return new Map(CATEGORY_OPTIONS.map((o) => [o.value, base.filter((r) => matchesBondsFilter(r, { expiry: "all", category: o.value })).length]));
-  }, [rows, filter.expiry]);
+    const base = filterBonds(rows, { expiry: filter.expiry, category: "all", contractor: filter.contractor });
+    return new Map(CATEGORY_OPTIONS.map((o) => [o.value, base.filter((r) => matchesBondsFilter(r, { expiry: "all", category: o.value, contractor: "" })).length]));
+  }, [rows, filter.expiry, filter.contractor]);
 
   const byTypeChart = useMemo(() => {
     const byType = new Map<string, number>();
@@ -47,6 +48,9 @@ export function BondsWorkspace({ rows, isAdmin, hasPeriod }: { rows: RecordRow[]
     }
     return [...byType.entries()].map(([l, value]) => ({ label: l, value: Math.round(value) })).sort((a, b) => b.value - a.value);
   }, [visible]);
+
+  // every contractor that actually has a bond or policy on this project
+  const contractors = useMemo(() => [...new Set(rows.map((r) => String(r.contractor_id__label ?? "")).filter(Boolean))].sort((a, b) => a.localeCompare(b)), [rows]);
 
   const rowFilter = useCallback((r: RecordRow) => matchesBondsFilter(r, filter), [filter]);
 
@@ -91,6 +95,17 @@ export function BondsWorkspace({ rows, isAdmin, hasPeriod }: { rows: RecordRow[]
           value={filter.category}
           onPick={(v) => setFilter((f) => ({ ...f, category: v }))}
         />
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-muted">Contractor</span>
+          <div className="min-w-0 max-w-sm flex-1">
+            <SearchableSelect
+              placeholder="All contractors"
+              value={filter.contractor}
+              onChange={(v) => setFilter((f) => ({ ...f, contractor: v }))}
+              options={contractors.map((c) => ({ value: c, label: c, hint: `${rows.filter((r) => String(r.contractor_id__label ?? "") === c).length} item(s)` }))}
+            />
+          </div>
+        </div>
         <p className="text-xs text-muted">
           {filtered ? `Showing ${visible.length} of ${rows.length} item(s). The figures, the chart, the log below and the PDF / Excel report all follow this filter.` : `Showing all ${rows.length} item(s). Pick a filter to narrow the page – the PDF and Excel report follow it.`}
         </p>
@@ -116,7 +131,7 @@ export function BondsWorkspace({ rows, isAdmin, hasPeriod }: { rows: RecordRow[]
 
       {/* the two chase lists, each downloadable on its own, worked out from every row rather than the
           page filter – they are the same two lists whatever is filtered above */}
-      <BondsAlertSummaries rows={rows} hasPeriod={hasPeriod} />
+      <BondsAlertSummaries rows={rows} hasPeriod={hasPeriod} contractor={filter.contractor} />
 
       <ExpiringSoonCard items={summary.expiring} expired={summary.expired} released={summary.released} superseded={summary.superseded} />
 
