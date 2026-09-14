@@ -8,6 +8,7 @@ import { renderEarDocx, paragraphsFromText } from "./docx";
 import { inspectTemplate, renderIntoTemplate, type TemplateInfo } from "./template-docx";
 import { getCase, listFiles, fileText, filePath, outputPath, setGeneration, type EarCase, type EarFile, type EarBucket } from "./store";
 import { extOf } from "./extract";
+import { aiEnabled, aiKeyPresent } from "../ai-switch";
 
 /**
  * Creates the Employer's Assessment Report for a case:
@@ -24,7 +25,8 @@ const MAX_IMAGES = 8;
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 
 export function engineConfigured(): boolean {
-  return !!(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY);
+  // the switch on the Settings page turns every paid call off without removing the key
+  return aiEnabled() && aiKeyPresent();
 }
 
 interface Pack {

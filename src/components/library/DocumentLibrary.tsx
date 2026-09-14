@@ -292,7 +292,7 @@ export function DocumentLibrary({ library, info, docs: initial, contracts, contr
               <p className="mt-1 text-xs text-muted">{info.hint} Each document is read as it arrives and filed under its contractor and contract code; you can correct the filing afterwards with <b>Change</b>.</p>
               {!engine && (
                 <p className="mt-1 text-xs text-amber-800">
-                  Reading engine not configured: documents are filed from the references found in them (ACC code, PO number, contractor name) but not summarised. Add <code>ANTHROPIC_API_KEY</code> in the hosting settings for full reading.
+                  Reading engine off: documents are filed from the references found in them (ACC code, PO number, contractor name) but not summarised. Switch the AI features back on under <b>Customise my reports</b>, or add <code>ANTHROPIC_API_KEY</code> in the hosting settings if no key is set.
                 </p>
               )}
             </div>

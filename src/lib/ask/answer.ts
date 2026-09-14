@@ -4,6 +4,7 @@ import { logAudit } from "../audit";
 import { ValidationError } from "../registers/engine";
 import type { UserInfo } from "../registers/types";
 import { buildPack, documentTexts } from "./pack";
+import { aiEnabled, aiKeyPresent, aiOffReason } from "../ai-switch";
 
 /**
  * ASK ME – the dashboard's assistant. The whole project (every register, the cost report, the
@@ -13,7 +14,8 @@ import { buildPack, documentTexts } from "./pack";
 export const ASK_MODEL = process.env.ASK_MODEL || "claude-opus-5";
 
 export function askConfigured(): boolean {
-  return !!(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY);
+  // the switch on the Settings page turns every paid call off without removing the key
+  return aiEnabled() && aiKeyPresent();
 }
 
 const SYSTEM = `You are ASK ME, the assistant built into the Commercial Dashboard of a construction Commercial Manager (AMAALA, Triple Bay – The Marina and Village Boutique Hotel projects, Saudi Arabia; all amounts in SAR).
@@ -42,7 +44,7 @@ export interface AskResult {
 export async function ask(question: string, history: AskTurn[], user: UserInfo): Promise<AskResult> {
   const q = question.trim();
   if (!q) throw new ValidationError("Type a question first.");
-  if (!askConfigured()) throw new ValidationError("ASK ME is not configured on this server: add ANTHROPIC_API_KEY in the hosting settings (Render → Environment).");
+  if (!askConfigured()) throw new ValidationError(`ASK ME is not available: ${aiOffReason() ?? "the reading engine is not configured"}.`);
   const pack = buildPack();
   const docs = documentTexts(q);
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY, maxRetries: 2, timeout: 10 * 60 * 1000 });

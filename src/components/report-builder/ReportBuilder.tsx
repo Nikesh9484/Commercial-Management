@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, ArrowUp, FileDown, FileSpreadsheet, FileText, Filter, Loader2, Play, Plus, Save, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronDown, FileDown, FileSpreadsheet, FileText, Filter, Loader2, Play, Plus, Save, Trash2, X } from "lucide-react";
 import { emptySpec, isConditionReady, layoutOf, LAYOUTS, opsFor, type Condition, type ReportSpec, type SourceField, type SourceInfo } from "@/lib/report-builder/types";
 import { describeCondition } from "@/lib/report-builder/filter";
+import { STANDARD_REPORTS, standardSpec } from "@/lib/report-builder/standard";
 import { useToast } from "@/components/ui/Toast";
 
 /**
@@ -45,6 +46,14 @@ interface Band {
   n: number;
   value: number;
   share: number;
+}
+interface StandardRow {
+  id: string;
+  group: "checks" | "smart";
+  title: string;
+  description: string;
+  source: string;
+  needs?: string;
 }
 interface Saved {
   id: string;
@@ -89,13 +98,28 @@ export function ReportBuilder({ canSave }: { canSave: boolean }) {
   const [downloading, setDownloading] = useState<string | null>(null);
   const [saved, setSaved] = useState<Saved[]>([]);
   const [saveName, setSaveName] = useState("");
+  const [standard, setStandard] = useState<StandardRow[]>([]);
+  const [periodEnd, setPeriodEnd] = useState("");
+  const [periodLabel, setPeriodLabel] = useState("");
+  const [ai, setAi] = useState<{ enabled: boolean; keyPresent: boolean } | null>(null);
+  /** Which ready-made report the set-up came from, so the card it came from stays marked. */
+  const [ran, setRan] = useState<string | null>(null);
   const seq = useRef(0);
 
   useEffect(() => {
     fetch("/api/custom-report")
       .then((r) => r.json())
-      .then((j) => setSources(j.sources ?? []))
+      .then((j) => {
+        setSources(j.sources ?? []);
+        setStandard(j.standard ?? []);
+        setPeriodEnd(j.periodEnd ?? "");
+        setPeriodLabel(j.periodLabel ?? "");
+      })
       .catch(() => setError("Could not load the list of reports."));
+    fetch("/api/ai-switch")
+      .then((r) => r.json())
+      .then((j) => setAi({ enabled: !!j.enabled, keyPresent: !!j.keyPresent }))
+      .catch(() => undefined);
     fetch("/api/custom-report/presets")
       .then((r) => r.json())
       .then((j) => setSaved(j.saved ?? []))
@@ -205,8 +229,78 @@ export function ReportBuilder({ canSave }: { canSave: boolean }) {
     setSaved(j.saved);
   }
 
+  /** Opens a ready-made report: its filters, grouping and columns are filled in, ready to change. */
+  async function runStandard(row: StandardRow) {
+    const def = STANDARD_REPORTS.find((r) => r.id === row.id);
+    if (!def) return;
+    await choose(def.source, standardSpec(def, periodEnd));
+    setRan(row.id);
+    setStale(true);
+  }
+
+  async function toggleAi(on: boolean) {
+    const res = await fetch("/api/ai-switch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: on }) });
+    const j = await res.json();
+    if (!res.ok) return toast(j.error ?? "Could not change it.", "error");
+    setAi({ enabled: !!j.enabled, keyPresent: !!j.keyPresent });
+    toast(on ? "AI features switched on." : "AI features switched off. Reports are unaffected – they never used it.");
+  }
+
   /* ---------------------------------------------------------------- the page */
   const sourceGroups = [...new Set(sources.map((s) => s.group))];
+
+  /** The reports the team runs every month, already set up. */
+  const standardBlock = standard.length > 0 && (
+    <div className="card p-4">
+      <div className="mb-1 flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="text-sm font-semibold text-ink">Standard reports</h2>
+        <span className="text-xs text-muted">Filters already set. Click one, then change anything you like before generating.</span>
+      </div>
+      {(
+        [
+          ["checks", "Monthly commercial checks"],
+          ["smart", "Smart reports, summaries and trackers"],
+        ] as const
+      ).map(([g, label]) => {
+        const list = standard.filter((r) => r.group === g);
+        if (!list.length) return null;
+        return (
+          <div key={g} className="mt-3">
+            <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted">{label}</p>
+            <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+              {list.map((r) => (
+                <button
+                  key={r.id}
+                  className={`rounded-lg border p-3 text-left transition hover:border-navy hover:shadow-sm ${ran === r.id ? "border-navy bg-navy/5 ring-1 ring-navy" : "border-line bg-white"}`}
+                  onClick={() => runStandard(r)}
+                  disabled={busy}
+                >
+                  <span className="block text-sm font-semibold text-ink">{r.title}</span>
+                  <span className="mt-0.5 block text-[11px] leading-relaxed text-muted">{r.description}</span>
+                  {r.needs && <span className="mt-1 block text-[11px] leading-relaxed text-amber-700">{r.needs}</span>}
+                </button>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+      {periodLabel && <p className="mt-2 text-[11px] text-muted">The two monthly reports use the reporting period in the top bar ({periodLabel}). Change the dates in the filters for any other month.</p>}
+    </div>
+  );
+
+  /** What this page does and does not spend. */
+  const aiBlock = ai && (
+    <div className="card flex flex-wrap items-center justify-between gap-3 p-3">
+      <p className="min-w-0 flex-1 text-xs leading-relaxed text-muted">
+        <b className="text-ink">These reports never use the AI allowance.</b> Every figure, filter and written summary on this page is worked out by the dashboard itself. The allowance is only
+        spent when a document is read as it is added to a library, when ASK ME answers a question, and when Claim EAR drafts a report.
+      </p>
+      <label className="flex shrink-0 cursor-pointer items-center gap-2 text-xs">
+        <input type="checkbox" checked={ai.enabled} onChange={(e) => toggleAi(e.target.checked)} />
+        <span className={ai.enabled ? "font-medium text-ink" : "font-medium text-amber-700"}>{ai.enabled ? "AI features are on" : "AI features are off"}</span>
+      </label>
+    </div>
+  );
 
   /** The bar that carries Generate and the three downloads – shown once a report has been set up. */
   const picker = (
@@ -214,7 +308,7 @@ export function ReportBuilder({ canSave }: { canSave: boolean }) {
       <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
         <div className="min-w-0">
           <Label>What do you want to report on?</Label>
-          <select className="input" value={spec?.source ?? ""} onChange={(e) => choose(e.target.value)} disabled={busy}>
+          <select className="input" value={spec?.source ?? ""} onChange={(e) => { setRan(null); choose(e.target.value); }} disabled={busy}>
             <option value="">Choose the records…</option>
             {sourceGroups.map((g) => (
               <optgroup key={g} label={g}>
@@ -262,6 +356,8 @@ export function ReportBuilder({ canSave }: { canSave: boolean }) {
     return (
       <div className="space-y-4">
         {error && <div className="card p-4 text-sm text-red-700">{error}</div>}
+        {standardBlock}
+        {aiBlock}
         {picker}
         <div className="card p-10 text-center text-sm text-muted">
           Choose the records above. You can then filter on any field, pick the columns, group and total them, and click <b className="text-ink">Generate report</b> to build it.
@@ -278,6 +374,8 @@ export function ReportBuilder({ canSave }: { canSave: boolean }) {
 
   return (
     <div className="space-y-4">
+      {standardBlock}
+      {aiBlock}
       {picker}
 
       <div className="sticky top-2 z-10 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-white/95 p-3 shadow-sm backdrop-blur">
@@ -442,26 +540,28 @@ export function ReportBuilder({ canSave }: { canSave: boolean }) {
 
           <Panel title="Group, sort and trim">
             <Label>Group by (with a subtotal per group)</Label>
-            <select className="input mb-2" value={spec.groupBy ?? ""} onChange={(e) => patch({ groupBy: e.target.value || null })}>
-              <option value="">No grouping</option>
-              <FieldOptions fields={fields} />
-            </select>
+            <div className="mb-2 flex gap-1">
+              <FieldPicker fields={fields} value={spec.groupBy ?? ""} placeholder="No grouping" onChange={(k) => patch({ groupBy: k || null })} />
+              {spec.groupBy && (
+                <button className="shrink-0 rounded p-1 text-muted hover:text-red-600" title="No grouping" onClick={() => patch({ groupBy: null })}>
+                  <X size={14} />
+                </button>
+              )}
+            </div>
             <Label>Sort by</Label>
             {[0, 1].map((i) => (
               <div key={i} className="mb-2 flex gap-1">
-                <select
-                  className="input flex-1 text-xs"
+                <FieldPicker
+                  fields={fields}
                   value={spec.sort[i]?.field ?? ""}
-                  onChange={(e) => {
+                  placeholder={i === 0 ? "Default order" : "then…"}
+                  onChange={(k) => {
                     const next = [...spec.sort];
-                    if (!e.target.value) next.splice(i, 1);
-                    else next[i] = { field: e.target.value, dir: next[i]?.dir ?? "asc" };
+                    if (!k) next.splice(i, 1);
+                    else next[i] = { field: k, dir: next[i]?.dir ?? "asc" };
                     patch({ sort: next.filter(Boolean) });
                   }}
-                >
-                  <option value="">{i === 0 ? "Default order" : "then…"}</option>
-                  <FieldOptions fields={fields} />
-                </select>
+                />
                 <select
                   className="input w-28 text-xs"
                   value={spec.sort[i]?.dir ?? "asc"}
@@ -786,28 +886,94 @@ function BandCard({ title, bands, first }: { title: string; bands: Band[]; first
   );
 }
 
-/** The field list broken into its sections, so a register with a hundred fields stays navigable. */
-function FieldOptions({ fields }: { fields: SourceField[] }) {
+/**
+ * The field picker. A register can carry well over a hundred fields, which is far too many to hunt
+ * through in a plain dropdown, so this is a box you type into: the matches are listed underneath,
+ * grouped by the part of the record they belong to, and clicking one chooses it.
+ */
+function FieldPicker({ fields, value, placeholder, onChange }: { fields: SourceField[]; value: string; placeholder?: string; onChange: (key: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const box = useRef<HTMLDivElement | null>(null);
+  const chosen = fields.find((f) => f.key === value);
+
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: MouseEvent) => {
+      if (box.current && !box.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", away);
+    return () => document.removeEventListener("mousedown", away);
+  }, [open]);
+
+  const needle = q.trim().toLowerCase();
+  const matches = needle ? fields.filter((f) => `${f.label} ${f.section ?? ""}`.toLowerCase().includes(needle)) : fields;
   const groups: { name: string; list: SourceField[] }[] = [];
-  for (const f of fields) {
+  for (const f of matches) {
     const name = f.section ?? "Main";
     const g = groups.find((x) => x.name === name);
     if (g) g.list.push(f);
     else groups.push({ name, list: [f] });
   }
-  if (groups.length < 2) return <>{fields.map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}</>;
+
   return (
-    <>
-      {groups.map((g) => (
-        <optgroup key={g.name} label={g.name}>
-          {g.list.map((f) => (
-            <option key={f.key} value={f.key}>
-              {f.label}
-            </option>
-          ))}
-        </optgroup>
-      ))}
-    </>
+    <div ref={box} className="relative min-w-0 flex-1">
+      <button
+        type="button"
+        className="input flex w-full items-center gap-1 text-left text-xs"
+        onClick={() => {
+          setQ("");
+          setOpen((o) => !o);
+        }}
+      >
+        <span className={`min-w-0 flex-1 truncate${chosen ? "" : " text-muted"}`}>{chosen?.label ?? placeholder ?? "Choose a field…"}</span>
+        <ChevronDown size={13} className="shrink-0 text-muted" />
+      </button>
+      {open && (
+        <div className="absolute z-30 mt-1 w-full min-w-[16rem] rounded-lg border border-line bg-white shadow-lg">
+          <input
+            autoFocus
+            className="input m-1.5 h-7 w-[calc(100%-0.75rem)] py-0 text-xs"
+            placeholder={`Search ${fields.length} fields…`}
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setOpen(false);
+              if (e.key === "Enter" && matches.length) {
+                onChange(matches[0].key);
+                setOpen(false);
+              }
+            }}
+          />
+          <div className="max-h-64 overflow-y-auto pb-1">
+            {placeholder && !needle && (
+              <button type="button" className="block w-full px-2.5 py-1 text-left text-xs text-muted hover:bg-page" onClick={() => { onChange(""); setOpen(false); }}>
+                {placeholder}
+              </button>
+            )}
+            {matches.length === 0 && <p className="px-3 py-2 text-xs text-muted">No field matches “{q}”.</p>}
+            {groups.map((g) => (
+              <div key={g.name}>
+                {groups.length > 1 && <p className="bg-page px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">{g.name}</p>}
+                {g.list.map((f) => (
+                  <button
+                    key={f.key}
+                    type="button"
+                    className={`block w-full px-2.5 py-1 text-left text-xs hover:bg-page ${f.key === value ? "font-semibold text-navy" : "text-ink"}`}
+                    onClick={() => {
+                      onChange(f.key);
+                      setOpen(false);
+                    }}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -827,17 +993,15 @@ function ConditionEditor({ condition, fields, ready, index, match, onChange, onR
     <div className={`rounded-lg border p-2 ${ready ? "border-line bg-page/40" : "border-amber-300 bg-amber-50/60"}`}>
       <div className="flex flex-wrap items-center gap-1.5">
         <span className="w-10 shrink-0 text-xs font-semibold uppercase tracking-wide text-muted">{index === 0 ? "Where" : match === "any" ? "or" : "and"}</span>
-        <select
-          className="input min-w-0 flex-1 text-xs"
+        <FieldPicker
+          fields={fields}
           value={condition.field}
-          onChange={(e) => {
-            const next = fields.find((f) => f.key === e.target.value)!;
+          onChange={(key) => {
+            const next = fields.find((f) => f.key === key)!;
             setFind("");
             onChange({ field: next.key, op: opsFor(next)[0].op, value: null, value2: null, values: [] });
           }}
-        >
-          <FieldOptions fields={fields} />
-        </select>
+        />
         <select className="input w-44 shrink-0 text-xs" value={op.op} onChange={(e) => onChange({ ...condition, op: e.target.value as Condition["op"], value: null, value2: null, values: [] })}>
           {ops.map((o) => (
             <option key={o.op} value={o.op}>

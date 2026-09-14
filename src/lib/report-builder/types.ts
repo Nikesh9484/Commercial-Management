@@ -67,7 +67,7 @@ export const DEFAULT_BLOCKS: SummaryBlocks = { kpis: true, breakdown: true, agei
  * is worked back out from the blocks, which means a report saved before styles existed still opens
  * on the right one.
  */
-export type ReportLayout = "one_pager" | "summary" | "detailed" | "data" | "custom";
+export type ReportLayout = "one_pager" | "summary" | "detailed" | "list" | "data" | "custom";
 
 export interface LayoutDef {
   id: Exclude<ReportLayout, "custom">;
@@ -99,6 +99,13 @@ export const LAYOUTS: LayoutDef[] = [
     description: "Everything: the figures, the commentary, the breakdown, the ageing and every record.",
     suits: "PDF or Excel",
     blocks: { kpis: true, narrative: true, attention: true, breakdown: true, ageing: true, table: true },
+  },
+  {
+    id: "list",
+    label: "List with figures",
+    description: "The headline figures, an ageing summary and the grouped list of records – a working list, with nothing written.",
+    suits: "Excel or PDF",
+    blocks: { kpis: true, narrative: false, attention: false, breakdown: false, ageing: true, table: true },
   },
   {
     id: "data",

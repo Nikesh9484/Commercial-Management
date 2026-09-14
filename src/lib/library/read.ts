@@ -4,6 +4,7 @@ import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import type Database from "better-sqlite3";
 import { getDb } from "../db";
 import { LIBRARY_INFO, type LibraryKey, type Reading } from "./store";
+import { aiEnabled, aiKeyPresent, aiOffReason } from "../ai-switch";
 
 /**
  * Reads a library document and works out where it belongs.
@@ -19,7 +20,8 @@ import { LIBRARY_INFO, type LibraryKey, type Reading } from "./store";
 export const LIBRARY_MODEL = process.env.LIBRARY_MODEL || process.env.EAR_MODEL || "claude-opus-5";
 
 export function readerConfigured(): boolean {
-  return !!(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY);
+  // the switch on the Settings page turns every paid call off without removing the key
+  return aiEnabled() && aiKeyPresent();
 }
 
 interface KnownContract {
@@ -203,7 +205,7 @@ export async function readDocument(programmeId: number, library: LibraryKey, fil
     eot_days_assessed: engine?.eot_days_assessed ?? null,
     cost_claimed: engine?.cost_claimed ?? null,
     cost_assessed: engine?.cost_assessed ?? null,
-    summary: engine?.summary?.slice(0, 4000) ?? (text.trim() ? (readerConfigured() ? `The reading engine could not read this document${engineNote ? ` (${engineNote})` : ""}; it was filed from its references only.` : "Filed from the references found in the document. Add ANTHROPIC_API_KEY on the server to have each document read and summarised.") : "No readable text (scanned PDF or unsupported file type). File it by hand with Change."),
+    summary: engine?.summary?.slice(0, 4000) ?? (text.trim() ? (readerConfigured() ? `The reading engine could not read this document${engineNote ? ` (${engineNote})` : ""}; it was filed from its references only.` : `Filed from the references found in the document; it was not read and summarised because ${aiOffReason() ?? "the reading engine is not configured"}.`) : "No readable text (scanned PDF or unsupported file type). File it by hand with Change."),
     key_points: engine?.key_points?.slice(0, 6).map((k) => k.slice(0, 300)) ?? [],
     matched_by: match.matched_by + (engine?.contractor_name && !match.contractor_id ? `; the document names "${engine.contractor_name}", which is not a contractor of this project` : ""),
     confidence: match.confidence,

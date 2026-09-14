@@ -156,7 +156,22 @@ export function buildReport(spec: ReportSpec, ctx: BuildContext): BuiltReport {
   const filtered = applyFilter(all, spec, fields);
   const sorted = applySort(filtered, spec, fields);
   const limited = !!spec.limit && spec.limit > 0 && sorted.length > spec.limit;
-  const rows = limited ? sorted.slice(0, spec.limit!) : sorted;
+  const trimmed = limited ? sorted.slice(0, spec.limit!) : sorted;
+
+  // A lookup field holds the id, with the name alongside it in "<field>__label". The tables print the
+  // field itself, so the name is copied into it – otherwise a contractor column shows "53". The
+  // __label keys are left in place, because the filter and the grouping read those first.
+  const lookupKeys = fields.filter((f) => f.type === "lookup").map((f) => f.key);
+  const rows = lookupKeys.length
+    ? trimmed.map((r) => {
+        const out = { ...r };
+        for (const k of lookupKeys) {
+          const label = r[`${k}__label`];
+          if (label !== undefined && label !== null && label !== "") out[k] = label;
+        }
+        return out;
+      })
+    : trimmed;
 
   const columnKeys = (spec.columns.length ? spec.columns : (defaults ?? defaultColumns(fields))).filter((k) => byKey.has(k));
   const columns: ResultColumn[] = columnKeys.map((k) => {

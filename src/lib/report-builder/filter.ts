@@ -18,6 +18,7 @@ export function valueOf(row: RecordRow, field: SourceField): unknown {
   return row[field.key];
 }
 
+const isYes = (v: unknown) => v === true || v === 1 || String(v ?? "").trim().toLowerCase() === "yes" || String(v ?? "").trim().toLowerCase() === "true";
 const isBlank = (v: unknown) => v === null || v === undefined || v === "" || (typeof v === "number" && Number.isNaN(v));
 const text = (v: unknown) => String(v ?? "").trim().toLowerCase();
 const num = (v: unknown) => {
@@ -50,9 +51,10 @@ export function matchesCondition(row: RecordRow, c: Condition, field: SourceFiel
     case "not_blank":
       return !isBlank(raw);
     case "is_true":
-      return raw === true || raw === 1 || text(raw) === "yes" || text(raw) === "true";
+      return isYes(raw);
     case "is_false":
-      return raw === false || raw === 0 || text(raw) === "no" || text(raw) === "false";
+      // a tick box that was never ticked is "No" – it is stored as blank, not as false
+      return !isYes(raw);
     case "contains":
       return text(raw).includes(text(c.value));
     case "not_contains":

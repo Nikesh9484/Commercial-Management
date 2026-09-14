@@ -6,6 +6,7 @@ import { getAppContext } from "@/lib/context";
 import { getDb, getSetting } from "@/lib/db";
 import { todayIso } from "@/lib/format";
 import { listSources, loadSource, defaultColumns } from "@/lib/report-builder/sources";
+import { STANDARD_REPORTS } from "@/lib/report-builder/standard";
 import { buildReport, type BuildContext } from "@/lib/report-builder/build";
 import { renderBuilderPdf } from "@/lib/report-builder/pdf";
 import { renderBuilderExcel } from "@/lib/report-builder/excel";
@@ -39,7 +40,16 @@ function context(): BuildContext {
 export async function GET(req: Request, ctx: unknown) {
   return withUser(async () => {
     const source = new URL(req.url).searchParams.get("source");
-    if (!source) return NextResponse.json({ sources: listSources() });
+    if (!source) {
+      const bctx = context();
+      return NextResponse.json({
+        sources: listSources(),
+        // the ready-made reports, and the month they should default to
+        standard: STANDARD_REPORTS.map((r) => ({ id: r.id, group: r.group, title: r.title, description: r.description, source: r.source, needs: r.needs })),
+        periodEnd: bctx.periodEnd,
+        periodLabel: bctx.periodLabel,
+      });
+    }
     const bctx = context();
     const { info, rows } = loadSource(source, bctx.programmeId);
     return NextResponse.json({
