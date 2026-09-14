@@ -384,14 +384,13 @@ export function convertVbhReport(sheets: Sheet[]): ConversionResult {
     if (!c.p) c.p = p;
     const col = { ipcNo: A ? 12 : 9, ipcRef: A ? 13 : 10, ipcDate: A ? 14 : 11, cumCert: A ? 17 : 14, grossCert: A ? 18 : 15, invRef: A ? 23 : 20, invDate: A ? 24 : 21, paid: A ? 25 : 22 };
     // A sheet may hold several blocks (one per service / call-off order under the same PO), each
-    // ending in a TOTAL row. The cumulative figures of each block are carried on top of the blocks
-    // before it, so the contract's cumulative claimed / certified keeps rising across the sheet.
+    // ending in a TOTAL row. The blocks do not necessarily run one after another – their application
+    // dates can interleave – so the contract's cumulative claimed / certified at any date is the SUM
+    // of every block's own cumulative-to-date value, worked out chronologically across all blocks,
+    // rather than the current block's figure stacked on the previous block's final total (which goes
+    // negative whenever a later block in the sheet actually falls earlier in time).
     let prevCum = 0;
     let n = 0;
-    let baseClaimed = 0;
-    let baseCert = 0;
-    let lastClaimed = 0;
-    let lastCert = 0;
     let block = 0;
     let blockTitle = "";
     const seenApp = new Map<string, number>();
@@ -402,13 +401,28 @@ export function convertVbhReport(sheets: Sheet[]): ConversionResult {
       const m = /(\d+)/.exec(txt(v, 1));
       return m ? Number(m[1]) : null;
     };
+    interface RawEntry {
+      order: number;
+      block: number;
+      sr: number;
+      appNo: string;
+      month: unknown;
+      aconex: string;
+      appDate: string | null;
+      localClaimed: number | null;
+      localCert: number | null;
+      ipcNo: string;
+      ipcRef: string;
+      ipcDate: string | null;
+      invRef: string;
+      invDate: string | null;
+      paidDate: string | null;
+    }
+    const entries: RawEntry[] = [];
+    let order = 0;
     for (const [r, v] of rows(s)) {
       if (r <= hdr + 2) continue;
       if (txt(v, 1).toUpperCase().startsWith("TOTAL")) {
-        baseClaimed += lastClaimed;
-        baseCert += lastCert;
-        lastClaimed = 0;
-        lastCert = 0;
         prevCum = 0;
         n = 0;
         block++;
@@ -426,8 +440,6 @@ export function convertVbhReport(sheets: Sheet[]): ConversionResult {
       if (cumCert !== null && gross !== null && n > 1 && Math.abs(cumCert - gross) < 0.5 && prevCum > 0 && cumCert < prevCum) cumCert = Math.round((prevCum + gross) * 100) / 100;
       if (cumCert !== null) prevCum = cumCert;
       const claimed = money(v, 6);
-      if (claimed !== null) lastClaimed = claimed;
-      if (cumCert !== null) lastCert = cumCert;
       let appNo = txt(v, 2) || txt(v, 1) || `IPA ${sr}`;
       if (block > 0 && blockTitle && !appNo.toLowerCase().includes(blockTitle.toLowerCase().slice(0, 8))) appNo = `${appNo} – ${blockTitle}`;
       const k = appNo.toLowerCase();
@@ -435,11 +447,44 @@ export function convertVbhReport(sheets: Sheet[]): ConversionResult {
       seenApp.set(k, dup);
       if (dup > 1) appNo = `${appNo} (${dup})`;
       const appDate = date(v, 5) ?? date(v, col.ipcDate) ?? date(v, 3);
-      const cumClaimed = claimed === null ? null : Math.round((claimed + baseClaimed) * 100) / 100;
-      const cumCertified = cumCert === null ? null : Math.round((cumCert + baseCert) * 100) / 100;
-      ipcRows.push([c.po, sr, appNo, monthText(v, 3), txt(v, 4), appDate ?? PERIOD_END, cumClaimed, txt(v, col.ipcNo), txt(v, col.ipcRef), date(v, col.ipcDate), cumCertified, txt(v, col.invRef), date(v, col.invDate), date(v, col.paid), appDate ? "" : "Application date missing in Excel"]);
+      entries.push({ order: order++, block, sr, appNo, month: monthText(v, 3), aconex: txt(v, 4), appDate, localClaimed: claimed, localCert: cumCert, ipcNo: txt(v, col.ipcNo), ipcRef: txt(v, col.ipcRef), ipcDate: date(v, col.ipcDate), invRef: txt(v, col.invRef), invDate: date(v, col.invDate), paidDate: date(v, col.paid) });
     }
-    notes.push(`IPC sheet "${s.name.trim()}" → contract ${c.po} (${c.contractor})${block > 1 ? `, ${block} blocks (service / call-off orders) carried cumulatively` : ""}.`);
+    // Merge blocks chronologically: at each application date, add up the latest known cumulative
+    // figure of every block that has started by then. Every block's own submission normally lands
+    // on the same handful of real-world dates (the whole contract applies together each period), so
+    // all entries sharing a date are applied to the block totals as one group before the combined
+    // total is read back – otherwise whichever block happens to appear first in the sheet would show
+    // a partial total while its sibling blocks for that same date are still waiting to be counted.
+    const chronological = [...entries].sort((a, b) => (a.appDate ?? PERIOD_END).localeCompare(b.appDate ?? PERIOD_END) || a.order - b.order);
+    const blockClaimed = new Map<number, number>();
+    const blockCert = new Map<number, number>();
+    const cumClaimedOf = new Map<number, number | null>();
+    const cumCertOf = new Map<number, number | null>();
+    let i = 0;
+    while (i < chronological.length) {
+      let j = i;
+      while (j < chronological.length && (chronological[j].appDate ?? PERIOD_END) === (chronological[i].appDate ?? PERIOD_END)) j++;
+      const group = chronological.slice(i, j);
+      for (const e of group) {
+        // never let a block's tracked value regress – a block's own cumulative figure is monotonic
+        // in its natural (serial) order, but an occasional application date entered out of sequence
+        // (a real anomaly in the source data, not a parsing error) must not read back as a fall in
+        // "certified to date".
+        if (e.localClaimed !== null) blockClaimed.set(e.block, Math.max(blockClaimed.get(e.block) ?? 0, e.localClaimed));
+        if (e.localCert !== null) blockCert.set(e.block, Math.max(blockCert.get(e.block) ?? 0, e.localCert));
+      }
+      const sumClaimed = Math.round([...blockClaimed.values()].reduce((t, x) => t + x, 0) * 100) / 100;
+      const sumCert = Math.round([...blockCert.values()].reduce((t, x) => t + x, 0) * 100) / 100;
+      for (const e of group) {
+        cumClaimedOf.set(e.order, e.localClaimed === null ? null : sumClaimed);
+        cumCertOf.set(e.order, e.localCert === null ? null : sumCert);
+      }
+      i = j;
+    }
+    for (const e of entries) {
+      ipcRows.push([c.po, e.sr, e.appNo, e.month, e.aconex, e.appDate ?? PERIOD_END, cumClaimedOf.get(e.order) ?? null, e.ipcNo, e.ipcRef, e.ipcDate, cumCertOf.get(e.order) ?? null, e.invRef, e.invDate, e.paidDate, e.appDate ? "" : "Application date missing in Excel"]);
+    }
+    notes.push(`IPC sheet "${s.name.trim()}" → contract ${c.po} (${c.contractor})${block > 1 ? `, ${block} blocks (service / call-off orders) merged chronologically` : ""}.`);
   }
 
   // ---- Stage 2 contract conversion tracker (Executive Summary): remeasured value against the stage 1 contract
