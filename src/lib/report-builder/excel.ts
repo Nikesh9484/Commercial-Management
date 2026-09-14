@@ -30,7 +30,8 @@ export async function renderBuilderExcel(r: BuiltReport): Promise<Buffer> {
   wb.creator = APP_NAME;
   wb.created = new Date();
   reportSheet(wb, r);
-  dataSheet(wb, r);
+  // no flat Data sheet when the report is not carrying its records
+  if (r.columns.length) dataSheet(wb, r);
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, FileDown, FileSpreadsheet, FileText, Filter, Loader2, Play, Plus, Save, Trash2, X } from "lucide-react";
-import { emptySpec, isConditionReady, opsFor, type Condition, type ReportSpec, type SourceField, type SourceInfo } from "@/lib/report-builder/types";
+import { emptySpec, isConditionReady, layoutOf, LAYOUTS, opsFor, type Condition, type ReportSpec, type SourceField, type SourceInfo } from "@/lib/report-builder/types";
 import { useToast } from "@/components/ui/Toast";
 
 /**
@@ -124,7 +124,9 @@ export function ReportBuilder({ canSave }: { canSave: boolean }) {
       const j = await res.json();
       if (!res.ok) throw new Error(j.error ?? "Could not open that report.");
       setInfo(j.info);
-      setSpec(start ?? { ...emptySpec(id), columns: j.defaultColumns ?? [], groupBy: j.info.suggestGroupBy ?? null });
+      // the column list is always filled in, so it survives a report whose record table is switched off
+      const cols: string[] = j.defaultColumns ?? [];
+      setSpec(start ? { ...start, columns: start.columns.length ? start.columns : cols } : { ...emptySpec(id), columns: cols, groupBy: j.info.suggestGroupBy ?? null });
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -271,6 +273,7 @@ export function ReportBuilder({ canSave }: { canSave: boolean }) {
   const available = fields.filter((f) => !chosenColumns.includes(f.key));
   const applied = spec.conditions.filter(isConditionReady).length;
   const unfilled = spec.conditions.length - applied;
+  const layout = layoutOf(spec.blocks);
 
   return (
     <div className="space-y-4">
@@ -279,7 +282,11 @@ export function ReportBuilder({ canSave }: { canSave: boolean }) {
       <div className="sticky top-2 z-10 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-white/95 p-3 shadow-sm backdrop-blur">
         <div className="flex min-w-0 items-center gap-2 text-xs text-muted">
           {busy && <Loader2 size={15} className="animate-spin" />}
-          {preview && !stale && <span>{preview.count.toLocaleString("en")} of {preview.countAll.toLocaleString("en")} record(s) in this report</span>}
+          {preview && !stale && (
+            <span>
+              {LAYOUTS.find((l) => l.id === layout)?.label ?? "Your own mix"} · {preview.count.toLocaleString("en")} of {preview.countAll.toLocaleString("en")} record(s)
+            </span>
+          )}
           {stale && preview && <span className="font-medium text-amber-700">The set-up has changed – generate it again to see it.</span>}
           {!preview && !busy && <span>{applied === 0 ? "No filters set – every record will be included." : `${applied} filter(s) set.`} Nothing is built until you click Generate.</span>}
         </div>
@@ -467,7 +474,31 @@ export function ReportBuilder({ canSave }: { canSave: boolean }) {
             <input className="input" type="number" min={1} placeholder="all records" value={spec.limit ?? ""} onChange={(e) => patch({ limit: e.target.value ? Number(e.target.value) : null })} />
           </Panel>
 
-          <Panel title="What to include">
+          <Panel title="How much do you want in it?" hint="Pick the shape of the report. Each one is a starting point – the ticks underneath can still be changed.">
+            <div className="space-y-1.5">
+              {LAYOUTS.map((l) => {
+                const on = layout === l.id;
+                return (
+                  <button
+                    key={l.id}
+                    className={`w-full rounded-lg border p-2 text-left transition ${on ? "border-navy bg-navy/5 ring-1 ring-navy" : "border-line bg-white hover:border-navy"}`}
+                    onClick={() => patch({ blocks: { ...l.blocks } })}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className={`text-sm font-semibold ${on ? "text-navy" : "text-ink"}`}>{l.label}</span>
+                      <span className="ml-auto shrink-0 rounded-full bg-page px-2 py-0.5 text-[11px] text-muted">{l.suits}</span>
+                    </div>
+                    <p className="mt-0.5 text-[11px] leading-relaxed text-muted">{l.description}</p>
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-2 text-[11px] text-muted">
+              {layout === "custom" ? "Your own mix of the parts below." : "Whichever you pick, you can still download it as a PDF, an Excel workbook or a Word summary."}
+            </p>
+          </Panel>
+
+          <Panel title="What to include" hint="Fine-tuning: tick or untick any part of the report.">
             {(
               [
                 ["kpis", "Headline figures"],

@@ -61,6 +61,60 @@ export interface SummaryBlocks {
 
 export const DEFAULT_BLOCKS: SummaryBlocks = { kpis: true, breakdown: true, ageing: true, narrative: true, attention: true, table: true };
 
+/**
+ * The shape of the report – how much of it is wanted. Each style is only a set of the blocks above,
+ * so it is a starting point the "What to include" ticks can still change; the style shown as chosen
+ * is worked back out from the blocks, which means a report saved before styles existed still opens
+ * on the right one.
+ */
+export type ReportLayout = "one_pager" | "summary" | "detailed" | "data" | "custom";
+
+export interface LayoutDef {
+  id: Exclude<ReportLayout, "custom">;
+  label: string;
+  description: string;
+  /** The file this shape is meant for, said plainly on the page. */
+  suits: string;
+  blocks: SummaryBlocks;
+}
+
+export const LAYOUTS: LayoutDef[] = [
+  {
+    id: "one_pager",
+    label: "One-pager",
+    description: "The answer on a single page: the headline figures, the written position and what needs attention. No tables.",
+    suits: "PDF or Word",
+    blocks: { kpis: true, narrative: true, attention: true, breakdown: false, ageing: false, table: false },
+  },
+  {
+    id: "summary",
+    label: "Detailed summary",
+    description: "The figures and the commentary with the breakdown and ageing behind them, but not the full list of records.",
+    suits: "Word or PDF",
+    blocks: { kpis: true, narrative: true, attention: true, breakdown: true, ageing: true, table: false },
+  },
+  {
+    id: "detailed",
+    label: "Full report",
+    description: "Everything: the figures, the commentary, the breakdown, the ageing and every record.",
+    suits: "PDF or Excel",
+    blocks: { kpis: true, narrative: true, attention: true, breakdown: true, ageing: true, table: true },
+  },
+  {
+    id: "data",
+    label: "Records only",
+    description: "Just the records with their totals and nothing written, for working on the figures yourself.",
+    suits: "Excel",
+    blocks: { kpis: false, narrative: false, attention: false, breakdown: false, ageing: false, table: true },
+  },
+];
+
+/** Which style the ticks currently add up to, or "custom" when they match none of them. */
+export function layoutOf(blocks: SummaryBlocks): ReportLayout {
+  const hit = LAYOUTS.find((l) => (Object.keys(l.blocks) as (keyof SummaryBlocks)[]).every((k) => l.blocks[k] === blocks[k]));
+  return hit?.id ?? "custom";
+}
+
 export interface ReportSpec {
   /** A source id from the catalogue, e.g. "bonds" or "payments_due". */
   source: string;

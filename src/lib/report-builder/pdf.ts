@@ -162,10 +162,16 @@ function basis(doc: Doc, r: BuiltReport) {
 }
 
 function pageFooter(doc: Doc, r: BuiltReport, page: number, total: number) {
+  // The footer sits below the bottom margin, and PDFKit starts a fresh page whenever text is written
+  // past that margin – which would append a blank page for every footer drawn. Dropping the margin
+  // for the two lines and putting it back stops it.
+  const bottom = doc.page.margins.bottom;
+  doc.page.margins.bottom = 0;
   const y = PAGE.height - PAGE.margin + 6;
   doc.fillColor(MUTED).font("Helvetica").fontSize(7);
-  doc.text(`${r.title}  ·  as at ${formatDate(r.asOf)}  ·  generated ${formatDateTime(r.generatedAt)} by ${APP_NAME}`, PAGE.margin, y, { width: CONTENT - 70 });
-  doc.text(`Page ${page} of ${total}`, PAGE.margin + CONTENT - 70, y, { width: 70, align: "right" });
+  doc.text(`${r.title}  ·  as at ${formatDate(r.asOf)}  ·  generated ${formatDateTime(r.generatedAt)} by ${APP_NAME}`, PAGE.margin, y, { width: CONTENT - 70, lineBreak: false });
+  doc.text(`Page ${page} of ${total}`, PAGE.margin + CONTENT - 70, y, { width: 70, align: "right", lineBreak: false });
+  doc.page.margins.bottom = bottom;
 }
 
 /** Starts a new page when less than `need` points remain. */
