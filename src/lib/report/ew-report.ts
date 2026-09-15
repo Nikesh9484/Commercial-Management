@@ -1,7 +1,7 @@
 import type { ReportData } from "./data";
 import type { RecordRow } from "../registers/types";
 import { formatDate } from "../format";
-import { num, numOrNull, txt, money, plural, list } from "./report-utils";
+import { num, numOrNull, txt, money, plural, list, capMovement} from "./report-utils";
 
 /**
  * Executive Early Warnings & Risks / Opportunities Status Report: open exposure feeding column L of
@@ -207,7 +207,7 @@ export function buildEwReport(data: ReportData): EwReport {
     asOf,
     headline,
     narrative,
-    movement,
+    movement: capMovement(movement),
     attention,
     ewOpen,
     risksOpen,

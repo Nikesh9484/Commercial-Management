@@ -6,13 +6,14 @@ import { MONEY_COLUMNS, type Money } from "../cost-report/columns";
 import { formatMoney, formatDate, formatNumber, formatPercent, formatDateTime } from "../format";
 import type { FieldDef } from "../registers/types";
 import { APP_NAME } from "../brand";
-import { buildClaimsReport } from "./claims-report";
+import { buildClaimsReport, type ClaimLine } from "./claims-report";
 import { buildPaymentsReport } from "./payments-report";
 import { buildChangesReport } from "./changes-report";
 import { buildEwReport } from "./ew-report";
 import { buildPsReport } from "./provisional-sums-report";
 import { buildBondsReport } from "./bonds-report";
 import { NO_BONDS_FILTER, bondsFilterLabel, type BondsFilter } from "../bonds/filter";
+import { groupByParty, plural, type PartyGroup } from "./report-utils";
 import { buildTransfersReport } from "./transfers-report";
 import { buildFaReport } from "./fa-report";
 
@@ -169,9 +170,14 @@ function heading(ctx: Ctx, title: string, sub?: string) {
   doc.fillColor("#172033").font("Helvetica").fontSize(9);
 }
 
+/**
+ * A section heading. It reserves enough room for itself *and the first rows of whatever follows it*,
+ * because 40pt was only the heading: a heading that fitted but whose table did not was left stranded
+ * at the foot of a page with nothing under it, which reads as a printing fault.
+ */
 function subheading(ctx: Ctx, title: string, note?: string) {
   const { doc } = ctx;
-  ensureSpace(ctx, 40);
+  ensureSpace(ctx, 110);
   doc.moveDown(0.3);
   doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(11).text(title);
   if (note) doc.fillColor(MUTED).font("Helvetica").fontSize(8).text(note);
@@ -329,6 +335,85 @@ function minutes(ctx: Ctx) {
 /* ------------------------------------------------------------------ */
 /* Executive summary                                                   */
 
+/**
+ * The row of figure cards at the top of every status report. Kept in one place because it was
+ * copied into nine reports and drifted: the figure was set at a fixed 12pt, so a long one (a money
+ * pair, or a nine-figure SAR amount) wrapped onto a second line and printed straight through the
+ * caption underneath it. Here it is shrunk until it fits on one line, and the caption is given a
+ * height so it can never grow into the card below.
+ */
+function kpiCards(ctx: Ctx, kpis: [string, string, string][], tone?: (k: [string, string, string]) => string | null) {
+  const { doc } = ctx;
+  const cw = (PAGE.width - PAGE.margin * 2 - 3 * 10) / 4;
+  const top = doc.y;
+  let x = PAGE.margin;
+  let y = top;
+  kpis.forEach((k, i) => {
+    doc.rect(x, y, cw, 52).fillAndStroke("#ffffff", LINE);
+    doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(k[0].toUpperCase(), x + 8, y + 7, { width: cw - 16, height: 10, ellipsis: true, lineBreak: false });
+    let size = 12;
+    doc.font("Helvetica-Bold");
+    while (size > 6.5 && doc.fontSize(size).widthOfString(k[1]) > cw - 16) size -= 0.5;
+    doc.fillColor(tone?.(k) ?? NAVY).fontSize(size).text(k[1], x + 8, y + 21 - size / 2, { width: cw - 16, lineBreak: false, ellipsis: true });
+    doc.fillColor(MUTED).font("Helvetica").fontSize(7).text(k[2], x + 8, y + 36, { width: cw - 16, height: 14, ellipsis: true });
+    x += cw + 10;
+    if ((i + 1) % 4 === 0) {
+      x = PAGE.margin;
+      y += 62;
+    }
+  });
+  doc.y = top + Math.ceil(kpis.length / 4) * 62;
+  doc.x = PAGE.margin;
+}
+
+/**
+ * A report's rows printed one party at a time – a heading with that party's name, a line saying what
+ * they hold, then their own table. A status report is worked one contractor at a time, so it reads
+ * far better that way than as one long list sorted by a column nobody chases by.
+ */
+function partyTables<T>(
+  ctx: Ctx,
+  groups: PartyGroup<T>[],
+  columns: Col[],
+  note?: (g: PartyGroup<T>) => string,
+  /** The column naming the party, used for the combined table of one-item parties. */
+  partyColumn?: Col,
+) {
+  const { doc } = ctx;
+  const width = PAGE.width - PAGE.margin * 2;
+  // A heading and a full set of column titles above a single row is more furniture than information.
+  // Parties with one item each are collected into one table with their name as a column instead,
+  // which keeps the page readable when a register has a long tail of one-offs.
+  const many = partyColumn ? groups.filter((g) => g.count > 1) : groups;
+  const singles = partyColumn ? groups.filter((g) => g.count === 1) : [];
+  for (const g of many) {
+    ensureSpace(ctx, 70);
+    doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(9.5).text(g.party, PAGE.margin, doc.y, { width });
+    doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(note?.(g) ?? plural(g.count, "item"), PAGE.margin, doc.y + 1, { width });
+    doc.moveDown(0.35);
+    doc.x = PAGE.margin;
+    table(ctx, columns, g.items as unknown as Record<string, unknown>[], { zebra: true });
+    doc.moveDown(0.5);
+  }
+  if (singles.length === 1) {
+    const g = singles[0];
+    ensureSpace(ctx, 70);
+    doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(9.5).text(g.party, PAGE.margin, doc.y, { width });
+    doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(note?.(g) ?? plural(g.count, "item"), PAGE.margin, doc.y + 1, { width });
+    doc.moveDown(0.35);
+    doc.x = PAGE.margin;
+    table(ctx, columns, g.items as unknown as Record<string, unknown>[], { zebra: true });
+    doc.moveDown(0.5);
+  } else if (singles.length > 1) {
+    ensureSpace(ctx, 70);
+    doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(9.5).text(`${plural(singles.length, "contractor")} with one item each`, PAGE.margin, doc.y, { width });
+    doc.moveDown(0.35);
+    doc.x = PAGE.margin;
+    table(ctx, [partyColumn!, ...columns], singles.flatMap((g) => g.items) as unknown as Record<string, unknown>[], { zebra: true });
+    doc.moveDown(0.5);
+  }
+}
+
 function executiveSummary(ctx: Ctx) {
   const { doc, data } = ctx;
   const g = executiveTotals(data.costReport);
@@ -343,23 +428,7 @@ function executiveSummary(ctx: Ctx) {
     ["Works to Complete (Q)", formatMoney(g.Q), ""],
     ["Period Movement (S)", formatMoney(g.S), data.costReport.previousPeriod ? (data.costReport.previousPeriod.snapshotAvailable ? `vs ${data.costReport.previousPeriod.label}` : (data.costReport.previousPeriod.note ?? "previous period not locked")) : "no previous period"],
   ];
-  // KPI grid 4 x 2
-  const cw = (PAGE.width - PAGE.margin * 2 - 3 * 10) / 4;
-  let x = PAGE.margin;
-  let y = doc.y;
-  kpis.forEach((k, i) => {
-    doc.rect(x, y, cw, 52).fillAndStroke("#ffffff", LINE);
-    doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(k[0].toUpperCase(), x + 8, y + 7, { width: cw - 16 });
-    const adverse = (k[0].startsWith("Variance") || k[0].startsWith("Period")) && k[1].startsWith("-") === false && !["0.00"].includes(k[1]);
-    doc.fillColor(adverse ? "#b91c1c" : NAVY).font("Helvetica-Bold").fontSize(12).text(k[1], x + 8, y + 20, { width: cw - 16 });
-    doc.fillColor(MUTED).font("Helvetica").fontSize(7).text(k[2], x + 8, y + 37, { width: cw - 16 });
-    x += cw + 10;
-    if (i === 3) {
-      x = PAGE.margin;
-      y += 62;
-    }
-  });
-  doc.y = y + 62;
+  kpiCards(ctx, kpis, (k) => ((k[0].startsWith("Variance") || k[0].startsWith("Period")) && !k[1].startsWith("-") && k[1] !== "0.00" ? "#b91c1c" : null));
   doc.x = PAGE.margin;
 
   subheading(ctx, "Open items");
@@ -605,22 +674,7 @@ function claimsStatusReport(ctx: Ctx) {
     ["Late notices / particulars", `${h.noticeLate} / ${h.detailLate}`, "later than 28 / 42 business days"],
     ["Disputes", String(h.disputes), "Notice of Dissatisfaction / Dispute"],
   ];
-  const cw = (PAGE.width - PAGE.margin * 2 - 3 * 10) / 4;
-  let x = PAGE.margin;
-  let y = doc.y;
-  kpis.forEach((k, i) => {
-    doc.rect(x, y, cw, 52).fillAndStroke("#ffffff", LINE);
-    doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(k[0].toUpperCase(), x + 8, y + 7, { width: cw - 16 });
-    doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(12).text(k[1], x + 8, y + 20, { width: cw - 16 });
-    doc.fillColor(MUTED).font("Helvetica").fontSize(7).text(k[2], x + 8, y + 37, { width: cw - 16 });
-    x += cw + 10;
-    if (i === 3) {
-      x = PAGE.margin;
-      y += 62;
-    }
-  });
-  doc.y = y + 62;
-  doc.x = PAGE.margin;
+  kpiCards(ctx, kpis);
 
   const width = PAGE.width - PAGE.margin * 2;
   subheading(ctx, "Commercial narrative");
@@ -648,27 +702,33 @@ function claimsStatusReport(ctx: Ctx) {
     doc.moveDown(0.4);
   }
 
-  subheading(ctx, "Claims register at cut-off", "Pending claims first, largest value first. Days = days since the (detailed) claim was received, pending claims only.");
+  // The register, contractor by contractor. A claim is negotiated with one contractor at a time, so
+  // the page is read that way; the totals for each are under their own block.
   const money = (v: unknown) => (v === null || v === undefined ? "" : formatMoney(v as number));
-  table(
+  const claimColumns: Col[] = [
+    { key: "claim_no", label: "Ref", width: 0.8 },
+    { key: "description", label: "Claim", width: 3.4 },
+    { key: "type", label: "Type", width: 0.9 },
+    { key: "claimedSar", label: "Claimed SAR", width: 1.2, align: "right", format: money },
+    { key: "determinedSar", label: "Determined SAR", width: 1.2, align: "right", format: money },
+    { key: "eot", label: "EOT days cl./gr.", width: 0.9, align: "right" },
+    { key: "status", label: "Status", width: 0.8 },
+    { key: "stage", label: "Stage / next step", width: 1.9 },
+    { key: "actionWith", label: "Action with", width: 1.2 },
+    { key: "daysSinceReceipt", label: "Days", width: 0.5, align: "right" },
+  ];
+  const withEot = (c: ClaimLine) => ({ ...c, eot: c.eotClaimed === null && c.eotGranted === null ? "" : `${c.eotClaimed ?? "–"} / ${c.eotGranted ?? "–"}` });
+  subheading(ctx, "Claims register at cut-off", "One block per contractor; pending claims first, largest value first.");
+  partyTables(
     ctx,
-    [
-      { key: "claim_no", label: "Ref", width: 0.8 },
-      { key: "contractor", label: "Contractor", width: 1.6 },
-      { key: "description", label: "Claim", width: 3.2 },
-      { key: "type", label: "Type", width: 0.9 },
-      { key: "claimedSar", label: "Claimed SAR", width: 1.2, align: "right", format: money },
-      { key: "assessedSar", label: "Assessed SAR", width: 1.2, align: "right", format: money },
-      { key: "determinedSar", label: "Determined SAR", width: 1.2, align: "right", format: money },
-      { key: "eot", label: "EOT days cl./gr.", width: 0.9, align: "right" },
-      { key: "status", label: "Status", width: 0.8 },
-      { key: "stage", label: "Stage / next step", width: 2 },
-      { key: "actionWith", label: "Action with", width: 1.1 },
-      { key: "daysSinceReceipt", label: "Days", width: 0.5, align: "right" },
-      { key: "notice", label: "Notice", width: 0.5 },
-    ],
-    r.claims.map((c) => ({ ...c, eot: c.eotClaimed === null && c.eotGranted === null ? "" : `${c.eotClaimed ?? "–"} / ${c.eotGranted ?? "–"}` })) as unknown as Record<string, unknown>[],
-    { zebra: true, totalRow: { claim_no: "TOTAL", claimedSar: formatMoney(h.claimedSar), determinedSar: formatMoney(h.determinedSar), eot: `${h.eotClaimed} / ${h.eotGranted}` } },
+    groupByParty(
+      r.claims,
+      (c) => c.contractor,
+      (c) => ({ claimed: c.claimedSar, determined: c.determinedSar ?? 0, eotClaimed: c.eotClaimed ?? 0, eotGranted: c.eotGranted ?? 0 }),
+    ).map((g) => ({ ...g, items: g.items.map(withEot) })),
+    claimColumns,
+    (g) => `${plural(g.count, "claim")} · ${formatMoney(g.totals.claimed ?? 0)} claimed, ${formatMoney(g.totals.determined ?? 0)} determined · ${g.totals.eotClaimed ?? 0} / ${g.totals.eotGranted ?? 0} EOT days claimed / granted`,
+    { key: "contractor", label: "Contractor", width: 1.6 },
   );
 
   subheading(ctx, "By contractor");
@@ -837,22 +897,7 @@ function faStatusReport(ctx: Ctx) {
     ["Past forecast closure date", String(h.overdue), `${h.dueSoon} due within 60 days`],
     ["No forecast date", String(h.noDate), "open packages"],
   ];
-  const cw = (PAGE.width - PAGE.margin * 2 - 3 * 10) / 4;
-  let x = PAGE.margin;
-  let y = doc.y;
-  kpis.forEach((k, i) => {
-    doc.rect(x, y, cw, 52).fillAndStroke("#ffffff", LINE);
-    doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(k[0].toUpperCase(), x + 8, y + 7, { width: cw - 16 });
-    doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(12).text(k[1], x + 8, y + 20, { width: cw - 16 });
-    doc.fillColor(MUTED).font("Helvetica").fontSize(7).text(k[2], x + 8, y + 37, { width: cw - 16 });
-    x += cw + 10;
-    if (i === 3) {
-      x = PAGE.margin;
-      y += 62;
-    }
-  });
-  doc.y = y + 62;
-  doc.x = PAGE.margin;
+  kpiCards(ctx, kpis);
 
   const width = PAGE.width - PAGE.margin * 2;
   subheading(ctx, "Commercial narrative");
@@ -879,15 +924,21 @@ function faStatusReport(ctx: Ctx) {
     }
     doc.moveDown(0.4);
   }
-  subheading(ctx, "Final account status by package", "Open packages first, earliest forecast closure first. Committed and anticipated final account are read from the cost report.");
+  // Final accounts, contractor by contractor: closing one out is a negotiation with one company,
+  // and a contractor with four packages open is a different conversation from one with a single one.
   const money = (v: unknown) => (v === null || v === undefined ? "" : formatMoney(v as number));
-  table(
+  subheading(ctx, "Final account status", "One block per contractor; open packages first, earliest forecast closure first. Committed and anticipated final account are read from the cost report.");
+  partyTables(
     ctx,
+    groupByParty(
+      r.rows,
+      (x) => x.contractor,
+      (x) => ({ committed: x.committed, afa: x.afa, uncommitted: x.uncommitted }),
+    ),
     [
       { key: "acc_ref", label: "ACC code", width: 0.9 },
-      { key: "description", label: "Package", width: 2.4 },
-      { key: "contractor", label: "Contractor / consultant", width: 1.8 },
-      { key: "type", label: "Type", width: 0.7 },
+      { key: "description", label: "Package", width: 2.6 },
+      { key: "type", label: "Type", width: 1 },
       { key: "committed", label: "Committed (I)", width: 1.2, align: "right", format: money },
       { key: "afa", label: "Anticipated FA (N)", width: 1.2, align: "right", format: money },
       { key: "uncommitted", label: "Uncommitted", width: 1.1, align: "right", format: money },
@@ -897,8 +948,8 @@ function faStatusReport(ctx: Ctx) {
       { key: "status", label: "Status", width: 0.9 },
       { key: "comments", label: "Comments", width: 2 },
     ],
-    r.rows as unknown as Record<string, unknown>[],
-    { zebra: true, totalRow: { acc_ref: "TOTAL", committed: formatMoney(r.rows.reduce((t, x) => t + x.committed, 0)), afa: formatMoney(h.totalAfa), uncommitted: formatMoney(r.rows.reduce((t, x) => t + x.uncommitted, 0)) } },
+    (g) => `${plural(g.count, "package")} · ${formatMoney(g.totals.afa ?? 0)} anticipated final account · ${formatMoney(g.totals.uncommitted ?? 0)} uncommitted`,
+    { key: "contractor", label: "Contractor / consultant", width: 1.8 },
   );
   subheading(ctx, "By status");
   table(
@@ -934,22 +985,7 @@ function paymentsStatusReport(ctx: Ctx) {
     ["Retention held", sar(h.retentionHeld), `advance recovered ${sar(h.advanceRecovered)}`],
     ["Certify / pay (avg days)", `${h.avgDaysToCertify ?? "–"} / ${h.avgDaysToPay ?? "–"}`, `${h.onTimeCertification ?? "–"}% / ${h.onTimePayment ?? "–"}% within the contract`],
   ];
-  const cw = (PAGE.width - PAGE.margin * 2 - 3 * 10) / 4;
-  let x = PAGE.margin;
-  let y = doc.y;
-  kpis.forEach((k, i) => {
-    doc.rect(x, y, cw, 52).fillAndStroke("#ffffff", LINE);
-    doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(k[0].toUpperCase(), x + 8, y + 7, { width: cw - 16 });
-    doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(12).text(k[1], x + 8, y + 20, { width: cw - 16 });
-    doc.fillColor(MUTED).font("Helvetica").fontSize(7).text(k[2], x + 8, y + 37, { width: cw - 16 });
-    x += cw + 10;
-    if (i === 3) {
-      x = PAGE.margin;
-      y += 62;
-    }
-  });
-  doc.y = y + 62;
-  doc.x = PAGE.margin;
+  kpiCards(ctx, kpis);
 
   const width = PAGE.width - PAGE.margin * 2;
   subheading(ctx, "Commercial narrative");
@@ -1072,23 +1108,7 @@ function changesStatusReport(ctx: Ctx) {
     ["Cost report – DVO (H)", sar(h.dvoValue), `PVO / VO (J) ${sar(h.pvoValue)}`],
     ["Cost report – RFC (K)", sar(h.rfcValue), h.unlinked ? `${h.unlinked} change(s) not linked to a cost line` : "all changes linked to a cost line"],
   ];
-  const cw = (PAGE.width - PAGE.margin * 2 - 3 * 10) / 4;
-  let x = PAGE.margin;
-  const y = doc.y;
-  kpis.forEach((k) => {
-    doc.rect(x, y, cw, 52).fillAndStroke("#ffffff", LINE);
-    doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(k[0].toUpperCase(), x + 8, y + 7, { width: cw - 16 });
-    // The figure is shrunk until it fits on one line: a long money pair set at 12pt wrapped onto a
-    // second line and printed straight through the caption underneath it.
-    let size = 12;
-    doc.font("Helvetica-Bold");
-    while (size > 6.5 && doc.fontSize(size).widthOfString(k[1]) > cw - 16) size -= 0.5;
-    doc.fillColor(NAVY).fontSize(size).text(k[1], x + 8, y + 21 - size / 2, { width: cw - 16, lineBreak: false, ellipsis: true });
-    doc.fillColor(MUTED).font("Helvetica").fontSize(7).text(k[2], x + 8, y + 37, { width: cw - 16, height: 12, ellipsis: true });
-    x += cw + 10;
-  });
-  doc.y = y + 62;
-  doc.x = PAGE.margin;
+  kpiCards(ctx, kpis);
 
   const width = PAGE.width - PAGE.margin * 2;
   subheading(ctx, "Commercial narrative");
@@ -1145,22 +1165,23 @@ function changesStatusReport(ctx: Ctx) {
     { zebra: true },
   );
 
-  subheading(ctx, "Open changes", "Largest days open first, then largest value.");
-  table(
-    ctx,
-    [
-      { key: "item_no", label: "Item", width: 0.7 },
-      { key: "description", label: "Description", width: 2.6 },
-      { key: "stage", label: "Stage", width: 1.1 },
-      { key: "contractor", label: "Contractor", width: 1.5 },
-      { key: "amount", label: "Value (SAR)", width: 1.1, align: "right", format: money },
-      { key: "daysOpen", label: "Days open", width: 0.7, align: "right" },
-      { key: "actionPendingBy", label: "Action with", width: 1.1 },
-      { key: "status", label: "Status", width: 0.9 },
-    ],
-    r.open as unknown as Record<string, unknown>[],
-    { zebra: true },
-  );
+  // Open changes: a table per stage, and inside it a block per contractor. A DVO pending with the
+  // Engineer and a PVO awaiting a quotation are chased separately, and each chase is one contractor.
+  const changeColumns: Col[] = [
+    { key: "item_no", label: "Item", width: 0.7 },
+    { key: "description", label: "Description", width: 3.2 },
+    { key: "package", label: "Package", width: 1.4 },
+    { key: "amount", label: "Value (SAR)", width: 1.1, align: "right", format: money },
+    { key: "dateRaised", label: "Raised", width: 0.85, format: (v) => formatDate(v as string) },
+    { key: "daysOpen", label: "Days open", width: 0.7, align: "right" },
+    { key: "actionPendingBy", label: "Action with", width: 1.2 },
+    { key: "status", label: "Status", width: 1 },
+  ];
+  for (const sec of r.sections) {
+    ensureSpace(ctx, 150);
+    subheading(ctx, `${sec.title} – ${plural(sec.count, "item")}`, `${plural(sec.groups.length, "contractor")} · ${formatMoney(sec.value)} carried at this stage.`);
+    partyTables(ctx, sec.groups, changeColumns, (g) => `${plural(g.count, "item")} · ${formatMoney(g.totals.amount ?? 0)}`, { key: "contractor", label: "Contractor", width: 1.5 });
+  }
 
   doc.moveDown(0.5);
   doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(`Prepared from the Change Management Tracker of ${APP_NAME} as at ${formatDate(r.asOf)}${data.locked ? "" : " (draft – period not locked)"}. Value is the cost-report amount at the change's current live stage.`, { width });
@@ -1180,18 +1201,7 @@ function ewStatusReport(ctx: Ctx) {
     ["Risk exposure", sar(h.riskExposure), `${h.risksOpen} open risk(s), ${h.highRated} rated High`],
     ["Opportunity value", sar(h.opportunityValue), `net exposure ${sar(h.netExposure)}`],
   ];
-  const cw = (PAGE.width - PAGE.margin * 2 - 3 * 10) / 4;
-  let x = PAGE.margin;
-  const y = doc.y;
-  kpis.forEach((k) => {
-    doc.rect(x, y, cw, 52).fillAndStroke("#ffffff", LINE);
-    doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(k[0].toUpperCase(), x + 8, y + 7, { width: cw - 16 });
-    doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(12).text(k[1], x + 8, y + 20, { width: cw - 16 });
-    doc.fillColor(MUTED).font("Helvetica").fontSize(7).text(k[2], x + 8, y + 37, { width: cw - 16 });
-    x += cw + 10;
-  });
-  doc.y = y + 62;
-  doc.x = PAGE.margin;
+  kpiCards(ctx, kpis);
 
   const width = PAGE.width - PAGE.margin * 2;
   subheading(ctx, "Commercial narrative");
@@ -1220,20 +1230,24 @@ function ewStatusReport(ctx: Ctx) {
   }
 
   const money = (v: unknown) => (v === null || v === undefined ? "" : formatMoney(v as number));
-  subheading(ctx, "Open early warnings", "Largest cost impact first.");
-  table(
+  subheading(ctx, "Open early warnings", "One block per contractor; largest cost impact first.");
+  partyTables(
     ctx,
+    groupByParty(
+      r.ewOpen,
+      (x) => x.contractor,
+      (x) => ({ cost: x.costImpact ?? 0, days: x.timeImpactDays ?? 0 }),
+    ),
     [
       { key: "ew_no", label: "EW No", width: 0.7 },
-      { key: "description", label: "Description", width: 3 },
-      { key: "contractor", label: "Contractor", width: 1.4 },
-      { key: "likelihood", label: "Likelihood", width: 0.8 },
+      { key: "description", label: "Description", width: 3.8 },
+      { key: "likelihood", label: "Likelihood", width: 0.9 },
       { key: "costImpact", label: "Cost impact (SAR)", width: 1.2, align: "right", format: money },
       { key: "timeImpactDays", label: "Time (days)", width: 0.8, align: "right" },
       { key: "daysOpen", label: "Days open", width: 0.7, align: "right" },
     ],
-    r.ewOpen as unknown as Record<string, unknown>[],
-    { zebra: true },
+    (g) => `${plural(g.count, "open item")} · ${formatMoney(g.totals.cost ?? 0)} of potential cost · ${plural(g.totals.days ?? 0, "day")} of potential delay`,
+    { key: "contractor", label: "Contractor", width: 1.5 },
   );
 
   if (r.risksOpen.length) {
@@ -1273,18 +1287,7 @@ function psStatusReport(ctx: Ctx) {
     ["Total instructed", sar(h.instructed), h.withoutValue ? `${h.withoutValue} item(s) not yet instructed` : "every item instructed"],
     [h.net >= 0 ? "Net extra vs budget" : "Net saving vs budget", sar(Math.abs(h.net)), `extras ${sar(h.extras)} · savings ${sar(h.savings)}`],
   ];
-  const cw = (PAGE.width - PAGE.margin * 2 - 3 * 10) / 4;
-  let x = PAGE.margin;
-  const y = doc.y;
-  kpis.forEach((k) => {
-    doc.rect(x, y, cw, 52).fillAndStroke("#ffffff", LINE);
-    doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(k[0].toUpperCase(), x + 8, y + 7, { width: cw - 16 });
-    doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(12).text(k[1], x + 8, y + 20, { width: cw - 16 });
-    doc.fillColor(MUTED).font("Helvetica").fontSize(7).text(k[2], x + 8, y + 37, { width: cw - 16 });
-    x += cw + 10;
-  });
-  doc.y = y + 62;
-  doc.x = PAGE.margin;
+  kpiCards(ctx, kpis);
 
   const width = PAGE.width - PAGE.margin * 2;
   subheading(ctx, "Commercial narrative");
@@ -1368,18 +1371,7 @@ function bondsStatusReport(ctx: Ctx, filter: BondsFilter = NO_BONDS_FILTER) {
     ["Shortfalls", String(h.shortfallCount), h.shortfallCount ? `${sar(h.shortfallValue)} below requirement` : "every item meets its requirement"],
     ["Checks outstanding", `${h.notApproved} / ${h.notVerified}`, "not approved / not bank-verified"],
   ];
-  const cw = (PAGE.width - PAGE.margin * 2 - 3 * 10) / 4;
-  let x = PAGE.margin;
-  const y = doc.y;
-  kpis.forEach((k) => {
-    doc.rect(x, y, cw, 52).fillAndStroke("#ffffff", LINE);
-    doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(k[0].toUpperCase(), x + 8, y + 7, { width: cw - 16 });
-    doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(12).text(k[1], x + 8, y + 20, { width: cw - 16 });
-    doc.fillColor(MUTED).font("Helvetica").fontSize(7).text(k[2], x + 8, y + 37, { width: cw - 16 });
-    x += cw + 10;
-  });
-  doc.y = y + 62;
-  doc.x = PAGE.margin;
+  kpiCards(ctx, kpis);
 
   const width = PAGE.width - PAGE.margin * 2;
   subheading(ctx, "Commercial narrative");
@@ -1442,21 +1434,13 @@ function bondsStatusReport(ctx: Ctx, filter: BondsFilter = NO_BONDS_FILTER) {
         `${sec.title} – ${sec.count} item(s)`,
         `${sec.contractors.length} contractor(s) · ${sar(sec.provided)} held against ${sar(sec.required)} required${sec.shortfall ? ` · ${sar(sec.shortfall)} short` : ""}.`,
       );
-      for (const g of sec.contractors) {
-        // the contractor's name sits above their own rows, so the page reads as a list of chases
-        ensureSpace(ctx, 70);
-        doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(9.5).text(g.contractor, PAGE.margin, doc.y, { width });
-        doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(
-          `${g.count} item(s) · ${sar(g.provided)} held against ${sar(g.required)} required${g.shortfall ? ` · ${sar(g.shortfall)} short` : ""}`,
-          PAGE.margin,
-          doc.y + 1,
-          { width },
-        );
-        doc.moveDown(0.35);
-        doc.x = PAGE.margin;
-        table(ctx, chaseColumns, g.items as unknown as Record<string, unknown>[], { zebra: true });
-        doc.moveDown(0.5);
-      }
+      partyTables(
+        ctx,
+        sec.contractors.map((g) => ({ party: g.contractor, count: g.count, totals: { required: g.required, provided: g.provided, shortfall: g.shortfall }, items: g.items })),
+        chaseColumns,
+        (g) => `${plural(g.count, "item")} · ${sar(g.totals.provided ?? 0)} held against ${sar(g.totals.required ?? 0)} required${g.totals.shortfall ? ` · ${sar(g.totals.shortfall)} short` : ""}`,
+        { key: "contractor", label: "Contractor / consultant", width: 1.8 },
+      );
     }
   } else if (r.filterLabel) {
     subheading(ctx, `${r.filterLabel} – full list`, `${r.rows.length} item(s), earliest expiry first.`);
@@ -1523,18 +1507,7 @@ function transfersStatusReport(ctx: Ctx) {
     ["Pending approval", sar(h.pendingAmount), "not yet in the cost report"],
     ["Not applied", String(h.notApplied), h.notApplied ? "approved transfers missing a cost line" : "all approved transfers applied"],
   ];
-  const cw = (PAGE.width - PAGE.margin * 2 - 3 * 10) / 4;
-  let x = PAGE.margin;
-  const y = doc.y;
-  kpis.forEach((k) => {
-    doc.rect(x, y, cw, 52).fillAndStroke("#ffffff", LINE);
-    doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(k[0].toUpperCase(), x + 8, y + 7, { width: cw - 16 });
-    doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(12).text(k[1], x + 8, y + 20, { width: cw - 16 });
-    doc.fillColor(MUTED).font("Helvetica").fontSize(7).text(k[2], x + 8, y + 37, { width: cw - 16 });
-    x += cw + 10;
-  });
-  doc.y = y + 62;
-  doc.x = PAGE.margin;
+  kpiCards(ctx, kpis);
 
   const width = PAGE.width - PAGE.margin * 2;
   subheading(ctx, "Commercial narrative");

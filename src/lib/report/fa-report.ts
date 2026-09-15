@@ -1,4 +1,5 @@
 import type { ReportData } from "./data";
+import { capMovement } from "./report-utils";
 import type { RecordRow } from "../registers/types";
 import { formatMoney, formatDate } from "../format";
 
@@ -173,7 +174,7 @@ export function buildFaReport(data: ReportData): FaReport {
       uncommittedOpen,
     },
     narrative,
-    movement,
+    movement: capMovement(movement),
     attention,
     rows,
     byStatus: [...byStatusMap.values()],

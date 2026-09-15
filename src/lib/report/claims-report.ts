@@ -1,4 +1,5 @@
 import type { ReportData } from "./data";
+import { capMovement } from "./report-utils";
 import type { RecordRow } from "../registers/types";
 import { claimCostReportAmount, ASSESSMENT_PARTIES, EAR_STEPS, NOTICE_LIMIT_DAYS, DETAIL_LIMIT_DAYS } from "../registers/defs/claims";
 import { formatMoney, formatDate } from "../format";
@@ -466,7 +467,7 @@ export function buildClaimsReport(data: ReportData): ClaimsReport {
       disputes,
     },
     narrative,
-    movement,
+    movement: capMovement(movement),
     attention,
     claims,
     byContractor,

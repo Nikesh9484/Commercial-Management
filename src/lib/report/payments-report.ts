@@ -1,4 +1,5 @@
 import type { ReportData } from "./data";
+import { capMovement } from "./report-utils";
 import type { RecordRow } from "../registers/types";
 import { formatMoney, formatDate } from "../format";
 import { daysBetween } from "../registers/enrich-utils";
@@ -404,7 +405,7 @@ export function buildPaymentsReport(data: ReportData): PaymentsReport {
     asOf,
     headline,
     narrative,
-    movement,
+    movement: capMovement(movement),
     attention,
     contracts,
     byContractor,

@@ -1,7 +1,7 @@
 import type { ReportData } from "./data";
 import type { RecordRow } from "../registers/types";
 import { formatMoney, formatDate } from "../format";
-import { num, numOrNull, txt, money, plural, list } from "./report-utils";
+import { num, numOrNull, txt, money, plural, list, groupByParty, capMovement, type PartyGroup } from "./report-utils";
 
 /**
  * Executive Change Management Status Report: where every change sits on the Early Warning -> RFC ->
@@ -73,6 +73,8 @@ export interface ChangesReport {
   ageing: ChangeAgeBucket[];
   open: ChangeLine[];
   byCategory: { category: string; n: number; value: number }[];
+  /** The open items as one table per stage (DVO pending, PVO live …), each contractor by contractor. */
+  sections: { title: string; count: number; value: number; groups: PartyGroup<ChangeLine>[] }[];
 }
 
 function stageOf(r: RecordRow): { stage: string; col: "H" | "J" | "K" | "L" | null; amount: number } {
@@ -209,7 +211,7 @@ export function buildChangesReport(data: ReportData): ChangesReport {
   // movement since the previous report
   const mv = data.movement;
   const grp = mv?.groups.find((g) => g.key === "changes");
-  const movement =
+  const movement = capMovement(
     mv?.previous && grp
       ? {
           label: `Since ${mv.previous.label}`,
@@ -219,7 +221,8 @@ export function buildChangesReport(data: ReportData): ChangesReport {
             ...grp.removed.map((i) => `Removed: ${i.key} ${i.title}`),
           ],
         }
-      : null;
+      : null,
+  );
 
   // attention
   const attention: string[] = [];
@@ -256,6 +259,21 @@ export function buildChangesReport(data: ReportData): ChangesReport {
     text: `${byStage.find((s) => s.stage === "DVO")?.pending ? "Priorities are to close the pending DVOs so their value is determined, and " : ""}to keep every change linked to its cost report line so the tracker and the cost report stay in step.${headline.unlinked ? ` ${plural(headline.unlinked, "change")} still needs linking.` : ""}`,
   });
 
+  // One table per stage, because a DVO pending with the Engineer and a PVO awaiting a quotation are
+  // different conversations, and within each, one block per contractor – which is how they are chased.
+  const stageNames = [...new Set(open.map((o) => o.stage))];
+  const sections = stageNames
+    .map((title) => {
+      const mine = open.filter((o) => o.stage === title);
+      return {
+        title,
+        count: mine.length,
+        value: Math.round(mine.reduce((t, o) => t + o.amount, 0) * 100) / 100,
+        groups: groupByParty(mine, (o) => o.contractor, (o) => ({ amount: o.amount }), (a, b) => (b.daysOpen ?? 0) - (a.daysOpen ?? 0)),
+      };
+    })
+    .sort((a, b) => b.count - a.count || a.title.localeCompare(b.title));
+
   return {
     title: `Change Management Status Report – ${data.period.label}`,
     asOf,
@@ -266,6 +284,7 @@ export function buildChangesReport(data: ReportData): ChangesReport {
     byStage,
     ageing,
     open,
+    sections,
     byCategory,
   };
 }

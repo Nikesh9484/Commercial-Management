@@ -1,7 +1,7 @@
 import type { ReportData } from "./data";
 import type { RecordRow } from "../registers/types";
 import { formatDate } from "../format";
-import { num, txt, money, plural, list } from "./report-utils";
+import { num, txt, money, plural, list, capMovement} from "./report-utils";
 
 /** Executive Budget Transfers Status Report: what moved between packages, what is pending, and whether
  * column F of the cost report is in balance. */
@@ -104,5 +104,5 @@ export function buildTransfersReport(data: ReportData): TransfersReport {
     text: `${netsToZero ? "Approved transfers net to zero across packages, so column F is in balance." : "Approved transfers do not currently net to zero – reconcile the From and To cost lines before relying on column F."}${notApplied ? ` ${plural(notApplied, "approved transfer")} still needs its cost line set before it reaches the cost report.` : ""}`,
   });
 
-  return { title: `Budget Transfers Status Report – ${data.period.label}`, asOf, headline, narrative, movement, attention, rows, byPackage };
+  return { title: `Budget Transfers Status Report – ${data.period.label}`, asOf, headline, narrative, movement: capMovement(movement), attention, rows, byPackage };
 }

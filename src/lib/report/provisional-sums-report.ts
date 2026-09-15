@@ -1,7 +1,7 @@
 import type { ReportData } from "./data";
 import type { RecordRow } from "../registers/types";
 import { formatDate } from "../format";
-import { num, txt, money, plural, list } from "./report-utils";
+import { num, txt, money, plural, list, capMovement} from "./report-utils";
 
 /** Executive Provisional Sums Status Report: budget vs instructed value, savings and extras by status. */
 export interface PsLine {
@@ -106,5 +106,5 @@ export function buildPsReport(data: ReportData): PsReport {
     text: headline.withoutValue === 0 ? "Every provisional sum has been instructed; the register is fully resolved." : `${plural(headline.withoutValue, "provisional sum")} worth ${money(rows.filter((r) => r.contractValue === null).reduce((t, r) => t + r.budget, 0))} of budget remains to be instructed – track these against the procurement programme.`,
   });
 
-  return { title: `Provisional Sums Status Report – ${data.period.label}`, asOf, headline, narrative, movement, attention, rows, byStatus };
+  return { title: `Provisional Sums Status Report – ${data.period.label}`, asOf, headline, narrative, movement: capMovement(movement), attention, rows, byStatus };
 }
