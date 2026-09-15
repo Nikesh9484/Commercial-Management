@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 import { Check, RotateCcw } from "lucide-react";
-import { APPEARANCE_KEY, BUTTON_STYLES, COLOURS, DEFAULT_APPEARANCE, TEXT_SIZES, THEMES, readAppearance, saveAppearance, type Appearance } from "@/lib/appearance";
+import { APPEARANCE_KEY, BUTTON_STYLES, COLOURS, DEFAULT_APPEARANCE, TEXT_INKS, TEXT_SIZES, THEMES, readAppearance, saveAppearance, type Appearance } from "@/lib/appearance";
 import { Chip } from "@/components/ui/Chip";
 
 /**
@@ -57,6 +57,14 @@ export function AppearanceSettings() {
           <div className="grid gap-2 sm:grid-cols-2">
             {BUTTON_STYLES.map((b) => (
               <Choice key={b.value} on={a.buttons === b.value} label={b.label} help={b.help} onPick={() => set({ buttons: b.value })} />
+            ))}
+          </div>
+        </Panel>
+
+        <Panel title="Text colour" hint="The colour of the writing itself. Headings, figures and tables all follow it; the reds, ambers and greens that mean something are left alone.">
+          <div className="grid gap-2 sm:grid-cols-2">
+            {TEXT_INKS.map((i) => (
+              <Choice key={i.value} on={a.ink === i.value} label={i.label} help={i.help} onPick={() => set({ ink: i.value })} />
             ))}
           </div>
         </Panel>

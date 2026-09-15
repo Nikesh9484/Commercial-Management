@@ -27,6 +27,6 @@ export function aiKeyPresent(): boolean {
 /** Why the AI features are unavailable, phrased for the person reading it. */
 export function aiOffReason(): string | null {
   if (!aiKeyPresent()) return "no key is set on the server (add ANTHROPIC_API_KEY in the hosting settings)";
-  if (!aiEnabled()) return "the AI features have been switched off on the Customise my reports page";
+  if (!aiEnabled()) return "the AI has been switched off with the pill beside ASK ME in the top bar";
   return null;
 }

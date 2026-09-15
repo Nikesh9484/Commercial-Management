@@ -302,3 +302,28 @@ html[data-buttons="flat"] .btn-secondary { background: var(--card); }
 
 /* ---- Text size ---- */
 html[data-text="large"] { font-size: 110%; }
+
+/* ---- Colour of the writing ----
+   Overrides --text / --muted, which every surface already reads through --color-ink, so one rule
+   reaches the whole dashboard. Placed after the dark-theme block so a choice made here wins in
+   either theme; "colour" follows the chosen palette, taking the light end of it in the dark theme
+   so the writing stays readable against a dark page. */
+html[data-ink="black"] { --text: #000000; --muted: #3f4753; }
+html[data-ink="soft"] { --text: #3a4557; --muted: #7c8697; }
+html[data-ink="colour"] { --text: var(--navy); --muted: var(--navy-light); }
+html[data-theme="dark"][data-ink="black"] { --text: #ffffff; --muted: #c4cddb; }
+html[data-theme="dark"][data-ink="soft"] { --text: #c3ccda; --muted: #8b97a8; }
+html[data-theme="dark"][data-ink="colour"] { --text: var(--accent); --muted: #9fb3c9; }
+/* Tailwind's fixed ink utilities are pointed at the chosen colour the same way the dark theme does. */
+html[data-ink="black"] .text-ink,
+html[data-ink="soft"] .text-ink,
+html[data-ink="colour"] .text-ink { color: var(--text); }
+html[data-ink="black"] .text-muted,
+html[data-ink="soft"] .text-muted,
+html[data-ink="colour"] .text-muted { color: var(--muted); }
+html[data-ink="black"] .text-slate-900, html[data-ink="black"] .text-slate-800, html[data-ink="black"] .text-gray-900, html[data-ink="black"] .text-gray-800,
+html[data-ink="soft"] .text-slate-900, html[data-ink="soft"] .text-slate-800, html[data-ink="soft"] .text-gray-900, html[data-ink="soft"] .text-gray-800,
+html[data-ink="colour"] .text-slate-900, html[data-ink="colour"] .text-slate-800, html[data-ink="colour"] .text-gray-900, html[data-ink="colour"] .text-gray-800 { color: var(--text); }
+html[data-ink="black"] .text-slate-700, html[data-ink="black"] .text-slate-600, html[data-ink="black"] .text-gray-700, html[data-ink="black"] .text-gray-600,
+html[data-ink="soft"] .text-slate-700, html[data-ink="soft"] .text-slate-600, html[data-ink="soft"] .text-gray-700, html[data-ink="soft"] .text-gray-600,
+html[data-ink="colour"] .text-slate-700, html[data-ink="colour"] .text-slate-600, html[data-ink="colour"] .text-gray-700, html[data-ink="colour"] .text-gray-600 { color: var(--muted); }

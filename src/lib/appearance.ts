@@ -1,6 +1,6 @@
 /**
- * How the dashboard looks: the theme, the colour, whether the buttons are raised or flat, and the
- * text size. Kept on the machine it is set on (browsers call this local storage), because a choice
+ * How the dashboard looks: the theme, the colour, whether the buttons are raised or flat, the size
+ * of the writing and the colour of the writing. Kept on the machine it is set on (browsers call this local storage), because a choice
  * like text size belongs to the screen in front of you rather than to the login – a big monitor in
  * the office and a laptop on site want different answers.
  *
@@ -12,15 +12,17 @@ export type ThemeName = "light" | "dark";
 export type ColourName = "navy" | "teal" | "forest" | "plum" | "slate" | "burgundy";
 export type ButtonStyle = "raised" | "flat";
 export type TextSize = "normal" | "large";
+export type TextInk = "default" | "black" | "soft" | "colour";
 
 export interface Appearance {
   theme: ThemeName;
   colour: ColourName;
   buttons: ButtonStyle;
   text: TextSize;
+  ink: TextInk;
 }
 
-export const DEFAULT_APPEARANCE: Appearance = { theme: "light", colour: "navy", buttons: "raised", text: "normal" };
+export const DEFAULT_APPEARANCE: Appearance = { theme: "light", colour: "navy", buttons: "raised", text: "normal", ink: "default" };
 
 export const THEMES: { value: ThemeName; label: string; help: string }[] = [
   { value: "light", label: "Light", help: "Dark text on a pale background – the usual office setting, and what prints best." },
@@ -47,12 +49,21 @@ export const TEXT_SIZES: { value: TextSize; label: string; help: string }[] = [
   { value: "large", label: "Large", help: "About a tenth bigger throughout, for a large monitor or tired eyes." },
 ];
 
+/** The colour of the writing itself, separate from the accent colour above. */
+export const TEXT_INKS: { value: TextInk; label: string; help: string }[] = [
+  { value: "default", label: "Standard", help: "Very dark blue-grey – easy to read for a long time and what the dashboard is designed around." },
+  { value: "black", label: "Strong black", help: "The darkest setting, for a bright room or a screen washed out by sunlight." },
+  { value: "soft", label: "Soft grey", help: "A lighter grey; gentler on the eyes when you are reading for a long stretch." },
+  { value: "colour", label: "Match the colour", help: "The writing takes the colour chosen above, so headings and text are all of a piece." },
+];
+
 export const APPEARANCE_KEY = "cd_appearance";
 
 const THEME_VALUES = new Set(THEMES.map((t) => t.value as string));
 const COLOUR_VALUES = new Set(COLOURS.map((c) => c.value as string));
 const BUTTON_VALUES = new Set(BUTTON_STYLES.map((b) => b.value as string));
 const TEXT_VALUES = new Set(TEXT_SIZES.map((t) => t.value as string));
+const INK_VALUES = new Set(TEXT_INKS.map((i) => i.value as string));
 
 /** Anything unrecognised falls back to the default, so a half-written setting can never break the page. */
 export function readAppearance(raw: string | null): Appearance {
@@ -64,6 +75,7 @@ export function readAppearance(raw: string | null): Appearance {
       colour: COLOUR_VALUES.has(String(o.colour)) ? (o.colour as ColourName) : DEFAULT_APPEARANCE.colour,
       buttons: BUTTON_VALUES.has(String(o.buttons)) ? (o.buttons as ButtonStyle) : DEFAULT_APPEARANCE.buttons,
       text: TEXT_VALUES.has(String(o.text)) ? (o.text as TextSize) : DEFAULT_APPEARANCE.text,
+      ink: INK_VALUES.has(String(o.ink)) ? (o.ink as TextInk) : DEFAULT_APPEARANCE.ink,
     };
   } catch {
     return { ...DEFAULT_APPEARANCE };
@@ -77,6 +89,7 @@ export function applyAppearance(a: Appearance) {
   el.dataset.colour = a.colour;
   el.dataset.buttons = a.buttons;
   el.dataset.text = a.text;
+  el.dataset.ink = a.ink;
 }
 
 export function saveAppearance(a: Appearance) {
@@ -100,4 +113,4 @@ export function loadAppearance(): Appearance {
  * Runs before the page is painted, so the chosen look is already on screen rather than flashing the
  * default first. Written as a string because it has to be inline in the document head.
  */
-export const APPEARANCE_BOOT = `(function(){try{var a=JSON.parse(localStorage.getItem(${JSON.stringify(APPEARANCE_KEY)})||"{}");var d=document.documentElement;d.dataset.theme=["light","dark"].indexOf(a.theme)>=0?a.theme:"light";d.dataset.colour=${JSON.stringify([...COLOUR_VALUES])}.indexOf(a.colour)>=0?a.colour:"navy";d.dataset.buttons=["raised","flat"].indexOf(a.buttons)>=0?a.buttons:"raised";d.dataset.text=["normal","large"].indexOf(a.text)>=0?a.text:"normal";}catch(e){}})();`;
+export const APPEARANCE_BOOT = `(function(){try{var a=JSON.parse(localStorage.getItem(${JSON.stringify(APPEARANCE_KEY)})||"{}");var d=document.documentElement;d.dataset.theme=["light","dark"].indexOf(a.theme)>=0?a.theme:"light";d.dataset.colour=${JSON.stringify([...COLOUR_VALUES])}.indexOf(a.colour)>=0?a.colour:"navy";d.dataset.buttons=["raised","flat"].indexOf(a.buttons)>=0?a.buttons:"raised";d.dataset.text=["normal","large"].indexOf(a.text)>=0?a.text:"normal";d.dataset.ink=["default","black","soft","colour"].indexOf(a.ink)>=0?a.ink:"default";}catch(e){}})();`;
