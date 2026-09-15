@@ -3,6 +3,7 @@
 import { ShieldAlert, ShieldCheck, Clock } from "lucide-react";
 import type { RecordRow } from "@/lib/registers/types";
 import { filterBonds, type BondsExpiry } from "@/lib/bonds/filter";
+import { contractorKey } from "@/lib/bonds/name-key";
 import { formatDate, formatMoney } from "@/lib/format";
 import { Chip } from "@/components/ui/Chip";
 import { ExportButtons } from "@/components/ui/ExportButtons";
@@ -41,6 +42,8 @@ export function BondsAlertSummaries({ rows, hasPeriod, contractor = "" }: { rows
 }
 
 interface Group {
+  /** The contractor's name squashed to letters and digits – what decides one heading from another. */
+  key: string;
   contractor: string;
   items: RecordRow[];
 }
@@ -66,12 +69,20 @@ function Summary({
 }) {
   const items = filterBonds(rows, { expiry: bucket, category: "all", contractor }).sort((a, b) => Number(a.days_to_expiry ?? 0) - Number(b.days_to_expiry ?? 0));
 
+  // Grouped on the contractor's name squashed to letters and digits, so a company entered twice
+  // ("… Limited" and "… Limited.") is one heading and one chase, not two. The longest spelling seen
+  // is the one printed, since that is usually the fullest form of the name.
   const groups: Group[] = [];
   for (const r of items) {
-    const name = String(r.contractor_id__label ?? "(no contractor)");
-    const g = groups.find((x) => x.contractor === name);
-    if (g) g.items.push(r);
-    else groups.push({ contractor: name, items: [r] });
+    const name = String(r.contractor_id__label ?? "").trim();
+    const key = contractorKey(name) || "__none__";
+    const g = groups.find((x) => x.key === key);
+    if (g) {
+      g.items.push(r);
+      if (name.length > g.contractor.length) g.contractor = name;
+    } else {
+      groups.push({ key, contractor: name || "(no contractor on the row)", items: [r] });
+    }
   }
   groups.sort((a, b) => b.items.length - a.items.length || a.contractor.localeCompare(b.contractor));
 
@@ -100,7 +111,7 @@ function Summary({
           </p>
           <div className="max-h-96 overflow-y-auto pr-1">
             {groups.map((g) => (
-              <div key={g.contractor} className="mb-2 last:mb-0">
+              <div key={g.key} className="mb-2 last:mb-0">
                 <div className="flex items-baseline justify-between gap-2 border-b border-line pb-0.5">
                   <span className="min-w-0 truncate text-xs font-semibold text-ink">{g.contractor}</span>
                   <span className="shrink-0 text-[11px] text-muted">{g.items.length}</span>

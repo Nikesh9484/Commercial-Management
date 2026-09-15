@@ -6,7 +6,7 @@ import { getAppContext } from "@/lib/context";
 import { getDb, getSetting } from "@/lib/db";
 import { todayIso } from "@/lib/format";
 import { listSources, loadSource, defaultColumns } from "@/lib/report-builder/sources";
-import { STANDARD_REPORTS } from "@/lib/report-builder/standard";
+import { STANDARD_REPORTS, standardSpec } from "@/lib/report-builder/standard";
 import { buildReport, type BuildContext } from "@/lib/report-builder/build";
 import { renderBuilderPdf } from "@/lib/report-builder/pdf";
 import { renderBuilderExcel } from "@/lib/report-builder/excel";
@@ -63,11 +63,16 @@ export async function GET(req: Request, ctx: unknown) {
 async function heavyPOST(req: Request, ctx: unknown) {
   return withUser(async () => {
     const body = await readJson(req);
-    const incoming = (body.spec ?? {}) as Partial<ReportSpec>;
-    const spec: ReportSpec = { ...emptySpec(String(incoming.source ?? body.source ?? "")), ...incoming } as ReportSpec;
-    if (!spec.source) throw new ValidationError("Choose a report to build.");
     const format = String(body.format ?? "preview");
     const bctx = context();
+    // A ready-made report can be asked for by name ({ standard: "dvo_pending" }) as well as by spec,
+    // so the same report comes out of the page, an email and a check with the filters already on it -
+    // there is only one definition of "DVO pending" and every route goes through it.
+    const named = body.standard ? STANDARD_REPORTS.find((r) => r.id === String(body.standard)) : undefined;
+    if (body.standard && !named) throw new ValidationError(`There is no standard report called "${String(body.standard)}".`);
+    const incoming = (body.spec ?? (named ? standardSpec(named, bctx.periodEnd) : {})) as Partial<ReportSpec>;
+    const spec: ReportSpec = { ...emptySpec(String(incoming.source ?? body.source ?? "")), ...incoming } as ReportSpec;
+    if (!spec.source) throw new ValidationError("Choose a report to build.");
     if (body.preset) applyPreset(spec, String(body.preset));
 
     const report = buildReport(spec, bctx);

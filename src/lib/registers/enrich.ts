@@ -71,15 +71,29 @@ export function enrichRows(def: RegisterDef, rows: RecordRow[]) {
     const programmeId = Number(rows[0].programme_id);
     const revised = revisedContractValues(getDb(), programmeId);
     const closed = closedContracts(getDb(), programmeId);
-    // A bond / policy is superseded when a newer one of the same type exists for the same contractor and contract.
+    // A bond / policy is superseded when a newer one of the same type exists for the same contractor and
+    // contract. The contractor is keyed by name rather than by row, so the same company entered twice
+    // (a second import under a slightly different spelling) does not hide its own replacement policy.
     const latest = new Map<string, string>();
-    const groupKey = (r: RecordRow) => `${r.contractor_id}|${r.cost_line_id ?? r.package_id ?? ""}|${r.type_id}`;
+    const groupKey = (r: RecordRow) => `${contractorKey(r.contractor_id__label) || String(r.contractor_id)}|${r.package_id ?? r.cost_line_id ?? ""}|${r.type_id}`;
     for (const r of rows) {
       const k = groupKey(r);
       const e = String(r.expiry_date ?? "");
       if (e && e > (latest.get(k) ?? "")) latest.set(k, e);
     }
-    rows.forEach((r) => enrichBond(r, revised.values, closed, !!r.expiry_date && String(r.expiry_date) < (latest.get(groupKey(r)) ?? "")));
+    // The same policy entered twice - the same contractor, package, type and expiry date, which
+    // happens when a register has been imported from two places - is one policy, not two. Neither
+    // copy is newer than the other, so "superseded" cannot separate them: the first one recorded is
+    // kept and the rest are marked as the duplicates they are, rather than being chased twice.
+    const firstOfKind = new Map<string, unknown>();
+    const sameKey = (r: RecordRow) => `${groupKey(r)}|${String(r.expiry_date ?? "")}|${String(r.amount_provided ?? "")}`;
+    for (const r of [...rows].sort((a, b) => Number(a.id ?? 0) - Number(b.id ?? 0))) {
+      const k = sameKey(r);
+      if (!firstOfKind.has(k)) firstOfKind.set(k, r.id);
+    }
+    rows.forEach((r) =>
+      enrichBond(r, revised.values, closed, !!r.expiry_date && String(r.expiry_date) < (latest.get(groupKey(r)) ?? ""), firstOfKind.get(sameKey(r)) !== r.id),
+    );
   }
   if (def.key === "final_accounts" && rows.length) {
     const db = getDb();
@@ -218,31 +232,49 @@ function enrichProvisionalSum(row: RecordRow) {
   row.saving_extra__tone = diff > 0.004 ? "red" : diff < -0.004 ? "green" : null;
 }
 
-function enrichBond(row: RecordRow, revised: Map<number, number>, closed: ClosedContracts, superseded: boolean) {
+function enrichBond(row: RecordRow, revised: Map<number, number>, closed: ClosedContracts, superseded: boolean, duplicate: boolean) {
   const lineIdRaw = row.cost_line_id === null || row.cost_line_id === undefined ? null : Number(row.cost_line_id);
   // Worked out in order of how sure it is. A cost line the Final Account Status and Payment Tracking
   // both say nothing about is unknown, not open, so the bond falls back to its contractor rather than
   // being reported as live on the strength of a line nobody has recorded a status for. The contractor
   // is matched by name as well as by id, because the same company entered twice under slightly
   // different spellings is still one company and its closure has to reach both sets of bonds.
+  const pkgIdRaw = row.package_id === null || row.package_id === undefined ? null : Number(row.package_id);
   const byLine = lineIdRaw !== null && closed.lines.has(lineIdRaw);
   const lineKnown = lineIdRaw !== null && closed.knownLines.has(lineIdRaw);
+  // The contractor is matched by row and by name: one company entered twice under different spellings
+  // ("Co. Ltd." / "Co.Ltd.") is still one company.
   const byContractor =
     !byLine &&
     !lineKnown &&
     (closed.contractors.has(Number(row.contractor_id)) || closed.contractorNames.has(contractorKey(row.contractor_id__label)));
-  const released = row.contract_closed === true || byLine || byContractor;
+  // The package is the surest link of the three, because it is a number on both rows: it holds even
+  // when the two spellings are nothing alike ("WSP Middle East" and "WSP Consulting") and when the
+  // bond carries no cost report line at all.
+  const byPackage = !byLine && !lineKnown && !byContractor && pkgIdRaw !== null && closed.packages.has(pkgIdRaw);
+  const released = row.contract_closed === true || byLine || byContractor || byPackage;
   row.contract_closed_reason = released
     ? row.contract_closed === true
       ? "Ticked on the row"
       : byLine
         ? "Final Account Status / Payment Tracking: contract closed"
-        : "Every contract of this contractor is closed"
+        : byContractor
+          ? "Every contract of this contractor is closed"
+          : "Every contract of this package is closed"
     : null;
   // says why a bond is still being chased, so a missing link can be found and fixed
-  row.link_note = released ? null : lineIdRaw === null ? "No cost report line linked, and this contractor still has an open contract." : lineKnown ? null : "The cost report line linked here is not in the Final Account Status or Payment Tracking.";
-  row.released = released || superseded;
-  row.superseded = superseded && !released;
+  row.link_note = released
+    ? null
+    : row.contractor_id === null || row.contractor_id === undefined
+      ? "No contractor on this row, so there is nothing to check a closure against. Set the contractor on the bond."
+      : lineIdRaw !== null && !lineKnown
+        ? "The cost report line linked here is not in the Final Account Status or Payment Tracking."
+        : pkgIdRaw !== null && !closed.knownPackages.has(pkgIdRaw)
+          ? "Neither the Final Account Status nor Payment Tracking mentions this package, so no closure can be read for it."
+          : "This contractor still has an open contract.";
+  row.released = released || superseded || duplicate;
+  row.superseded = superseded && !released && !duplicate;
+  row.duplicate = duplicate && !released;
   const lineId = row.cost_line_id === null || row.cost_line_id === undefined ? null : Number(row.cost_line_id);
   const rev = lineId !== null ? (revised.get(lineId) ?? null) : null;
   row.revised_contract_value = rev;
@@ -268,16 +300,26 @@ function enrichBond(row: RecordRow, revised: Map<number, number>, closed: Closed
   if (expiry) {
     const days = daysBetween(todayIso(), expiry);
     row.days_to_expiry = days;
-    const tone = released || superseded ? null : days <= EXPIRY_RED_DAYS ? "red" : days <= EXPIRY_AMBER_DAYS ? "amber" : null;
+    const tone = released || superseded || duplicate ? null : days <= EXPIRY_RED_DAYS ? "red" : days <= EXPIRY_AMBER_DAYS ? "amber" : null;
     row.days_to_expiry__tone = tone;
     row.__row_tone = tone;
-    row.status = released ? "Released (contract closed)" : superseded ? "Superseded (newer policy held)" : days < 0 ? "Expired" : days <= EXPIRY_AMBER_DAYS ? "Expiring" : "Active";
-    row.status__tone = released || superseded ? "grey" : days < 0 ? "red" : days <= EXPIRY_AMBER_DAYS ? "amber" : "green";
+    row.status = released
+      ? "Released (contract closed)"
+      : duplicate
+        ? "Duplicate (same policy entered twice)"
+        : superseded
+          ? "Superseded (newer policy held)"
+          : days < 0
+            ? "Expired"
+            : days <= EXPIRY_AMBER_DAYS
+              ? "Expiring"
+              : "Active";
+    row.status__tone = released || superseded || duplicate ? "grey" : days < 0 ? "red" : days <= EXPIRY_AMBER_DAYS ? "amber" : "green";
   } else {
     row.days_to_expiry = null;
     row.days_to_expiry__tone = null;
     row.__row_tone = null;
-    row.status = released ? "Released (contract closed)" : "Active";
-    row.status__tone = released ? "grey" : "green";
+    row.status = released ? "Released (contract closed)" : duplicate ? "Duplicate (same policy entered twice)" : "Active";
+    row.status__tone = released || duplicate ? "grey" : "green";
   }
 }
