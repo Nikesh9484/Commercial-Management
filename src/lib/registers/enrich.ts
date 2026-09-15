@@ -9,7 +9,7 @@ import { businessDaysBetween } from "../workdays";
 import { PROBABILITY_BANDS, IMPACT_BANDS, bandIndex, severity } from "./defs/risks";
 import { EXPIRY_AMBER_DAYS, EXPIRY_RED_DAYS } from "./defs/bonds";
 import { revisedContractValues } from "../bonds/revised";
-import { closedContracts, type ClosedContracts } from "../bonds/closed";
+import { closedContracts, contractorKey, type ClosedContracts } from "../bonds/closed";
 import { getDb, getSetting } from "../db";
 import { computeCostReport } from "../cost-report/compute";
 import { FA_AMBER_DAYS } from "./defs/final-accounts";
@@ -220,8 +220,27 @@ function enrichProvisionalSum(row: RecordRow) {
 
 function enrichBond(row: RecordRow, revised: Map<number, number>, closed: ClosedContracts, superseded: boolean) {
   const lineIdRaw = row.cost_line_id === null || row.cost_line_id === undefined ? null : Number(row.cost_line_id);
-  const released = row.contract_closed === true || (lineIdRaw !== null ? closed.lines.has(lineIdRaw) : closed.contractors.has(Number(row.contractor_id)));
-  row.contract_closed_reason = released ? (row.contract_closed === true ? "Ticked on the row" : lineIdRaw !== null ? "Final Account Status / Payment Tracking: contract closed" : "All this contractor's contracts are closed") : null;
+  // Worked out in order of how sure it is. A cost line the Final Account Status and Payment Tracking
+  // both say nothing about is unknown, not open, so the bond falls back to its contractor rather than
+  // being reported as live on the strength of a line nobody has recorded a status for. The contractor
+  // is matched by name as well as by id, because the same company entered twice under slightly
+  // different spellings is still one company and its closure has to reach both sets of bonds.
+  const byLine = lineIdRaw !== null && closed.lines.has(lineIdRaw);
+  const lineKnown = lineIdRaw !== null && closed.knownLines.has(lineIdRaw);
+  const byContractor =
+    !byLine &&
+    !lineKnown &&
+    (closed.contractors.has(Number(row.contractor_id)) || closed.contractorNames.has(contractorKey(row.contractor_id__label)));
+  const released = row.contract_closed === true || byLine || byContractor;
+  row.contract_closed_reason = released
+    ? row.contract_closed === true
+      ? "Ticked on the row"
+      : byLine
+        ? "Final Account Status / Payment Tracking: contract closed"
+        : "Every contract of this contractor is closed"
+    : null;
+  // says why a bond is still being chased, so a missing link can be found and fixed
+  row.link_note = released ? null : lineIdRaw === null ? "No cost report line linked, and this contractor still has an open contract." : lineKnown ? null : "The cost report line linked here is not in the Final Account Status or Payment Tracking.";
   row.released = released || superseded;
   row.superseded = superseded && !released;
   const lineId = row.cost_line_id === null || row.cost_line_id === undefined ? null : Number(row.cost_line_id);

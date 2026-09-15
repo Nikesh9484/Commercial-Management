@@ -10,10 +10,22 @@ export const CONTRACT_CLOSED_STATUSES = ["Closed", "Completed", "Terminated"];
 export interface ClosedContracts {
   /** Cost lines whose contract is closed: every line of that contract (CN.031C02, CN.031C02-2 …), not only the one the final account points at. */
   lines: Set<number>;
+  /** Cost lines the Final Account Status or Payment Tracking says anything at all about, closed or not.
+   *  A line in neither is unknown rather than open, so a bond on it falls back to its contractor. */
+  knownLines: Set<number>;
   /** Contract codes (031C02 …) that are closed. */
   contracts: Set<string>;
   /** Contractors all of whose contracts / final accounts are closed (used when a bond is not linked to a cost line). */
   contractors: Set<number>;
+  /** The same contractors by name, squashed to letters and digits. A contractor entered twice under
+   *  slightly different spellings ("Co.Ltd." and "Co. Ltd.") is one company, and the closure of the
+   *  one that carries the contracts has to reach the bonds filed against the other. */
+  contractorNames: Set<string>;
+}
+
+/** "Al Saad General Contracting Co. Ltd." and "Al Saad General Contracting Co.Ltd." land on the same key. */
+export function contractorKey(name: unknown): string {
+  return String(name ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
 /**
@@ -35,12 +47,24 @@ export function closedContracts(db: Database.Database, programmeId: number): Clo
   const faLines = new Map<number, boolean>();
   const ptLines = new Map<number, boolean>();
   const byContractor = new Map<number, { open: number; closed: number }>();
+  const byName = new Map<string, { open: number; closed: number }>();
+  const contractorName = new Map<number, string>();
+  if (tableExists(db, "contractors")) {
+    for (const r of db.prepare("SELECT id, name FROM contractors").all() as { id: number; name: string | null }[]) contractorName.set(r.id, contractorKey(r.name));
+  }
   const bump = (contractor: unknown, closed: boolean) => {
     if (contractor === null || contractor === undefined) return;
     const c = byContractor.get(Number(contractor)) ?? { open: 0, closed: 0 };
     if (closed) c.closed++;
     else c.open++;
     byContractor.set(Number(contractor), c);
+    const key = contractorName.get(Number(contractor));
+    if (key) {
+      const n = byName.get(key) ?? { open: 0, closed: 0 };
+      if (closed) n.closed++;
+      else n.open++;
+      byName.set(key, n);
+    }
   };
   const note = (map: Map<string, boolean>, frag: string | null, closed: boolean) => {
     if (!frag) return;
@@ -79,5 +103,13 @@ export function closedContracts(db: Database.Database, programmeId: number): Clo
   for (const [id, closed] of faLines) if (closed) lines.add(id);
   const contractors = new Set<number>();
   for (const [id, c] of byContractor) if (c.closed > 0 && c.open === 0) contractors.add(id);
-  return { lines, contracts, contractors };
+  const contractorNames = new Set<string>();
+  for (const [key, c] of byName) if (c.closed > 0 && c.open === 0) contractorNames.add(key);
+  // which lines anything is known about, so "not mentioned" can be told from "still open"
+  const knownLines = new Set<number>([...faLines.keys(), ...ptLines.keys()]);
+  for (const [id, code] of lineCode) {
+    const frag = codeFrag(code);
+    if (frag && (fa.has(frag) || pt.has(frag))) knownLines.add(id);
+  }
+  return { lines, knownLines, contracts, contractors, contractorNames };
 }
