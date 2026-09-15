@@ -6,6 +6,7 @@ import { getRegisterDef, settingsRegisters } from "@/lib/registers";
 import { canViewRegister } from "@/lib/registers/types";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { RegisterPage } from "@/components/register/RegisterPage";
+import { MergeContractors } from "@/components/settings/MergeContractors";
 
 export async function generateMetadata({ params }: { params: Promise<{ register: string }> }) {
   const { register } = await params;
@@ -28,6 +29,11 @@ export default async function SettingsRegisterPage({ params }: { params: Promise
         <div className="mb-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
           <strong>Month-end:</strong> press <em>Lock</em> on a period to freeze it. The app stores a copy (snapshot) of every module register at that moment so later
           reports can show <em>This Period</em> vs <em>Previous Period</em>. Unlock only if you need to correct something.
+        </div>
+      )}
+      {def.key === "contractors" && (user.role === "admin" || user.role === "editor") && (
+        <div className="mb-3">
+          <MergeContractors />
         </div>
       )}
       <RegisterPage registerKey={def.key} isAdmin={user.role === "admin"} />

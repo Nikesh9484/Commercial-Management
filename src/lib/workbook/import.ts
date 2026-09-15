@@ -9,6 +9,7 @@ import { createRecord, updateRecord, listRecords, lookupOptions, ValidationError
 import type { UserInfo, RecordRow } from "../registers/types";
 import { lockPeriod, getPeriod, latestPeriod, takeSnapshot, restoreFromSnapshot, hasStoredCopy, clearSnapshotRegisters, nearestStoredBefore } from "../snapshots";
 import { logAudit } from "../audit";
+import { mergeDuplicateContractors } from "../contractors/merge";
 import { nowIso, formatMonthYear, parseDateInput } from "../format";
 import { importKeyFields, norm } from "./analyze";
 import { cellText, getSheet, readWorkbookValues, type SheetValues } from "./read";
@@ -421,12 +422,19 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo, progres
     }
   }
 
+  // An import is where the same company gets entered a second time under a slightly different
+  // spelling, so the tidy-up happens here rather than being left to be noticed later on a report
+  // that has quietly split a contractor in two. Only names that match once full stops, spaces and
+  // capitals are taken out are merged; anything needing judgement is left alone and shown on the
+  // Contractors page instead.
+  const merged = mergeDuplicateContractors(db, user);
+
   logAudit(db, {
     registerKey: "workbook",
     recordId: periodId,
     action: "import",
     user,
-    summary: `Imported workbook for ${period.label}: ${results.map((r) => `${r.sheet} → ${r.register} (${r.created} added, ${r.updated} updated, ${r.errors.length} errors)`).join("; ")}${pruned ? `; ${pruned} row(s) not in the workbook removed from this older report` : ""}`,
+    summary: `Imported workbook for ${period.label}: ${results.map((r) => `${r.sheet} → ${r.register} (${r.created} added, ${r.updated} updated, ${r.errors.length} errors)`).join("; ")}${pruned ? `; ${pruned} row(s) not in the workbook removed from this older report` : ""}${merged.groups ? `; ${merged.removed} duplicate contractor record(s) merged into ${merged.groups} ${merged.groups === 1 ? "company" : "companies"} (${merged.moved} record(s) moved)` : ""}`,
   });
 
   // the library shows the monthly workbook the report came from; a stand-alone import does not replace that name
