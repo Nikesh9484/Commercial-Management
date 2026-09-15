@@ -224,3 +224,81 @@ table.data tbody tr:hover {
 /* ASK ME assistant */
 .askme-btn { background: linear-gradient(135deg, #f59e0b, #ec4899 55%, #8b5cf6); box-shadow: 0 2px 10px rgba(236, 72, 153, 0.35); }
 .askme-head { background: linear-gradient(135deg, #1e3a8a, #7c3aed 60%, #ec4899); }
+
+/* ==========================================================================
+   Appearance (Settings → Appearance). Everything below is driven by the data
+   attributes on <html>, set before the page paints, so a choice never flashes.
+   ========================================================================== */
+
+/* ---- Colour: the menu, the headings, the buttons and the highlights together ---- */
+html[data-colour="teal"] { --navy: #0f4c4c; --navy-dark: #0a3737; --navy-light: #1a6f6b; --accent: #10a5a0; }
+html[data-colour="forest"] { --navy: #14452a; --navy-dark: #0d301d; --navy-light: #1f6640; --accent: #2e9e5b; }
+html[data-colour="plum"] { --navy: #3b1f4d; --navy-dark: #2a1538; --navy-light: #58306f; --accent: #9b59d0; }
+html[data-colour="slate"] { --navy: #2b3440; --navy-dark: #1d242d; --navy-light: #3f4c5c; --accent: #5b7fa6; }
+html[data-colour="burgundy"] { --navy: #4a1d24; --navy-dark: #351319; --navy-light: #6d2c36; --accent: #b4495a; }
+
+/* ---- Dark theme ---- */
+html[data-theme="dark"] {
+  --bg: #0e151d;
+  --card: #18222e;
+  --text: #e9eef5;
+  --muted: #9fb0c3;
+  --border: #2b3948;
+  color-scheme: dark;
+}
+html[data-theme="dark"] body { background: var(--bg); color: var(--text); }
+
+/* Utility classes carry fixed colours, which would stay light while everything around them turned
+   dark. Rather than rewrite every page, they are pointed at the theme's own surfaces here. */
+html[data-theme="dark"] .bg-white { background-color: var(--card) !important; }
+html[data-theme="dark"] .bg-page,
+html[data-theme="dark"] .bg-slate-50,
+html[data-theme="dark"] .bg-slate-100,
+html[data-theme="dark"] .bg-gray-50,
+html[data-theme="dark"] .bg-gray-100 { background-color: #101a24 !important; }
+html[data-theme="dark"] .bg-slate-50\/80,
+html[data-theme="dark"] .bg-page\/40,
+html[data-theme="dark"] .bg-slate-50\/60 { background-color: #131e29 !important; }
+html[data-theme="dark"] .text-ink { color: var(--text); }
+html[data-theme="dark"] .text-muted { color: var(--muted); }
+html[data-theme="dark"] .text-navy { color: #9dc0ea; }
+html[data-theme="dark"] .border-line { border-color: var(--border); }
+
+/* The soft status washes are mixed with the page so they read as a tint rather than a light patch. */
+html[data-theme="dark"] .bg-red-50 { background-color: #3a1d1f !important; }
+html[data-theme="dark"] .bg-amber-50, html[data-theme="dark"] .bg-amber-50\/60 { background-color: #3a2e16 !important; }
+html[data-theme="dark"] .bg-emerald-50, html[data-theme="dark"] .bg-green-50 { background-color: #15301f !important; }
+html[data-theme="dark"] .bg-blue-50 { background-color: #17283c !important; }
+html[data-theme="dark"] .text-red-700, html[data-theme="dark"] .text-red-600 { color: #ff9a92 !important; }
+html[data-theme="dark"] .text-amber-700, html[data-theme="dark"] .text-amber-600 { color: #f0c064 !important; }
+html[data-theme="dark"] .text-emerald-700, html[data-theme="dark"] .text-emerald-600, html[data-theme="dark"] .text-green-700 { color: #6fd39b !important; }
+/* the 800 / 900 shades are meant to sit on a pale tint; on a dark one they disappear */
+html[data-theme="dark"] .text-emerald-800, html[data-theme="dark"] .text-emerald-900, html[data-theme="dark"] .text-green-800 { color: #7fdcaa !important; }
+html[data-theme="dark"] .text-amber-800, html[data-theme="dark"] .text-amber-900 { color: #f2cb7a !important; }
+html[data-theme="dark"] .text-red-800, html[data-theme="dark"] .text-red-900 { color: #ffaba3 !important; }
+html[data-theme="dark"] .text-blue-800, html[data-theme="dark"] .text-blue-900 { color: #9cc4f0 !important; }
+html[data-theme="dark"] .bg-emerald-50\/60, html[data-theme="dark"] .bg-green-50\/60 { background-color: #15301f !important; }
+html[data-theme="dark"] .bg-red-50\/60 { background-color: #3a1d1f !important; }
+html[data-theme="dark"] .border-red-200 { border-color: #5d2b2b !important; }
+html[data-theme="dark"] .border-amber-200 { border-color: #5c4a20 !important; }
+html[data-theme="dark"] .border-emerald-200 { border-color: #24543a !important; }
+html[data-theme="dark"] .border-blue-200 { border-color: #2a4560 !important; }
+html[data-theme="dark"] .btn-secondary { background: linear-gradient(180deg, #223044 0%, #1a2634 100%); color: var(--text); }
+html[data-theme="dark"] .input { background: #121c27; color: var(--text); }
+html[data-theme="dark"] .input::placeholder { color: #7f91a5; }
+
+/* ---- Flat buttons and cards: no gradient, no lift, no press ---- */
+html[data-buttons="flat"] .btn,
+html[data-buttons="flat"] .btn:hover:not(:disabled),
+html[data-buttons="flat"] .btn:active:not(:disabled) {
+  background-image: none;
+  box-shadow: none;
+  transform: none;
+}
+html[data-buttons="flat"] .btn:hover:not(:disabled) { filter: brightness(0.96); }
+html[data-buttons="flat"] .card { box-shadow: none; }
+html[data-buttons="flat"] .btn-primary { background: var(--navy); }
+html[data-buttons="flat"] .btn-secondary { background: var(--card); }
+
+/* ---- Text size ---- */
+html[data-text="large"] { font-size: 110%; }
