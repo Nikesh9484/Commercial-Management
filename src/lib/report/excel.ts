@@ -639,8 +639,8 @@ export function bondsReportSheet(wb: ExcelJS.Workbook, d: ReportData, filter: Bo
   const kp: [string, unknown, string][] = [
     ["Bonds & policies", h.total, `${h.active} active · ${h.expired} expired · ${h.released} released · ${h.superseded} superseded`],
     ["Expiring within 15 / 30 / 60 days", `${h.expiring15} / ${h.expiring30} / ${h.expiring60}`, "each window counts only the items in it"],
-    ["Cover required (SAR)", h.required, ""],
-    ["Cover provided (SAR)", h.provided, ""],
+    ["Cover provided (SAR)", h.provided, "total face value held"],
+    ["Cover required (SAR)", h.required, "total contract requirement"],
     ["Shortfalls", h.shortfallCount, h.shortfallCount ? `${formatMoney(h.shortfallValue)} below requirement` : ""],
     ["Not approved / not bank-verified", `${h.notApproved} / ${h.notVerified}`, ""],
   ];
@@ -668,15 +668,27 @@ export function bondsReportSheet(wb: ExcelJS.Workbook, d: ReportData, filter: Bo
     ws.addRow(["Items requiring attention"]).font = { bold: true, size: 12, color: { argb: "FF7C2D12" } };
     for (const it of r.attention) ws.addRow([`• ${it}`]);
   }
-  if (r.filterLabel) {
-    // a filtered report is a working list: every item it selected, not just the expiry window
-    ws.addRow([]);
-    ws.addRow([`${r.filterLabel} – full list (${r.rows.length} item(s), earliest expiry first)`]).font = { bold: true, size: 12, color: { argb: NAVY } };
-    header(ws.addRow(["Ref", "Contractor / consultant", "Package", "Type", "Category", "Required (SAR)", "Provided (SAR)", "Expiry", "Days", "Status"]));
-    for (const l of r.rows) {
-      const row = ws.addRow([l.ref, l.contractor, l.package, l.type, l.category, l.required, l.provided, l.expiryDate ? toDate(l.expiryDate) : null, l.daysToExpiry, l.status]);
-      [6, 7].forEach((i) => (row.getCell(i).numFmt = MONEY_FMT));
-      row.getCell(8).numFmt = "DD-MMM-YY";
+  if (r.sections.length) {
+    // Bonds and insurance are chased separately, each contractor by contractor, so the sheet is laid
+    // out the way the chase runs rather than as one mixed list.
+    for (const sec of r.sections) {
+      ws.addRow([]);
+      ws.addRow([`${sec.title} – ${sec.count} item(s)`]).font = { bold: true, size: 12, color: { argb: NAVY } };
+      const secNote = ws.addRow([`${sec.contractors.length} contractor(s) · ${formatMoney(sec.provided)} held against ${formatMoney(sec.required)} required${sec.shortfall ? ` · ${formatMoney(sec.shortfall)} short` : ""}`]);
+      secNote.font = { italic: true, color: { argb: "FF5B6577" } };
+      for (const g of sec.contractors) {
+        ws.addRow([]);
+        ws.addRow([g.contractor]).font = { bold: true, color: { argb: NAVY } };
+        header(ws.addRow(["Ref", "Type of bond / policy", "Policy / bond no", "Package", "Expiry", "Days to expiry (minus = expired)", "Required (SAR)", "Provided (SAR)", "Status"]));
+        for (const l of g.items) {
+          const row = ws.addRow([l.ref, l.type, l.policyNo, l.package, l.expiryDate ? toDate(l.expiryDate) : null, l.daysToExpiry, l.required, l.provided, l.status]);
+          row.getCell(5).numFmt = "DD-MMM-YY";
+          [7, 8].forEach((i) => (row.getCell(i).numFmt = MONEY_FMT));
+        }
+        const sub = ws.addRow([`${g.contractor} – ${g.count} item(s)`, "", "", "", "", "", g.required, g.provided, g.shortfall ? `${formatMoney(g.shortfall)} short` : ""]);
+        sub.font = { bold: true };
+        [7, 8].forEach((i) => (sub.getCell(i).numFmt = MONEY_FMT));
+      }
     }
   } else if (r.expiring.length) {
     ws.addRow([]);

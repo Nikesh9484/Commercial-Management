@@ -10,6 +10,7 @@ import { num, numOrNull, txt, money, plural, list } from "./report-utils";
 export interface BondLine {
   ref: string;
   contractor: string;
+  policyNo: string;
   package: string;
   type: string;
   category: string;
@@ -21,6 +22,31 @@ export interface BondLine {
   status: string;
   approved: boolean;
   bankVerified: boolean;
+}
+
+/** One contractor's items inside a section, with the section's own subtotal. */
+export interface BondsContractorGroup {
+  contractor: string;
+  count: number;
+  required: number;
+  provided: number;
+  shortfall: number;
+  items: BondLine[];
+}
+
+/**
+ * Bonds and insurance are chased separately – a bank renews a guarantee, a broker renews a policy –
+ * so they are printed as separate tables rather than one mixed list, each broken down by contractor,
+ * because the chase is one conversation per contractor.
+ */
+export interface BondsSection {
+  key: "bond" | "insurance" | "other";
+  title: string;
+  count: number;
+  required: number;
+  provided: number;
+  shortfall: number;
+  contractors: BondsContractorGroup[];
 }
 
 export interface BondsReport {
@@ -52,9 +78,55 @@ export interface BondsReport {
   rows: BondLine[];
   byType: { type: string; n: number; required: number; provided: number }[];
   byCategory: { category: string; n: number; required: number; provided: number }[];
+  /** The selected items as separate Bonds / Insurance / Other tables, each contractor by contractor. */
+  sections: BondsSection[];
 }
 
 const CATEGORY_LABEL: Record<string, string> = { bond: "Bond / guarantee", insurance: "Insurance policy", other: "Other" };
+/** The heading each table gets. */
+const SECTION_TITLE: Record<string, string> = { bond: "Bonds & guarantees", insurance: "Insurance policies", other: "Other items (licences, certificates)" };
+const SECTION_ORDER: ("bond" | "insurance" | "other")[] = ["bond", "insurance", "other"];
+/** One company however it is spelled, so "… Ltd." and "… Ltd" are one heading and one subtotal. */
+const nameKey = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+const round2 = (n: number) => Math.round(n * 100) / 100;
+/** How many movement bullets are worth printing before they stop being a summary. */
+const MAX_MOVEMENT_LINES = 8;
+
+/** Splits a set of lines into Bonds / Insurance / Other, each grouped by contractor with subtotals. */
+function buildSections(lines: BondLine[], categoryOf: (l: BondLine) => "bond" | "insurance" | "other"): BondsSection[] {
+  const out: BondsSection[] = [];
+  for (const key of SECTION_ORDER) {
+    const mine = lines.filter((l) => categoryOf(l) === key);
+    if (!mine.length) continue;
+    const byContractor = new Map<string, BondsContractorGroup>();
+    for (const l of mine) {
+      const name = l.contractor.trim();
+      const k = nameKey(name) || "__none__";
+      const g = byContractor.get(k) ?? { contractor: name || "(no contractor on the row)", count: 0, required: 0, provided: 0, shortfall: 0, items: [] };
+      // the fullest spelling seen is the one printed
+      if (name.length > g.contractor.length) g.contractor = name;
+      g.count += 1;
+      g.required += l.required;
+      g.provided += l.provided;
+      if (l.variance < -0.004) g.shortfall += Math.abs(l.variance);
+      g.items.push(l);
+      byContractor.set(k, g);
+    }
+    const contractors = [...byContractor.values()]
+      .map((g) => ({ ...g, required: round2(g.required), provided: round2(g.provided), shortfall: round2(g.shortfall), items: [...g.items].sort((a, b) => (a.daysToExpiry ?? Infinity) - (b.daysToExpiry ?? Infinity)) }))
+      .sort((a, b) => b.count - a.count || a.contractor.localeCompare(b.contractor));
+    out.push({
+      key,
+      title: SECTION_TITLE[key],
+      count: mine.length,
+      required: round2(contractors.reduce((t, g) => t + g.required, 0)),
+      provided: round2(contractors.reduce((t, g) => t + g.provided, 0)),
+      shortfall: round2(contractors.reduce((t, g) => t + g.shortfall, 0)),
+      contractors,
+    });
+  }
+  return out;
+}
 
 /** The status shown for a row, worked out the same way the register does – reports issued before the
  * status column existed do not carry it, so it is never read straight off the row. */
@@ -78,6 +150,7 @@ export function buildBondsReport(data: ReportData, filter: BondsFilter = NO_BOND
     return {
       ref: txt(r.ref),
       contractor: txt(r.contractor_id__label),
+      policyNo: txt(r.policy_no),
       package: txt(r.package_id__label),
       type: txt(r.type_id__label),
       category: CATEGORY_LABEL[bondCategory(r.type_id__label)],
@@ -145,9 +218,19 @@ export function buildBondsReport(data: ReportData, filter: BondsFilter = NO_BOND
     notVerified,
   };
 
+  const catOf = new Map(src.map((r, i) => [lines[i], bondCategory(r.type_id__label) as "bond" | "insurance" | "other"]));
+  const sections = buildSections(rows, (l) => catOf.get(l) ?? "other");
+
   const mv = data.movement;
   const grp = mv?.groups.find((g) => g.key === "bonds");
-  const movement = mv?.previous && grp ? { label: `Since ${mv.previous.label}`, items: [...grp.added.map((i) => `New: ${i.key} ${i.title}${i.amount ? ` (${money(i.amount)})` : ""}`), ...grp.changed.map((i) => `${i.key} ${i.title}: ${i.from} -> ${i.to}`), ...grp.removed.map((i) => `Removed: ${i.key} ${i.title}`)] } : null;
+  // A filtered report is a working chase list; "what moved since last month" belongs on the full
+  // report, not on page one of it. Unfiltered, the list is capped so it cannot push the tables off
+  // the first page - the detail is in the tables underneath.
+  const movement = !filtered && mv?.previous && grp ? { label: `Since ${mv.previous.label}`, items: [...grp.added.map((i) => `New: ${i.key} ${i.title}${i.amount ? ` (${money(i.amount)})` : ""}`), ...grp.changed.map((i) => `${i.key} ${i.title}: ${i.from} -> ${i.to}`), ...grp.removed.map((i) => `Removed: ${i.key} ${i.title}`)] } : null;
+  if (movement && movement.items.length > MAX_MOVEMENT_LINES) {
+    const hidden = movement.items.length - MAX_MOVEMENT_LINES;
+    movement.items = [...movement.items.slice(0, MAX_MOVEMENT_LINES), `… and ${hidden} more – see the tables below.`];
+  }
 
   const attention: string[] = [];
   if (expired.length) attention.push(`${plural(expired.length, "bond / policy")} already expired (${list(expired.map((l) => l.ref))}) – renew or confirm the contract is closed.`);
@@ -166,7 +249,19 @@ export function buildBondsReport(data: ReportData, filter: BondsFilter = NO_BOND
         ? filtered
           ? `No bond or insurance policy matches ${filterLabel!.toLowerCase()} for ${assetName} as at ${formatDate(asOf)}.`
           : `No bonds or insurance policies are recorded against ${assetName} as at ${formatDate(asOf)}.`
-        : `As at ${formatDate(asOf)}, ${plural(lines.length, "bond / insurance item")} ${lines.length === 1 ? "is" : "are"} ${filtered ? "selected by this filter" : "tracked"} against ${scope} ${expired.length} expired, ${expiring30.length + expiring15.length} expiring within 30 days, ${expiring60.length} expiring within 60 days, ${released.length} released and ${superseded.length} superseded. Cover held is ${money(provided)} against a requirement of ${money(required)}${shortfalls.length ? `, with ${plural(shortfalls.length, "item")} short by ${money(shortfallValue)} in total` : ", meeting or exceeding the requirement across the board"}.`,
+        : (() => {
+            // A filtered report already says what it is in its title; reciting the windows it
+            // excluded ("0 expiring within 30 days, 0 released") is noise on a chase list. It says
+            // instead how the selected items split between bonds and insurance, and across whom.
+            const counts = filtered
+              ? sections.map((sec) => plural(sec.count, sec.key === "bond" ? "bond" : sec.key === "insurance" ? "insurance policy" : "other item")).join(" and ")
+              : `${expired.length} expired, ${expiring30.length + expiring15.length} expiring within 30 days, ${expiring60.length} expiring within 60 days, ${released.length} released and ${superseded.length} superseded`;
+            const whom = filtered ? ` across ${plural(new Set(lines.map((l) => l.contractor.toLowerCase().replace(/[^a-z0-9]/g, ""))).size, "contractor")}` : "";
+            const lead = filtered
+              ? `As at ${formatDate(asOf)}, ${plural(lines.length, "bond / insurance item")} on ${assetName} ${lines.length === 1 ? "is" : "are"} ${filterLabel!.toLowerCase()}: ${counts}${whom}.`
+              : `As at ${formatDate(asOf)}, ${plural(lines.length, "bond / insurance item")} ${lines.length === 1 ? "is" : "are"} tracked against ${scope} ${counts}.`;
+            return `${lead} Cover held is ${money(provided)} against a requirement of ${money(required)}${shortfalls.length ? `, with ${plural(shortfalls.length, "item")} short by ${money(shortfallValue)} in total` : ", meeting or exceeding the requirement across the board"}.`;
+          })(),
   });
   if (mv?.previous && !filtered) {
     const n = grp ? grp.added.length + grp.changed.length + grp.removed.length : 0;
@@ -189,5 +284,6 @@ export function buildBondsReport(data: ReportData, filter: BondsFilter = NO_BOND
     rows,
     byType,
     byCategory,
+    sections,
   };
 }

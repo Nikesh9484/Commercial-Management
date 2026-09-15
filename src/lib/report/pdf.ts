@@ -1078,8 +1078,13 @@ function changesStatusReport(ctx: Ctx) {
   kpis.forEach((k) => {
     doc.rect(x, y, cw, 52).fillAndStroke("#ffffff", LINE);
     doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(k[0].toUpperCase(), x + 8, y + 7, { width: cw - 16 });
-    doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(12).text(k[1], x + 8, y + 20, { width: cw - 16 });
-    doc.fillColor(MUTED).font("Helvetica").fontSize(7).text(k[2], x + 8, y + 37, { width: cw - 16 });
+    // The figure is shrunk until it fits on one line: a long money pair set at 12pt wrapped onto a
+    // second line and printed straight through the caption underneath it.
+    let size = 12;
+    doc.font("Helvetica-Bold");
+    while (size > 6.5 && doc.fontSize(size).widthOfString(k[1]) > cw - 16) size -= 0.5;
+    doc.fillColor(NAVY).fontSize(size).text(k[1], x + 8, y + 21 - size / 2, { width: cw - 16, lineBreak: false, ellipsis: true });
+    doc.fillColor(MUTED).font("Helvetica").fontSize(7).text(k[2], x + 8, y + 37, { width: cw - 16, height: 12, ellipsis: true });
     x += cw + 10;
   });
   doc.y = y + 62;
@@ -1359,7 +1364,7 @@ function bondsStatusReport(ctx: Ctx, filter: BondsFilter = NO_BONDS_FILTER) {
   }
   const kpis: [string, string, string][] = [
     ["Bonds & policies", String(h.total), `${h.expired} expired · ${h.expiring15} within 15d · ${h.expiring30} within 30d · ${h.expiring60} within 60d`],
-    ["Cover held vs required", `${sar(h.provided)} / ${sar(h.required)}`, "total face value vs total requirement"],
+    ["Cover held", sar(h.provided), `of ${sar(h.required)} required`],
     ["Shortfalls", String(h.shortfallCount), h.shortfallCount ? `${sar(h.shortfallValue)} below requirement` : "every item meets its requirement"],
     ["Checks outstanding", `${h.notApproved} / ${h.notVerified}`, "not approved / not bank-verified"],
   ];
@@ -1414,8 +1419,46 @@ function bondsStatusReport(ctx: Ctx, filter: BondsFilter = NO_BONDS_FILTER) {
     { key: "daysToExpiry", label: "Days", width: 0.55, align: "right" },
     { key: "status", label: "Status", width: 0.75 },
   ];
-  if (r.filterLabel) {
-    // a filtered report is a working list: print every item it selected, not just the expiry window
+  if (r.sections.length) {
+    // Bonds and insurance are chased separately and each chase is one conversation per contractor,
+    // so each gets its own table, broken by contractor, with that contractor's subtotal under it.
+    const chaseColumns: Col[] = [
+      { key: "ref", label: "Ref", width: 0.55 },
+      { key: "type", label: "Type of bond / policy", width: 1.9 },
+      { key: "policyNo", label: "Policy / bond no", width: 1.2 },
+      { key: "package", label: "Package", width: 1.3 },
+      { key: "expiryDate", label: "Expiry", width: 0.85, format: (v) => formatDate(v as string) },
+      { key: "daysToExpiry", label: "Days", width: 0.6, align: "right", format: (v) => (v === null || v === undefined ? "" : Number(v) < 0 ? `${-Number(v)} ago` : String(v)) },
+      { key: "required", label: "Required (SAR)", width: 1.05, align: "right", format: money },
+      { key: "provided", label: "Provided (SAR)", width: 1.05, align: "right", format: money },
+      { key: "status", label: "Status", width: 0.8 },
+    ];
+    for (const sec of r.sections) {
+      // the heading, the first contractor's name and a row or two of their table have to fit, or the
+      // heading is left stranded at the foot of the page with nothing under it
+      ensureSpace(ctx, 150);
+      subheading(
+        ctx,
+        `${sec.title} – ${sec.count} item(s)`,
+        `${sec.contractors.length} contractor(s) · ${sar(sec.provided)} held against ${sar(sec.required)} required${sec.shortfall ? ` · ${sar(sec.shortfall)} short` : ""}.`,
+      );
+      for (const g of sec.contractors) {
+        // the contractor's name sits above their own rows, so the page reads as a list of chases
+        ensureSpace(ctx, 70);
+        doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(9.5).text(g.contractor, PAGE.margin, doc.y, { width });
+        doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(
+          `${g.count} item(s) · ${sar(g.provided)} held against ${sar(g.required)} required${g.shortfall ? ` · ${sar(g.shortfall)} short` : ""}`,
+          PAGE.margin,
+          doc.y + 1,
+          { width },
+        );
+        doc.moveDown(0.35);
+        doc.x = PAGE.margin;
+        table(ctx, chaseColumns, g.items as unknown as Record<string, unknown>[], { zebra: true });
+        doc.moveDown(0.5);
+      }
+    }
+  } else if (r.filterLabel) {
     subheading(ctx, `${r.filterLabel} – full list`, `${r.rows.length} item(s), earliest expiry first.`);
     table(ctx, detailColumns, r.rows as unknown as Record<string, unknown>[], { zebra: true });
   } else if (r.expiring.length) {
