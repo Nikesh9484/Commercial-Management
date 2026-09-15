@@ -15,35 +15,8 @@ import { WorkbookImporter, type StandaloneMode } from "@/components/workbook/Wor
 export const IMPORT_KINDS: Record<string, { title: string; subtitle: string; only?: string[]; exclude?: string[]; intro?: string; fileHint?: string; doneHref?: string; doneLabel?: string }> = {
   monthly: {
     title: "Import monthly workbook",
-    subtitle: "Upload one of your Excel monthly reports and the app records it against a reporting period. Each month is stored as its own report, so months can be loaded in any order and each one shows its movement against the last. Claims & Disputes are never taken from the workbook: they come only from the stand-alone Claims Tracker import. Bonds & Insurance and Final Account Status are read from the workbook when the project is set up for it (Village Boutique Hotel); otherwise they come only from their stand-alone imports (The Marina).",
+    subtitle: "Upload one of your Excel monthly reports and the app records it against a reporting period. Each month is stored as its own report, so months can be loaded in any order and each one shows its movement against the last. Bonds & Insurance, Invoices & Payments and Final Account Status all come from this workbook – Schedule G, Schedule H with its IPC sheets, and the FA Status sheet – so one upload keeps the whole month in step. Claims & Disputes are the exception: they are never taken from the workbook, because they come from the AMAALA Claims Tracker, which is a different file.",
     exclude: ["claims", "bonds", "final_accounts"],
-  },
-  bonds: {
-    title: "Import Bonds & Insurance",
-    subtitle: "Update the bonds and insurance log of the current report from Excel.",
-    only: ["bonds"],
-    intro: "Upload your Schedule G (bonds & insurance) sheet, the Excel downloaded from the Bonds & Insurance page, or the whole monthly workbook – only the bonds sheet is used.",
-    fileHint: "Schedule G / bonds export",
-    doneHref: "/modules/bonds-insurance",
-    doneLabel: "Open Bonds & Insurance",
-  },
-  payments: {
-    title: "Import Invoices & Payments",
-    subtitle: "Update the contracts and the IPC log of the current report from Excel.",
-    only: ["contracts", "payment_applications"],
-    intro: "Upload your Schedule H sheet and the per-contract IPC sheets, the Excel downloaded from Invoices & Payments, or the whole monthly workbook – only the contracts and IPC sheets are used.",
-    fileHint: "Schedule H / IPC logs",
-    doneHref: "/modules/invoices-payments",
-    doneLabel: "Open Invoices & Payments",
-  },
-  "final-accounts": {
-    title: "Import Final Account Status",
-    subtitle: "Update the final account status of the current report from Excel.",
-    only: ["final_accounts"],
-    intro: "Upload your FA Status sheet, the Excel downloaded from the Final Account Status page, or the whole monthly workbook – only the final account sheet is used.",
-    fileHint: "FA Status sheet",
-    doneHref: "/modules/final-accounts",
-    doneLabel: "Open Final Account Status",
   },
   "claims-tracker": {
     title: "Import Claims Tracker",
@@ -56,15 +29,44 @@ export const IMPORT_KINDS: Record<string, { title: string; subtitle: string; onl
   },
 };
 
+/** Imports that have been folded into the monthly workbook. The URLs still answer, so an old link or
+ *  bookmark explains where the import went rather than showing "not found". */
+export const RETIRED_IMPORTS: Record<string, { title: string; was: string; sheet: string; href: string; label: string }> = {
+  bonds: { title: "Bonds & Insurance", was: "the stand-alone bonds import", sheet: "Schedule G", href: "/modules/bonds-insurance", label: "Open Bonds & Insurance" },
+  payments: { title: "Invoices & Payments", was: "the stand-alone payments import", sheet: "Schedule H and its per-contract IPC sheets", href: "/modules/invoices-payments", label: "Open Invoices & Payments" },
+  "final-accounts": { title: "Final Account Status", was: "the stand-alone final-account import", sheet: "the FA Status sheet", href: "/modules/final-accounts", label: "Open Final Account Status" },
+};
+
 export async function generateMetadata({ params }: { params: Promise<{ kind: string }> }) {
   const { kind } = await params;
-  return { title: IMPORT_KINDS[kind]?.title ?? "Import" };
+  return { title: IMPORT_KINDS[kind]?.title ?? RETIRED_IMPORTS[kind]?.title ?? "Import" };
 }
 
 export default async function ImportPage({ params, searchParams }: { params: Promise<{ kind: string }>; searchParams: Promise<{ period?: string }> }) {
   const { kind } = await params;
   const { period: periodParam } = await searchParams;
   const initialPeriodId = Number(periodParam) || null;
+  const retired = RETIRED_IMPORTS[kind];
+  if (retired) {
+    return (
+      <div className="space-y-4">
+        <PageHeader eyebrow="Stand-alone imports" title={`${retired.title} now comes with the monthly report`} subtitle={`${retired.was} has been retired.`} />
+        <div className="card space-y-3 p-5 text-sm">
+          <p className="text-ink">
+            {retired.title} is read straight out of the monthly report workbook – <b>{retired.sheet}</b> – for every project, so importing the month keeps it in step with the cost report instead of needing a second upload that could disagree with it.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Link className="btn btn-primary" href="/imports/monthly">
+              Import the monthly workbook
+            </Link>
+            <Link className="btn btn-secondary" href={retired.href}>
+              {retired.label}
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
   const spec = IMPORT_KINDS[kind];
   if (!spec) notFound();
   const user = (await getCurrentUser())!;

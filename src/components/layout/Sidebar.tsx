@@ -27,6 +27,8 @@ import {
   FileSignature,
   SlidersHorizontal,
   X,
+  Palette,
+  Users,
   type LucideIcon,
 } from "lucide-react";
 import { modules } from "@/lib/modules";
@@ -129,10 +131,9 @@ export function Sidebar({ open, onClose, role, project }: { open: boolean; onClo
           {role !== "viewer" && role !== "contributor" && (
             <>
               <div className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider text-blue-200/50">Stand-alone imports</div>
+              {/* Bonds, payments and final accounts all ride in on the monthly workbook now; the
+                  Claims Tracker stays because it is a different workbook altogether. */}
               {link("/imports/monthly", "Monthly report workbook", Upload)}
-              {link("/imports/bonds", "Bonds & Insurance", Upload)}
-              {link("/imports/payments", "Invoices & Payments", Upload)}
-              {link("/imports/final-accounts", "Final Account Status", Upload)}
               {link("/imports/claims-tracker", "Claims Tracker", Upload)}
               <div className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider text-blue-200/50">Automation</div>
               {link("/automation/claim-ear", "Claim EAR", Wand2)}
@@ -146,6 +147,8 @@ export function Sidebar({ open, onClose, role, project }: { open: boolean; onClo
             <span className="truncate">User guide (PDF)</span>
           </a>
           {link("/activity", "Change history", History)}
+          {role === "admin" && link("/settings/users", "Users & passwords", Users)}
+          {link("/settings/appearance", "Appearance", Palette)}
           {link("/settings", role === "viewer" ? "Reference data" : "Settings", Settings)}
           </>
           )}

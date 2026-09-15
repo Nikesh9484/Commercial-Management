@@ -404,6 +404,15 @@ function seed(db: Database.Database) {
     setSetting(db, "seeded_vbh_feeds", "1");
   }
 
+  // Both monthly workbooks carry the bonds and the final accounts – the Marina's as Schedule G and the
+  // FA Status sheet – so every project now takes them with the monthly import and the stand-alone
+  // bonds / payments / final-account imports have been retired. Claims still come from the Claims
+  // Tracker, which is a different workbook altogether.
+  if (getSetting(db, "seeded_workbook_feeds_all") !== "1") {
+    db.prepare("UPDATE programmes SET workbook_feeds_all = 1").run();
+    setSetting(db, "seeded_workbook_feeds_all", "1");
+  }
+
   // Earlier versions seeded "(edit me)" placeholder names; give them their real names so no
   // report or cover page ever prints the placeholder.
   const rename = (table: string, from: string, to: string) => db.prepare(`UPDATE "${table}" SET name = ?, updated_at = ?, updated_by = 'system' WHERE name = ?`).run(to, stamp, from);
