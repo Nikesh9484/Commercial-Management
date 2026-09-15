@@ -7,6 +7,7 @@
 import type { SheetValues } from "./read";
 import { cellText } from "./read";
 import type { ConvertedSheet } from "./marina";
+import { tidyText } from "../text/tidy";
 
 type Row = unknown[];
 
@@ -179,11 +180,11 @@ export function convertClaimsTracker(sheets: SheetValues[], ctx: ClaimsTrackerCo
         const d = date(v, i);
         return d ? `${d.slice(5, 7)}-${d.slice(2, 4)}` : txt(v, i);
       };
-      const lastAction = [date(v, 56) ?? txt(v, 56), txt(v, 57)].filter(Boolean).join(" – ");
+      const lastAction = [date(v, 56) ?? txt(v, 56), tidyText(txt(v, 57))].filter(Boolean).join(" – ");
 
       out.push([
         claimNo,
-        `${txt(v, 3)}${isCost ? " [Cost claim]" : kind.includes("TIA") ? " [Time claim]" : ""}`,
+        `${tidyText(txt(v, 3))}${isCost ? " [Cost claim]" : kind.includes("TIA") ? " [Time claim]" : ""}`,
         status,
         ctx.assetLabel,
         line?.contractor || txt(v, 8),
@@ -251,8 +252,8 @@ export function convertClaimsTracker(sheets: SheetValues[], ctx: ClaimsTrackerCo
         txt(v, 66),
         txt(v, 67),
         txt(v, 68),
-        txt(v, 69),
-        txt(v, 70),
+        tidyText(txt(v, 69)),
+        tidyText(txt(v, 70)),
         txt(v, 72),
         yes(73),
         yes(74),

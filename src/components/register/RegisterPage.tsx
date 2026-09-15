@@ -89,7 +89,14 @@ export function RegisterPage({
   }, [registerKey]);
 
   const def = data?.def;
-  const tableFields = useMemo(() => def?.fields.filter((f) => !f.hideInTable && f.type !== "password" && !hideFields.includes(f.key)) ?? [], [def, hideFields]);
+  const tableFields = useMemo(() => {
+    const shown = def?.fields.filter((f) => !f.hideInTable && f.type !== "password" && !hideFields.includes(f.key)) ?? [];
+    // a field can ask for its place in the table without moving on the record form
+    return shown
+      .map((f, i) => ({ f, i }))
+      .sort((a, b) => (a.f.tableOrder ?? Number.MAX_SAFE_INTEGER) - (b.f.tableOrder ?? Number.MAX_SAFE_INTEGER) || a.i - b.i)
+      .map((x) => x.f);
+  }, [def, hideFields]);
   const filterFields = useMemo(() => {
     if (!def) return [];
     const explicit = def.fields.filter((f) => f.filter && !(fixedFilter && f.key in fixedFilter));
@@ -318,7 +325,7 @@ export function RegisterPage({
             <thead>
               <tr>
                 {tableFields.map((f) => (
-                  <th key={f.key} style={{ width: f.width }} className={isNumeric(f) ? "text-right" : ""}>
+                  <th key={f.key} style={f.width ? { width: f.width, minWidth: f.width } : undefined} className={isNumeric(f) ? "text-right" : ""}>
                     <button className="inline-flex items-center gap-1 font-semibold text-muted hover:text-ink" onClick={() => toggleSort(f.key)}>
                       {f.label}
                       {effectiveSort?.field === f.key ? (
@@ -551,7 +558,23 @@ function Cell({ field: f, row: r }: { field: FieldDef; row: RecordRow }) {
     case "text":
       return f.chip ? <Chip>{String(v)}</Chip> : <>{String(v)}</>;
     case "textarea":
-      return <span className="block max-w-xs truncate">{String(v)}</span>;
+      // Two lines of real text rather than one cut off mid-word: a description or a comment is the
+      // point of the row, and a fixed 20rem cap ignored however wide the column asked to be. The
+      // cell still carries the whole text as its tooltip.
+      return (
+        <span
+          style={{
+            maxWidth: f.width ?? "20rem",
+            display: "-webkit-box",
+            WebkitBoxOrient: "vertical",
+            WebkitLineClamp: 2,
+            overflow: "hidden",
+            whiteSpace: "normal",
+          }}
+        >
+          {String(v)}
+        </span>
+      );
     default:
       return <>{String(v)}</>;
   }

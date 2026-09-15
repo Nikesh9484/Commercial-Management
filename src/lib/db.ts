@@ -6,6 +6,7 @@ import bcrypt from "bcryptjs";
 import { allRegisters } from "./registers";
 import type { FieldDef, RegisterDef } from "./registers/types";
 import { nowIso, formatMonthYear } from "./format";
+import { tidyRegisters } from "./text/tidy-registers";
 
 /**
  * Single SQLite connection for the whole app (kept on globalThis so hot-reload in
@@ -411,6 +412,20 @@ function seed(db: Database.Database) {
   if (getSetting(db, "seeded_workbook_feeds_all") !== "1") {
     db.prepare("UPDATE programmes SET workbook_feeds_all = 1").run();
     setSetting(db, "seeded_workbook_feeds_all", "1");
+  }
+
+  // Wording that came in before the import started tidying it: spelling, block capitals and stray
+  // spacing in the free-prose fields only. Runs once, over every project, so the descriptions read
+  // properly without anyone re-importing a workbook or pressing anything. Figures, references and
+  // dates are not touched, and running it again would change nothing.
+  if (getSetting(db, "tidied_imported_wording") !== "1") {
+    try {
+      const r = tidyRegisters(db, null, null);
+      if (r.changed || r.snapshots) console.log(`[migration] tidied the wording of ${r.changed} value(s) and ${r.snapshots} issued-report row(s): ${r.byRegister.map((b) => `${b.title} ${b.field} ${b.changed}`).join(", ")}`);
+    } catch (e) {
+      console.warn("[migration] wording tidy skipped:", e);
+    }
+    setSetting(db, "tidied_imported_wording", "1");
   }
 
   // Earlier versions seeded "(edit me)" placeholder names; give them their real names so no

@@ -36,6 +36,10 @@ export interface FieldDef {
   readonly?: boolean;
   /** Hide from the table (still shown in the form). Default: shown. */
   hideInTable?: boolean;
+  /** Where the column sits in the table, low numbers first. Columns without one keep the order they
+   *  are declared in and follow the numbered ones. Lets a field live under its own heading on the
+   *  record form while still being read early in the table. */
+  tableOrder?: number;
   /** Hide from the form (system fields). */
   hideInForm?: boolean;
   /** Short helper text shown under the input. */

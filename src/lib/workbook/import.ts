@@ -10,6 +10,10 @@ import type { UserInfo, RecordRow } from "../registers/types";
 import { lockPeriod, getPeriod, latestPeriod, takeSnapshot, restoreFromSnapshot, hasStoredCopy, clearSnapshotRegisters, nearestStoredBefore } from "../snapshots";
 import { logAudit } from "../audit";
 import { mergeDuplicateContractors } from "../contractors/merge";
+import { tidyText } from "../text/tidy";
+
+/** The free-prose fields whose wording is tidied on the way in. Everything else arrives untouched. */
+const TIDY_FIELDS = new Set(["description", "scope", "remark", "comments", "last_action"]);
 import { nowIso, formatMonthYear, parseDateInput } from "../format";
 import { importKeyFields, norm } from "./analyze";
 import { cellText, getSheet, readWorkbookValues, type SheetValues } from "./read";
@@ -297,6 +301,11 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo, progres
           let v: unknown = raw instanceof Date ? raw : cellText(raw).trim();
           if (typeof raw === "object" && raw !== null && !(raw instanceof Date) && "result" in raw) v = (raw as { result?: unknown }).result ?? "";
           if (typeof raw === "number") v = raw;
+          // Free prose typed into a spreadsheet over many months by many hands is tidied as it comes
+          // in – spelling, block capitals, stray spacing – so the dashboard reads properly without
+          // anyone having to correct the workbook. Only these fields: a reference, a code or a name
+          // is never touched.
+          if (typeof v === "string" && TIDY_FIELDS.has(c.field.key)) v = tidyText(v);
           if (v !== "" && v !== null && v !== undefined) any = true;
           input[c.field.key] = v;
         }
