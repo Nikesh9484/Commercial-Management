@@ -5,14 +5,17 @@ import { todayIso } from "../../format";
 import { daysBetween } from "../../registers/enrich-utils";
 import type { RecordRow } from "../../registers/types";
 import { fieldsFrom, type SmartSource } from "./index";
+import { latestRemark } from "../../claims/remarks";
 
 /**
  * EOT / claims action tracker: the commercial view of every claim – who the action sits with, how
  * long it has sat there, what the next step is and when it is due. Modelled on the tracker the
  * commercial team keeps by hand, so it can replace it.
  *
- * "Days since last action" counts from the claim's Date of last action, falling back to when the row
- * was last edited, and is flagged On track (14 days or less), Watch (15–30) or Stuck (over 30).
+ * "Days since last action" counts from the later of the claim's Date of last action and the newest
+ * dated entry in the tracker's Remarks (column BR). Only when neither exists does it fall back to when
+ * the row was last edited – which after an import is just the import date, so it is labelled as such.
+ * Flagged On track (14 days or less), Watch (15–30) or Stuck (over 30).
  */
 
 const txt = (v: unknown) => (v === null || v === undefined ? "" : String(v));
@@ -35,7 +38,7 @@ export const eotTracker: SmartSource = {
   description: "Every claim as an action list: who it is pending with, the owner, the last action and how many days ago, the target date for the next step, and whether it is on track, to watch, or stuck.",
   ageField: "last_action_date",
   ageMode: "since",
-  defaultColumns: ["claim_no", "contract_no", "contractor", "assessment_type", "pending_with", "owner", "last_action_date", "days_since", "flag", "target_date", "days_to_target"],
+  defaultColumns: ["claim_no", "contract_no", "contractor", "assessment_type", "pending_with", "last_action_date", "days_since", "flag", "latest_remark", "target_date", "days_to_target"],
   suggestGroupBy: "pending_with",
   presets: [
     { id: "open", label: "Open claims only", description: "Everything still to be determined." },
@@ -59,7 +62,8 @@ export const eotTracker: SmartSource = {
         { key: "pending_with", label: "Pending with", type: "select", inDefault: true },
         { key: "owner", label: "Owner", type: "text", inDefault: true },
         { key: "last_action", label: "Last action", type: "text", inDefault: false },
-        { key: "last_action_date", label: "Date of last action", type: "date", inDefault: true },
+        { key: "latest_remark", label: "Latest remark (tracker column BR)", type: "text", inDefault: true, help: "The newest dated entry in the Claims Tracker's Remarks." },
+        { key: "last_action_date", label: "Date of last action / latest remark", type: "date", inDefault: true },
         { key: "days_since", label: "Days since last action", type: "number", numeric: true, inDefault: true },
         { key: "flag", label: "Flag", type: "select", inDefault: true, help: "On track ≤14 days · Watch 15–30 · Stuck over 30." },
         { key: "target_date", label: "Target date", type: "date", inDefault: true },
@@ -84,7 +88,9 @@ export const eotTracker: SmartSource = {
       if (Number(c.programme_id) !== programmeId) continue;
       const status = txt(c.status);
       const closed = CLOSED.includes(status);
-      const lastDate = iso(c.last_action_date) ?? iso(c.updated_at);
+      const remark = latestRemark(c.remark, today);
+      const tracked = [iso(c.last_action_date), remark?.date ?? null].filter((x): x is string => !!x).sort().pop() ?? null;
+      const lastDate = tracked ?? iso(c.updated_at);
       const daysSince = lastDate ? daysBetween(lastDate, today) : null;
       const target = iso(c.target_date);
       const daysToTarget = target ? daysBetween(today, target) : null;
@@ -104,6 +110,7 @@ export const eotTracker: SmartSource = {
         pending_with: pending,
         owner: txt(c.owner),
         last_action: txt(c.last_action),
+        latest_remark: remark?.text ?? "",
         last_action_date: lastDate,
         days_since: daysSince,
         flag,

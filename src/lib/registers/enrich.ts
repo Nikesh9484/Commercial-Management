@@ -13,6 +13,8 @@ import { closedContracts, contractorKey, type ClosedContracts } from "../bonds/c
 import { getDb, getSetting } from "../db";
 import { computeCostReport } from "../cost-report/compute";
 import { FA_AMBER_DAYS } from "./defs/final-accounts";
+import { latestRemark, remarksNewestFirst } from "../claims/remarks";
+import { claimIsOpen } from "../claims/status";
 
 /**
  * Fills in the calculated ("virtual") columns of a register after its rows are read.
@@ -203,6 +205,23 @@ function enrichClaim(row: RecordRow) {
   row.contractor_cost_view = row.contractor_cost ?? null;
   row.determination_cost_view = row.determination_cost ?? null;
   row.cost_report_amount = claimCostReportAmount(row);
+
+  // The tracker's Remarks (column BR) is a running log with no consistent order. It is re-ordered
+  // newest first for the table, and its latest dated entry – or the tracker's "date of last action",
+  // whichever is later – is when the claim was last moved.
+  const today = todayIso();
+  row.remarks_view = row.remark ? remarksNewestFirst(row.remark, today) || null : null;
+  const latest = row.remark ? latestRemark(row.remark, today) : null;
+  row.latest_remark = latest?.text ?? null;
+  row.latest_remark_date = latest?.date ?? null;
+  const lastAction = typeof row.last_action_date === "string" && row.last_action_date ? row.last_action_date : null;
+  const update = [lastAction, latest?.date ?? null].filter((x): x is string => !!x).sort().pop() ?? null;
+  row.last_update = update;
+  const open = claimIsOpen(row);
+  row.days_since_update = update ? Math.max(0, daysBetween(update, today)) : null;
+  row.days_since_update__tone = open && update ? (Number(row.days_since_update) > 60 ? "red" : Number(row.days_since_update) > 30 ? "amber" : null) : null;
+  // a claim that is still live but has never had a word written against it is itself a finding
+  row.no_update = open && !update && !row.remark;
 }
 
 function enrichRisk(row: RecordRow) {

@@ -6,7 +6,7 @@ import { MONEY_COLUMNS, type Money } from "../cost-report/columns";
 import { formatMoney, formatDate, formatNumber, formatPercent, formatDateTime } from "../format";
 import type { FieldDef } from "../registers/types";
 import { APP_NAME } from "../brand";
-import { buildClaimsReport, type ClaimLine } from "./claims-report";
+import { buildClaimsReport, STALE_UPDATE_DAYS, type ClaimLine } from "./claims-report";
 import { buildPaymentsReport } from "./payments-report";
 import { buildChangesReport } from "./changes-report";
 import { buildEwReport } from "./ew-report";
@@ -700,6 +700,41 @@ function claimsStatusReport(ctx: Ctx) {
       doc.fillColor("#7c2d12").font("Helvetica").fontSize(9).text(`•  ${it}`, { width });
     }
     doc.moveDown(0.4);
+  }
+
+  // Where each claim still being worked actually stands, in the tracker's own words (Remarks, column
+  // BR) – the latest dated entry, how long ago it was written, and whose desk the claim is on. Printed
+  // before the register because it is what the reader acts on; contractor by contractor, the ones
+  // gone quiet longest first.
+  if (r.latestPosition.length) {
+    subheading(
+      ctx,
+      "Where each open claim stands – latest from the Claims Tracker remarks",
+      `The newest dated entry in the tracker's Remarks for each claim still being worked. Amber after ${STALE_UPDATE_DAYS} days without an update; claims gone quiet longest are listed first.`,
+    );
+    partyTables(
+      ctx,
+      groupByParty(
+        r.latestPosition.map((c) => ({
+          ...c,
+          updated: c.lastUpdate ? formatDate(c.lastUpdate) : "none recorded",
+          age: c.daysSinceUpdate === null ? "–" : `${c.daysSinceUpdate}d`,
+          latest: c.latestRemark || "No remark recorded in the tracker.",
+          __tone: c.daysSinceUpdate === null || c.daysSinceUpdate > STALE_UPDATE_DAYS ? "amber" : null,
+        })),
+        (c) => c.contractor,
+      ),
+      [
+        { key: "claim_no", label: "Ref", width: 0.7 },
+        { key: "description", label: "Claim", width: 2.3 },
+        { key: "actionWith", label: "Currently with", width: 1.15 },
+        { key: "updated", label: "Last update", width: 0.85 },
+        { key: "age", label: "Age", width: 0.5, align: "right" },
+        { key: "latest", label: "Latest remark", width: 5 },
+      ],
+      (g) => `${plural(g.count, "open claim")}`,
+      { key: "contractor", label: "Contractor", width: 1.5 },
+    );
   }
 
   // The register, contractor by contractor. A claim is negotiated with one contractor at a time, so
@@ -1835,8 +1870,11 @@ function table(ctx: Ctx, cols: Col[], rows: Record<string, unknown>[], opts: Tab
       }
     }
     const st = opts.rowStyle?.(r, i);
+    // a row can flag itself: a claim gone quiet, an item past its date – shaded in the report's own
+    // muted amber / red so it stands out without shouting
+    const toneBg = r.__tone === "amber" ? "#fbf3e2" : r.__tone === "red" ? "#f8e7e5" : undefined;
     if (st?.span) drawRow([String(r[cols[0].key] ?? "")], { bold: true, color: st.color ?? NAVY, span: true });
-    else drawRow(cols.map((c) => cellText(c, r)), { bg: st?.bg ?? (opts.zebra && i % 2 === 1 ? ZEBRA : undefined), bold: st?.bold, color: st?.color });
+    else drawRow(cols.map((c) => cellText(c, r)), { bg: st?.bg ?? toneBg ?? (opts.zebra && i % 2 === 1 ? ZEBRA : undefined), bold: st?.bold, color: st?.color });
   });
   for (const b of opts.bands ?? []) if (b.index === rows.length && b.kind === "subtotal") drawRow(cols.map((c) => cellText(c, moneyRow(b.label, b.values!, cols[0].key))), { bold: true, bg: ZEBRA });
   if (opts.totalRow) drawRow(cols.map((c) => (opts.totalRow![c.key] === undefined ? "" : String(opts.totalRow![c.key]))), { bold: true, bg: "#e8eef7" });

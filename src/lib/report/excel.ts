@@ -1,7 +1,7 @@
 import { APP_NAME } from "../brand";
 import ExcelJS from "exceljs";
 import { executiveTotals } from "../cost-report/executive";
-import { buildClaimsReport } from "./claims-report";
+import { buildClaimsReport, STALE_UPDATE_DAYS } from "./claims-report";
 import { buildPaymentsReport } from "./payments-report";
 import { buildChangesReport } from "./changes-report";
 import { buildEwReport } from "./ew-report";
@@ -232,11 +232,25 @@ export function claimsReportSheet(wb: ExcelJS.Workbook, d: ReportData) {
     ws.addRow(["Items requiring attention"]).font = { bold: true, size: 12, color: { argb: "FF7C2D12" } };
     for (const it of r.attention) ws.addRow([`• ${it}`]);
   }
+  if (r.latestPosition.length) {
+    // the tracker's Remarks (column BR), read: the latest dated entry per claim still being worked,
+    // and the whole log newest first beside it for anyone who wants the history
+    ws.addRow([]);
+    ws.addRow(["Where each open claim stands – latest from the Claims Tracker remarks"]).font = { bold: true, size: 12, color: { argb: NAVY } };
+    header(ws.addRow(["Ref", "Contractor", "Claim", "Currently with", "Last update", "Days since", "Latest remark", "Full remarks (newest first)"]));
+    for (const c of r.latestPosition) {
+      const row = ws.addRow([c.claim_no, c.contractor, c.description, c.actionWith, c.lastUpdate ? toDate(c.lastUpdate) : "none recorded", c.daysSinceUpdate, c.latestRemark || "No remark recorded in the tracker.", c.remarks]);
+      row.getCell(5).numFmt = "DD-MMM-YY";
+      row.alignment = { wrapText: true, vertical: "top" };
+      if (c.daysSinceUpdate === null || c.daysSinceUpdate > STALE_UPDATE_DAYS) row.getCell(6).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEF3C7" } };
+    }
+  }
   ws.addRow([]);
   ws.addRow(["Claims register at cut-off"]).font = { bold: true, size: 12, color: { argb: NAVY } };
-  header(ws.addRow(["Ref", "Contractor", "Claim", "Type", "Claimed SAR", "Assessed SAR", "Determined SAR", "EOT claimed", "EOT granted", "Stage / next step", "Action with", "Days", "Notice", "Status", "Package"]));
+  header(ws.addRow(["Ref", "Contractor", "Claim", "Type", "Claimed SAR", "Assessed SAR", "Determined SAR", "EOT claimed", "EOT granted", "Stage / next step", "Action with", "Days", "Notice", "Status", "Package", "Last update", "Latest remark"]));
   for (const c of r.claims) {
-    const row = ws.addRow([c.claim_no, c.contractor, c.description, c.type, c.claimedSar, c.assessedSar, c.determinedSar, c.eotClaimed, c.eotGranted, c.stage, c.actionWith, c.daysSinceReceipt, c.notice, c.status, c.package]);
+    const row = ws.addRow([c.claim_no, c.contractor, c.description, c.type, c.claimedSar, c.assessedSar, c.determinedSar, c.eotClaimed, c.eotGranted, c.stage, c.actionWith, c.daysSinceReceipt, c.notice, c.status, c.package, c.lastUpdate ? toDate(c.lastUpdate) : null, c.latestRemark]);
+    row.getCell(16).numFmt = "DD-MMM-YY";
     [5, 6, 7].forEach((i) => (row.getCell(i).numFmt = MONEY_FMT));
     if (c.status === "Pending") row.getCell(14).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEF3C7" } };
   }

@@ -41,6 +41,8 @@ export function RegisterPage({
   rowFilter,
   exportParams,
   hideFields = [],
+  onRows,
+  hideFilterPanel = false,
 }: {
   registerKey: string;
   isAdmin?: boolean;
@@ -52,6 +54,11 @@ export function RegisterPage({
   exportParams?: string;
   /** Fields to leave out of the table (e.g. the one fixed by fixedFilter). */
   hideFields?: string[];
+  /** Hands the loaded rows to a page that filters them itself, so it counts from the same data the
+   *  table shows – and again after every save, so its counts never go stale. */
+  onRows?: (rows: RecordRow[]) => void;
+  /** Leave out the generic Filters button and panel when the page provides its own filters. */
+  hideFilterPanel?: boolean;
 }) {
   const toast = useToast();
   const router = useRouter();
@@ -72,21 +79,28 @@ export function RegisterPage({
 
   const load = useCallback(() => {
     return fetchRegister(registerKey).then(
-      (loaded) => setData(loaded),
+      (loaded) => {
+        setData(loaded);
+        onRows?.(loaded.rows);
+      },
       (e: Error) => setLoadError(e.message),
     );
-  }, [registerKey]);
+  }, [registerKey, onRows]);
 
   useEffect(() => {
     let live = true;
     fetchRegister(registerKey).then(
-      (loaded) => live && setData(loaded),
+      (loaded) => {
+        if (!live) return;
+        setData(loaded);
+        onRows?.(loaded.rows);
+      },
       (e: Error) => live && setLoadError(e.message),
     );
     return () => {
       live = false;
     };
-  }, [registerKey]);
+  }, [registerKey, onRows]);
 
   const def = data?.def;
   const tableFields = useMemo(() => {
@@ -265,7 +279,7 @@ export function RegisterPage({
           <input className="input pl-9" placeholder={`Search ${def.title.toLowerCase()}…`} value={search} onChange={(e) => changeSearch(e.target.value)} />
         </div>
         <div className="flex flex-wrap gap-2">
-          {filterFields.length > 0 && (
+          {!hideFilterPanel && filterFields.length > 0 && (
             <button className={`btn btn-secondary ${activeFilterCount ? "border-accent text-accent" : ""}`} onClick={() => setShowFilters((s) => !s)}>
               <Filter size={16} /> Filters{activeFilterCount ? ` (${activeFilterCount})` : ""}
             </button>
@@ -289,7 +303,7 @@ export function RegisterPage({
         </div>
       </div>
 
-      {showFilters && filterFields.length > 0 && (
+      {!hideFilterPanel && showFilters && filterFields.length > 0 && (
         <div className="card flex flex-wrap items-end gap-3 p-3">
           {filterFields.map((f) => (
             <div key={f.key} className="flex min-w-48 flex-col gap-1 text-xs text-muted">

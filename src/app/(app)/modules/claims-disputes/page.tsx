@@ -9,7 +9,7 @@ import { getClaimsSummary } from "@/lib/claims/summary";
 import { formatMoney, formatNumber } from "@/lib/format";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Chip } from "@/components/ui/Chip";
-import { RegisterPage } from "@/components/register/RegisterPage";
+import { ClaimsWorkspace } from "@/components/claims/ClaimsWorkspace";
 import { ExportButtons } from "@/components/ui/ExportButtons";
 import { FileText } from "lucide-react";
 import { EmailReportButton } from "@/components/dashboard/EmailReportButton";
@@ -125,7 +125,7 @@ export default async function ClaimsPage() {
       )}
 
       {ctx.programme ? (
-        <RegisterPage registerKey="claims" isAdmin={user.role === "admin"} />
+        <ClaimsWorkspace isAdmin={user.role === "admin"} />
       ) : (
         <div className="card flex items-center gap-2 p-5 text-sm text-muted">
           <AlertTriangle size={16} /> Select a programme in the top bar first.

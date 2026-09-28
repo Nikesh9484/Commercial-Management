@@ -3,6 +3,8 @@ import { capMovement } from "./report-utils";
 import type { RecordRow } from "../registers/types";
 import { claimCostReportAmount, ASSESSMENT_PARTIES, EAR_STEPS, NOTICE_LIMIT_DAYS, DETAIL_LIMIT_DAYS } from "../registers/defs/claims";
 import { formatMoney, formatDate } from "../format";
+import { latestRemark, remarksNewestFirst } from "../claims/remarks";
+import { claimIsOpen, statusOutOfStep } from "../claims/status";
 
 /**
  * Executive Claims Status Report: the claims of the month, with a short professional narrative
@@ -26,6 +28,16 @@ export interface ClaimLine {
   stage: string;
   actionWith: string;
   inCostReport: boolean;
+  /** Still being worked (pending, or approved but not closed out on the tracker). */
+  open: boolean;
+  /** Newest dated entry of the tracker's Remarks (column BR) – where the claim stands. */
+  latestRemark: string;
+  latestRemarkDate: string | null;
+  /** The later of the tracker's date of last action and the newest remark, and its age at the cut-off. */
+  lastUpdate: string | null;
+  daysSinceUpdate: number | null;
+  /** The whole Remarks log, newest entry first. */
+  remarks: string;
   /** Every tracker column, grouped for the claim-by-claim detail pages. */
   detail: ClaimDetail;
 }
@@ -128,6 +140,8 @@ export interface ClaimsReport {
   ear: EarLine[];
   /** Rejections, notices of dissatisfaction and disputes. */
   escalations: EscalationLine[];
+  /** Open claims with their latest tracker remark, stalest first. */
+  latestPosition: ClaimLine[];
 }
 
 const num = (v: unknown) => (v === null || v === undefined || v === "" ? 0 : Number(v));
@@ -136,6 +150,8 @@ const has = (v: unknown) => v !== null && v !== undefined && v !== "";
 const pct = (a: number, b: number) => (b ? Math.round((a / b) * 100) : 0);
 const money = (n: number) => `SAR ${formatMoney(n)}`;
 const plural = (n: number, s: string, p = `${s}s`) => `${n} ${n === 1 ? s : p}`;
+/** A long remark shortened on a word boundary, for quoting in the narrative. */
+const clip = (t: string, max: number) => (t.length <= max ? t.replace(/[\s.]+$/, "") + "." : `${t.slice(0, max).replace(/\s+\S*$/, "")}…`);
 const list = (items: string[], max = 4) => (items.length <= max ? items.join(", ") : `${items.slice(0, max).join(", ")} and ${items.length - max} more`);
 
 function daysBetween(a: string, b: string): number {
@@ -248,9 +264,30 @@ function claimDetail(r: RecordRow, asOf: string): ClaimDetail {
       ["Late entry in tracker", dt(r.late_entry_date)],
     ]),
     lastAction: txt(r.last_action),
-    remark: txt(r.remark),
+    remark: remarksNewestFirst(r.remark, asOf),
   };
 }
+
+/**
+ * Where a claim stands according to the tracker's Remarks. Worked out at the report's own cut-off,
+ * not today, so an issued month says how stale each claim was when it was issued.
+ */
+function remarkPosition(r: RecordRow, asOf: string) {
+  const latest = latestRemark(r.remark, asOf);
+  const lastAction = has(r.last_action_date) ? String(r.last_action_date) : null;
+  const lastUpdate = [lastAction, latest?.date ?? null].filter((x): x is string => !!x && x <= asOf).sort().pop() ?? null;
+  return {
+    open: claimIsOpen(r),
+    latestRemark: latest?.text ?? "",
+    latestRemarkDate: latest?.date ?? null,
+    lastUpdate,
+    daysSinceUpdate: lastUpdate ? Math.max(0, daysBetween(lastUpdate, asOf)) : null,
+    remarks: remarksNewestFirst(r.remark, asOf),
+  };
+}
+
+/** Days after which an open claim with nothing new written against it needs chasing. */
+export const STALE_UPDATE_DAYS = 30;
 
 export function buildClaimsReport(data: ReportData): ClaimsReport {
   const rows = data.registers.claims?.rows ?? [];
@@ -279,6 +316,7 @@ export function buildClaimsReport(data: ReportData): ClaimsReport {
       stage: st.stage,
       actionWith: st.actionWith,
       inCostReport: claimCostReportAmount(r) > 0,
+      ...remarkPosition(r, asOf),
       detail: claimDetail(r, asOf),
     };
   });
@@ -392,6 +430,14 @@ export function buildClaimsReport(data: ReportData): ClaimsReport {
   if (earLate.length) attention.push(`${plural(earLate.length, "assessment report")} (EAR / HLEAR) ${earLate.length === 1 ? "is" : "are"} past the tracker's timetable (${list(earLate.map((e) => e.claim_no))}) – the draft, TIA or final report is overdue.`);
   const unlinked = rows.filter((r) => !r.cost_line_id).length;
   if (unlinked) attention.push(`${plural(unlinked, "claim")} not yet linked to a cost report line – link them so the cost report reflects any determination.`);
+  // what the tracker's Remarks say – or do not say – about the claims still being worked
+  const live = claims.filter((c) => c.open);
+  const quiet = live.filter((c) => c.daysSinceUpdate !== null && c.daysSinceUpdate > STALE_UPDATE_DAYS).sort((a, b) => (b.daysSinceUpdate ?? 0) - (a.daysSinceUpdate ?? 0));
+  if (quiet.length) attention.push(`${plural(quiet.length, "open claim")} with no update in the tracker remarks for more than ${STALE_UPDATE_DAYS} days (${list(quiet.map((c) => `${c.claim_no} ${c.daysSinceUpdate}d`))}) – chase the party it sits with.`);
+  const outOfStep = rows.filter((r) => statusOutOfStep(r)).map((r) => String(r.claim_no ?? ""));
+  if (outOfStep.length) attention.push(`${plural(outOfStep.length, "claim")} still Pending on the dashboard but marked Closed on the Claims Tracker (${list(outOfStep)}) – confirm the outcome and update the status, or they stay counted as open exposure.`);
+  const silent = live.filter((c) => c.lastUpdate === null);
+  if (silent.length) attention.push(`${plural(silent.length, "open claim")} with nothing recorded in the tracker remarks (${list(silent.map((c) => c.claim_no))}) – the current position is not written down anywhere.`);
 
   // narrative
   const narrative: { heading: string; text: string }[] = [];
@@ -425,6 +471,21 @@ export function buildClaimsReport(data: ReportData): ClaimsReport {
       heading: "Exposure and status of open claims",
       text: `The largest open item is ${top.claim_no} (${top.contractor}${top.type ? `, ${top.type}` : ""}) at ${money(top.claimedSar)}${top.eotClaimed ? ` and ${top.eotClaimed} days` : ""}, currently at the stage "${top.stage}" with action resting with ${top.actionWith}. Across the ${plural(pending.length, "open claim")}: ${[...byStage.entries()].map(([s, k]) => `${k} ${s.toLowerCase()}`).join("; ")}.${
         pending.some((c) => c.assessedSar !== null) ? ` Where an assessment exists, the assessed value totals ${money(pending.reduce((t, c) => t + (c.assessedSar ?? 0), 0))} against ${money(pending.filter((c) => c.assessedSar !== null).reduce((t, c) => t + c.claimedSar, 0))} claimed for the same items.` : ""
+      }${top.latestRemark ? ` The tracker's latest entry on ${top.claim_no}${top.latestRemarkDate ? ` (${formatDate(top.latestRemarkDate)})` : ""} reads: "${clip(top.latestRemark, 220)}"` : ""}${
+        !top.open ? ` Note that the Claims Tracker marks ${top.claim_no} as closed while it is still Pending here; until the status is confirmed its value remains in the open exposure above.` : ""
+      }`,
+    });
+  }
+  const liveNow = claims.filter((c) => c.open);
+  if (liveNow.length) {
+    const fresh = liveNow.filter((c) => c.daysSinceUpdate !== null && c.daysSinceUpdate <= STALE_UPDATE_DAYS);
+    const staleNow = liveNow.filter((c) => c.daysSinceUpdate !== null && c.daysSinceUpdate > STALE_UPDATE_DAYS);
+    const none = liveNow.filter((c) => c.daysSinceUpdate === null);
+    const newest = [...liveNow].filter((c) => c.lastUpdate).sort((a, b) => (a.lastUpdate! < b.lastUpdate! ? 1 : -1))[0];
+    narrative.push({
+      heading: "Latest position from the Claims Tracker remarks",
+      text: `Of the ${plural(liveNow.length, "claim")} still being worked, ${fresh.length} ${fresh.length === 1 ? "has" : "have"} been updated in the tracker within the last ${STALE_UPDATE_DAYS} days${staleNow.length ? `, ${staleNow.length} ${staleNow.length === 1 ? "has" : "have"} not (${list(staleNow.map((c) => c.claim_no))})` : ""}${none.length ? ` and ${none.length} ${none.length === 1 ? "has" : "have"} no remark recorded at all` : ""}.${
+        newest ? ` The most recent movement is on ${newest.claim_no} (${newest.contractor}, ${formatDate(newest.lastUpdate!)}): "${clip(newest.latestRemark, 200)}"` : ""
       }`,
     });
   }
@@ -475,5 +536,7 @@ export function buildClaimsReport(data: ReportData): ClaimsReport {
     byAction,
     ear,
     escalations,
+    // the claims still being worked, the ones gone quiet longest first
+    latestPosition: claims.filter((c) => c.open).sort((a, b) => (b.daysSinceUpdate ?? 1e9) - (a.daysSinceUpdate ?? 1e9) || b.claimedSar - a.claimedSar),
   };
 }

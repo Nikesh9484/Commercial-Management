@@ -125,6 +125,7 @@ export function convertClaimsTracker(sheets: SheetValues[], ctx: ClaimsTrackerCo
     if (k.length >= 20 && !byDesc.has(k)) byDesc.set(k, c.claim_no);
   }
   const seen = new Set<string>();
+  const existingNos = new Set(ctx.existingClaims.map((c) => c.claim_no));
   let matchedExisting = 0;
   let linked = 0;
 
@@ -157,6 +158,10 @@ export function convertClaimsTracker(sheets: SheetValues[], ctx: ClaimsTrackerCo
       const hit = byRef.get(normRef(detailRef)) ?? byRef.get(normRef(noticeRef)) ?? byDesc.get(descKey(txt(v, 3)));
       if (hit && !seen.has(hit)) {
         claimNo = hit;
+        matchedExisting++;
+      } else if (existingNos.has(claimNo)) {
+        // imported before under this CT number: the write updates that row, so the preview must not
+        // call it new
         matchedExisting++;
       }
       seen.add(claimNo);
