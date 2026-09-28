@@ -19,7 +19,7 @@ export default async function BuilderPage() {
         subtitle="Build the report you want: pick the records, filter on any field, choose the columns, group and total them, and take it away as a PDF, an Excel workbook or a written Word summary."
       />
       {ctx.programme ? (
-        <ReportBuilder canSave={isEditorRole(user.role)} />
+        <ReportBuilder canSave={isEditorRole(user.role)} showAi={user.role !== "reporter"} />
       ) : (
         <div className="card flex items-center gap-2 p-5 text-sm text-muted">
           <AlertTriangle size={16} /> Select a project in the top bar first.

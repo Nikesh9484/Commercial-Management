@@ -85,7 +85,7 @@ const fmt = (v: unknown, type: string): string => {
 const TONE: Record<string, string> = { red: "text-[#87362d] font-semibold", amber: "text-[#8a5f1c] font-semibold", green: "text-[#3c7e66] font-semibold" };
 const GLYPH: Record<string, string> = { red: "▲", amber: "■", green: "●" };
 
-export function ReportBuilder({ canSave }: { canSave: boolean }) {
+export function ReportBuilder({ canSave, showAi = true }: { canSave: boolean; /** False for a "Reports only" user: this page must not say or imply that AI exists in the product. */ showAi?: boolean }) {
   const toast = useToast();
   const [sources, setSources] = useState<SourceRow[]>([]);
   const [info, setInfo] = useState<(SourceInfo & { count: number }) | null>(null);
@@ -116,15 +116,20 @@ export function ReportBuilder({ canSave }: { canSave: boolean }) {
         setPeriodLabel(j.periodLabel ?? "");
       })
       .catch(() => setError("Could not load the list of reports."));
-    fetch("/api/ai-switch")
-      .then((r) => r.json())
-      .then((j) => setAi({ enabled: !!j.enabled, keyPresent: !!j.keyPresent }))
-      .catch(() => undefined);
+    // A "Reports only" user is blocked from this endpoint server-side, but the blocked response is
+    // still valid JSON – so skip the call rather than let a failed fetch masquerade as "AI is off"
+    // and print the AI banner anyway.
+    if (showAi) {
+      fetch("/api/ai-switch")
+        .then((r) => r.json())
+        .then((j) => setAi({ enabled: !!j.enabled, keyPresent: !!j.keyPresent }))
+        .catch(() => undefined);
+    }
     fetch("/api/custom-report/presets")
       .then((r) => r.json())
       .then((j) => setSaved(j.saved ?? []))
       .catch(() => undefined);
-  }, []);
+  }, [showAi]);
 
   const fields = useMemo(() => info?.fields ?? [], [info]);
   const byKey = useMemo(() => new Map(fields.map((f) => [f.key, f])), [fields]);
@@ -288,8 +293,9 @@ export function ReportBuilder({ canSave }: { canSave: boolean }) {
     </div>
   );
 
-  /** What this page does and does not spend. */
-  const aiBlock = ai && (
+  /** What this page does and does not spend. Never shown to a "Reports only" user – that role must
+   *  not see any mention that this product has an AI feature at all. */
+  const aiBlock = showAi && ai && (
     <div className="card flex flex-wrap items-center justify-between gap-3 p-3">
       <p className="min-w-0 flex-1 text-xs leading-relaxed text-muted">
         <b className="text-ink">These reports never use the AI allowance.</b> Every figure, filter and written summary on this page is worked out by the dashboard itself. The allowance is only

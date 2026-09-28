@@ -1,14 +1,18 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { jwtVerify } from "jose";
 import { getSessionSecret } from "@/lib/session-secret";
+import { reporterAllowed } from "@/lib/registers/types";
 
 /**
  * Runs before every page/API request: sends people who are not logged in to /login.
  * (Full user checks happen again server-side; this is the front door.)
+ *
+ * The "Reports only" allowlist used to be copied here as its own const, kept "in sync by hand"
+ * with REPORTER_PATHS in registers/types.ts. It drifted – this copy was missing /api/custom-report,
+ * so a reporter's own report builder was blocked at the edge before its request handler ever ran.
+ * Imported from the one definition instead, so there is only one list to keep right.
  */
 const PUBLIC_PATHS = ["/login", "/api/auth/login", "/api/health", "/robots.txt"];
-/** What a "Reports only" account may open (mirrors REPORTER_PATHS in registers/types). */
-const REPORTER_PATHS = ["/reports", "/api/export", "/api/report", "/api/auth", "/api/health", "/user-guide.pdf", "/account"];
 const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 export async function proxy(request: NextRequest) {
@@ -43,7 +47,7 @@ export async function proxy(request: NextRequest) {
     }
   }
   if (ok) {
-    if (role === "reporter" && !REPORTER_PATHS.some((p) => pathname === p || pathname.startsWith(p + "/"))) {
+    if (role === "reporter" && !reporterAllowed(pathname)) {
       if (pathname.startsWith("/api/")) return NextResponse.json({ error: "Your account can only download reports." }, { status: 403 });
       const url = request.nextUrl.clone();
       url.pathname = "/reports";
