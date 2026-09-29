@@ -1,4 +1,4 @@
-import { getDb } from "../db";
+import { getDb, getSetting } from "../db";
 import { getRegisterDef } from "../registers";
 import { listRecords } from "../registers/engine";
 import { computeCostReport, type CostReport } from "../cost-report/compute";
@@ -54,8 +54,8 @@ export function getReportData(programmeId: number, periodId: number): ReportData
   const stored = readsStoredCopy(db, period);
   const programme = db.prepare("SELECT id, code, name, client_id, location_id FROM programmes WHERE id = ?").get(programmeId) as { id: number; code: string; name: string; client_id: number | null; location_id: number | null } | undefined;
   if (!programme) throw new ValidationError("Programme not found.");
-  const assetId = db.prepare("SELECT value FROM app_settings WHERE key = 'current_asset_id'").get() as { value: string } | undefined;
-  const asset = assetId ? ((db.prepare("SELECT code, name FROM assets WHERE id = ? AND programme_id = ?").get(Number(assetId.value), programmeId) as { code: string; name: string } | undefined) ?? null) : null;
+  const assetId = getSetting(db, "current_asset_id");
+  const asset = assetId ? ((db.prepare("SELECT code, name FROM assets WHERE id = ? AND programme_id = ?").get(Number(assetId), programmeId) as { code: string; name: string } | undefined) ?? null) : null;
   const client = lookupOptions(db, "clients", true).find((c) => c.id === programme.client_id)?.label ?? "";
   const location = lookupOptions(db, "locations", true).find((c) => c.id === programme.location_id)?.label ?? "";
   const sources: ReportData["sources"] = {};

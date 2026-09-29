@@ -163,7 +163,7 @@ export function CostReportPage({ canEdit, isAdmin, initialTab }: { canEdit: bool
                 </option>
               ))}
             </select>
-            <span className="text-xs text-muted">{report.lines.length} line(s) in {report.categories.length} categor{report.categories.length === 1 ? "y" : "ies"} · double-click a row to edit · &quot;Remaining budget&quot; lines are the unallocated budget hold</span>
+            <span className="text-xs text-muted">{report.lines.length} line(s) in {report.categories.length} categor{report.categories.length === 1 ? "y" : "ies"} · {canEdit && "double-click a row to edit · "}&quot;Remaining budget&quot; lines are the unallocated budget hold</span>
           </div>
           <div className="card overflow-hidden">
             <div className="overflow-x-auto">

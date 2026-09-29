@@ -33,7 +33,7 @@ import {
 } from "lucide-react";
 import { modules } from "@/lib/modules";
 import { APP_SHORT, APP_SUBTITLE } from "@/lib/brand";
-import type { Role } from "@/lib/registers/types";
+import { REPORTER_MODULES, type Role } from "@/lib/registers/types";
 
 const ICONS: Record<string, LucideIcon> = {
   ClipboardList,
@@ -71,6 +71,33 @@ export function Sidebar({ open, onClose, role, project }: { open: boolean; onClo
     </Link>
   );
 
+  /** The numbered module menu (with its sub-pages). */
+  const moduleMenu = (list: typeof modules) => (
+    <>
+      <div className="px-3 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-wider text-blue-200/50">Modules</div>
+      {list.map((m) => (
+        <div key={m.slug}>
+          {link(m.slug === "executive-summary" ? "/" : `/modules/${m.slug}`, m.short, ICONS[m.icon] ?? ClipboardList, String(m.no))}
+          {m.slug === "executive-summary" && <div className="pl-4">{link("/modules/executive-summary/minutes", "Minutes of Meeting", FileText)}</div>}
+          {m.slug === "invoices-payments" && <div className="pl-4">{link("/modules/final-accounts", "Final Account Status", FileText)}</div>}
+          {m.slug === "monthly-report" && (
+            <div className="pl-4">
+              {link("/modules/monthly-report/library", "All reports (library)", Library)}
+              {link("/modules/monthly-report/new", "New month (manual entry)", CalendarPlus)}
+            </div>
+          )}
+          {m.slug === "cost-report" && (
+            <div className="pl-4">
+              {link("/modules/cost-report?tab=level1", "Level 1 – Executive", FileText)}
+              {link("/modules/cost-report?tab=level2", "Level 2 – Detailed", FileText)}
+              {link("/modules/cost-report?tab=setup", "Line setup", FileText)}
+            </div>
+          )}
+        </div>
+      ))}
+    </>
+  );
+
   return (
     <>
       {open && <div className="fixed inset-0 z-30 bg-navy-dark/60 lg:hidden" onClick={onClose} />}
@@ -94,7 +121,8 @@ export function Sidebar({ open, onClose, role, project }: { open: boolean; onClo
         <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 py-3">
           {role === "reporter" ? (
             <>
-              <div className="px-3 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-wider text-blue-200/50">Reports</div>
+              {moduleMenu(modules.filter((m) => REPORTER_MODULES.includes(m.slug)))}
+              <div className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider text-blue-200/50">Reports</div>
               {link("/reports", "Reports & downloads", FolderDown)}
               {link("/reports/builder", "Customise my reports", SlidersHorizontal)}
               <a href="/user-guide.pdf" target="_blank" rel="noopener" className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-blue-100/80 hover:bg-white/10 hover:text-white">
@@ -104,27 +132,7 @@ export function Sidebar({ open, onClose, role, project }: { open: boolean; onClo
             </>
           ) : (
           <>
-          <div className="px-3 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-wider text-blue-200/50">Modules</div>
-          {modules.map((m) => (
-            <div key={m.slug}>
-              {link(m.slug === "executive-summary" ? "/" : `/modules/${m.slug}`, m.short, ICONS[m.icon] ?? ClipboardList, String(m.no))}
-              {m.slug === "executive-summary" && <div className="pl-4">{link("/modules/executive-summary/minutes", "Minutes of Meeting", FileText)}</div>}
-              {m.slug === "invoices-payments" && <div className="pl-4">{link("/modules/final-accounts", "Final Account Status", FileText)}</div>}
-              {m.slug === "monthly-report" && (
-                <div className="pl-4">
-                  {link("/modules/monthly-report/library", "All reports (library)", Library)}
-                  {link("/modules/monthly-report/new", "New month (manual entry)", CalendarPlus)}
-                </div>
-              )}
-              {m.slug === "cost-report" && (
-                <div className="pl-4">
-                  {link("/modules/cost-report?tab=level1", "Level 1 – Executive", FileText)}
-                  {link("/modules/cost-report?tab=level2", "Level 2 – Detailed", FileText)}
-                  {link("/modules/cost-report?tab=setup", "Line setup", FileText)}
-                </div>
-              )}
-            </div>
-          ))}
+          {moduleMenu(modules)}
           <div className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider text-blue-200/50">Libraries</div>
           {link("/library/eot", "EOT Library (EARs)", BookOpen)}
           {link("/library/contract", "Contract Library", FileSignature)}

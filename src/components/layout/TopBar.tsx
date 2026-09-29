@@ -15,7 +15,6 @@ export function TopBar({ context, user, onMenu }: { context: AppContext; user: U
   const toast = useToast();
   const [pending, start] = useTransition();
   const [menuOpen, setMenuOpen] = useState(false);
-  const canChange = user.role !== "viewer" && user.role !== "reporter";
 
   async function change(patch: Record<string, number>) {
     const res = await fetch("/api/context", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
@@ -43,7 +42,7 @@ export function TopBar({ context, user, onMenu }: { context: AppContext; user: U
           <select
             className={selectCls}
             value={context.programme?.id ?? ""}
-            disabled={!canChange || pending}
+            disabled={pending}
             onChange={(e) => change({ programme_id: Number(e.target.value) })}
             title="Each project is stand-alone: its own registers, reports and library"
           >
@@ -57,7 +56,7 @@ export function TopBar({ context, user, onMenu }: { context: AppContext; user: U
         </Selector>
         {assetsForProgramme.length > 1 ? (
           <Selector label="Sub-asset">
-            <select className={selectCls} value={context.asset?.id ?? ""} disabled={!canChange || pending} onChange={(e) => change({ asset_id: Number(e.target.value) })} title="Default sub-asset for new rows and report covers; every sub-asset of the project is always shown">
+            <select className={selectCls} value={context.asset?.id ?? ""} disabled={pending} onChange={(e) => change({ asset_id: Number(e.target.value) })} title="Default sub-asset for new rows and report covers; every sub-asset of the project is always shown">
               {assetsForProgramme.map((a) => (
                 <option key={a.id} value={a.id}>
                   {a.code} · {a.name}
@@ -76,7 +75,7 @@ export function TopBar({ context, user, onMenu }: { context: AppContext; user: U
         )}
         <Selector label="Reporting period">
           <div className="flex items-center gap-1.5">
-            <select className={selectCls} value={context.period?.id ?? ""} disabled={!canChange || pending} onChange={(e) => change({ period_id: Number(e.target.value) })}>
+            <select className={selectCls} value={context.period?.id ?? ""} disabled={pending} onChange={(e) => change({ period_id: Number(e.target.value) })}>
               {context.periods.length === 0 && <option value="">No period yet</option>}
               {context.periods.map((p) => (
                 <option key={p.id} value={p.id}>
@@ -86,7 +85,7 @@ export function TopBar({ context, user, onMenu }: { context: AppContext; user: U
             </select>
             {context.period &&
               (context.period.status === "Locked" ? (
-                <span title="This month was issued. You are viewing the issued report; switch to an open period to edit." className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-emerald-500/20 px-2 py-0.5 text-[11px] text-emerald-200">
+                <span title={user.role === "viewer" || user.role === "reporter" ? "This month was issued. You are viewing the issued report." : "This month was issued. You are viewing the issued report; switch to an open period to edit."} className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-emerald-500/20 px-2 py-0.5 text-[11px] text-emerald-200">
                   <Lock size={11} /> Issued · viewing
                 </span>
               ) : (

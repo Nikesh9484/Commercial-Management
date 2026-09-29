@@ -7,6 +7,7 @@ import { allRegisters } from "./registers";
 import type { FieldDef, RegisterDef } from "./registers/types";
 import { nowIso, formatMonthYear } from "./format";
 import { tidyRegisters } from "./text/tidy-registers";
+import { personalSetting, personalRequest, isSharedContextKey } from "./personal-context";
 
 /**
  * Single SQLite connection for the whole app (kept on globalThis so hot-reload in
@@ -215,11 +216,16 @@ function initSchema(db: Database.Database) {
 /* ------------------------------------------------------------------ */
 
 export function getSetting(db: Database.Database, key: string): string | null {
+  // a read-only user's own project / period choice stands in for the shared one (see personal-context.ts)
+  const personal = personalSetting(key);
+  if (personal !== null) return personal;
   const row = db.prepare("SELECT value FROM app_settings WHERE key = ?").get(key) as { value: string } | undefined;
   return row?.value ?? null;
 }
 
 export function setSetting(db: Database.Database, key: string, value: string | null) {
+  // a read-only user's request never moves the project / period everybody else is looking at
+  if (isSharedContextKey(key) && personalRequest()) return;
   db.prepare("INSERT INTO app_settings(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
 }
 

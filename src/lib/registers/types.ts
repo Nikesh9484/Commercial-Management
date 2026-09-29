@@ -129,13 +129,69 @@ export const ROLE_LABELS: Record<Role, string> = {
   editor: "Editor",
   contributor: "Data entry (add only)",
   viewer: "Viewer",
-  reporter: "Reports only (download)",
+  reporter: "View & reports only",
 };
 
-/** Paths a "Reports only" user may use: the reports page, the report downloads, login / logout and the guide. */
-export const REPORTER_PATHS = ["/reports", "/api/export", "/api/report", "/api/custom-report", "/api/auth", "/api/health", "/user-guide.pdf", "/login", "/account"];
-export function reporterAllowed(pathname: string): boolean {
-  return REPORTER_PATHS.some((p) => pathname === p || pathname.startsWith(p + "/") || pathname.startsWith(p + "?"));
+/**
+ * What a "Reports only" user may open. They see every module (1–11) and every report, strictly read
+ * only, and nothing that belongs to the automation side of the product (automation, libraries,
+ * imports, settings, the assistant). Checked at the front door (proxy.ts), again in every API
+ * handler (withUser) and in the page layout, so one list decides all three.
+ *
+ * Reading (GET) is open on the pages and APIs below. Changing anything is refused, with three
+ * exceptions that change nothing shared: logging in / out and their own password, building a
+ * report to download, and choosing their own project / period in the top bar (kept in their
+ * browser, see personal-context.ts).
+ */
+export const REPORTER_MODULES = [
+  "project-setup",
+  "cost-report",
+  "change-management",
+  "claims-disputes",
+  "early-warnings",
+  "provisional-sums",
+  "bonds-insurance",
+  "invoices-payments",
+  "final-accounts",
+  "cash-flow",
+  "budget-transfers",
+  "executive-summary",
+];
+export const REPORTER_PATHS = [
+  "/",
+  ...REPORTER_MODULES.map((m) => `/modules/${m}`),
+  "/reports",
+  "/api/export",
+  "/api/report",
+  "/api/email-report",
+  "/api/custom-report",
+  "/api/registers",
+  "/api/cost-report",
+  "/api/cashflow",
+  "/api/context",
+  "/api/auth",
+  "/api/health",
+  "/user-guide.pdf",
+  "/login",
+  "/account",
+];
+/** Changes a "Reports only" user may make – none of them touches the shared data. */
+const REPORTER_WRITES: { method: string; path: string }[] = [
+  { method: "POST", path: "/api/auth" },
+  { method: "POST", path: "/api/custom-report" },
+  { method: "PUT", path: "/api/context" },
+];
+const under = (pathname: string, p: string) => pathname === p || pathname.startsWith(p + "/") || pathname.startsWith(p + "?");
+
+export function reporterAllowed(pathname: string, method = "GET"): boolean {
+  const m = method.toUpperCase();
+  if (m === "GET" || m === "HEAD") {
+    // "/" is the Executive Summary itself, not a prefix for everything
+    return REPORTER_PATHS.some((p) => (p === "/" ? pathname === "/" : under(pathname, p)));
+  }
+  // saved report presets stay with the people who keep the data
+  if (pathname.startsWith("/api/custom-report/presets")) return false;
+  return REPORTER_WRITES.some((w) => w.method === m && under(pathname, w.path));
 }
 
 export function canEditRegister(def: RegisterDef, role: Role): boolean {
@@ -144,7 +200,7 @@ export function canEditRegister(def: RegisterDef, role: Role): boolean {
 }
 
 export function canViewRegister(def: RegisterDef, role: Role): boolean {
-  const roles = def.viewRoles ?? ["admin", "editor", "contributor", "viewer"];
+  const roles = def.viewRoles ?? ["admin", "editor", "contributor", "viewer", "reporter"];
   return roles.includes(role);
 }
 

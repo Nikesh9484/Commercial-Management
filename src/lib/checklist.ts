@@ -37,7 +37,7 @@ export function getChecklist(periodId: number): ChecklistItem[] {
 }
 
 export function setChecklistItem(id: number, input: { done?: boolean; comment?: string | null }, user: UserInfo): ChecklistItem {
-  if (user.role === "viewer") throw new AuthError("Viewers cannot change the report checklist.");
+  if (user.role === "viewer" || user.role === "reporter") throw new AuthError("Viewers cannot change the report checklist.");
   const db = getDb();
   const row = db.prepare("SELECT * FROM report_checklist WHERE id = ?").get(id) as Raw | undefined;
   if (!row) throw new ValidationError("Checklist item not found.");

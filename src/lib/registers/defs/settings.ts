@@ -198,7 +198,7 @@ export const users: RegisterDef = {
   fields: [
     { key: "name", label: "Full name", type: "text", required: true },
     { key: "email", label: "Email (login)", type: "text", required: true, unique: true },
-    { key: "role", label: "Role", type: "select", required: true, options: ["admin", "editor", "contributor", "viewer", "reporter"], chip: true, defaultValue: "editor", help: "Admin: everything. Editor: add, edit and delete. Contributor (data entry): add new rows, run reports and emails, but not change existing rows. Viewer: read only. Reporter: can only open the Reports page and download the PDF / Excel reports." },
+    { key: "role", label: "Role", type: "select", required: true, options: ["admin", "editor", "contributor", "viewer", "reporter"], chip: true, defaultValue: "editor", help: "Admin: everything. Editor: add, edit and delete. Contributor (data entry): add new rows, run reports and emails, but not change existing rows. Viewer: read only. View & reports only: sees every module (1–11) and every report, strictly read only, and picks its own project / period in the top bar without moving anyone else's." },
     { key: "active", label: "Active", type: "boolean", defaultValue: true, help: "Inactive users cannot log in." },
     { key: "must_change_password", label: "Must change password at next login", type: "boolean", defaultValue: true, help: "Tick when you set a starting password for someone: they are asked to choose their own password the next time they log in." },
     { key: "password", label: "Password", type: "password", help: "At least 8 characters. Leave blank when editing to keep the current password." },

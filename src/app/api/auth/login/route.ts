@@ -3,6 +3,7 @@ import { authenticate, createSessionToken, SESSION_COOKIE, sessionCookieOptions 
 import { getDb } from "@/lib/db";
 import { logAudit } from "@/lib/audit";
 import { readJson } from "@/lib/api";
+import { VIEW_COOKIE } from "@/lib/personal-context";
 import { clientIp, loginBlockedFor, recordLoginFailure, recordLoginSuccess } from "@/lib/rate-limit";
 
 export async function POST(req: Request) {
@@ -26,6 +27,7 @@ export async function POST(req: Request) {
     const token = await createSessionToken(user);
     const res = NextResponse.json({ user, mustChangePassword: !!user.mustChangePassword });
     res.cookies.set(SESSION_COOKIE, token, sessionCookieOptions());
+    res.cookies.set(VIEW_COOKIE, "", { path: "/", maxAge: 0 }); // a fresh login starts from the shared project / period
     logAudit(getDb(), { registerKey: "auth", recordId: user.id, action: "login", user, summary: `${user.name} logged in from ${ip}` });
     return res;
   } catch (e) {

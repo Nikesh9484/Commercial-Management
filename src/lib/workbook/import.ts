@@ -181,7 +181,7 @@ const yieldNow = () => new Promise<void>((resolve) => setImmediate(resolve));
 export type ImportProgress = (phase: string, done?: number, total?: number) => void;
 
 export async function importWorkbook(req: ImportRequest, user: UserInfo, progress: ImportProgress = () => {}): Promise<ImportResult> {
-  if (user.role === "viewer") throw new ValidationError("Viewers cannot import.");
+  if (user.role === "viewer" || user.role === "reporter") throw new ValidationError("Viewers cannot import.");
   const db = getDb();
   const debug = process.env.IMPORT_DEBUG ? (phase: string) => console.log(`[import] ${phase}: ${memoryNote()}`) : () => {};
   progress("Reading the workbook");

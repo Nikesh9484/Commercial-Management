@@ -5,12 +5,13 @@ import { getAppContext } from "@/lib/context";
 import { listPeriods } from "@/lib/snapshots";
 import { REPORT_SCHEDULES } from "@/lib/report/schedules";
 import { formatDate } from "@/lib/format";
+import { isEditorRole } from "@/lib/registers/types";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Chip } from "@/components/ui/Chip";
 
 export const metadata = { title: "Reports & downloads" };
 
-/** Every report the dashboard produces, for one reporting period, as PDF and Excel. The only page a "Reports only" user sees. */
+/** Every report the dashboard produces, for one reporting period, as PDF and Excel. */
 export default async function ReportsPage({ searchParams }: { searchParams: Promise<{ period?: string }> }) {
   const user = (await getCurrentUser())!;
   const ctx = getAppContext();
@@ -24,7 +25,8 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
       heading: "Summaries",
       items: [
         item("dashboard", "Commercial Dashboard (Excel)", "The whole dashboard in one workbook: headline tiles, native Excel charts and one sheet per module with live formulas over the registers"),
-        item("excel-app", "Commercial Dashboard – Excel edition (.xlsm)", "Work entirely in Excel: sign in with the same users and roles, import the monthly report and stand-alone workbooks, lock periods, export PDF – loaded with today's data"),
+        // the Excel edition is a working copy of the whole app (imports, locking, users): for the people who keep the data
+        ...(isEditorRole(user.role) ? [item("excel-app", "Commercial Dashboard – Excel edition (.xlsm)", "Work entirely in Excel: sign in with the same users and roles, import the monthly report and stand-alone workbooks, lock periods, export PDF – loaded with today's data")] : []),
         item("deck", "Cost Report Presentation", "Short animated deck: executive dashboard, Level 1, packages, movement, changes, early warnings, claims, payments, cash flow, bonds, provisional sums, key issues – editable PowerPoint or PDF"),
         item("exec", "Executive Summary", "Headline figures, open items, payment tracker, key issues and actions"),
         item("movement", "Movement since the previous report", "Cost report movement, key period movements, status counts, register changes"),

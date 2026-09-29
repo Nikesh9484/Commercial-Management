@@ -18,7 +18,8 @@ export const GET = withUser<Ctx>(async (user, { params }) => {
     lookups: lookupsFor(def),
     canEdit: canEditRegister(def, user.role) && !viewed,
     canCreate: canCreateRegister(def, user.role) && !viewed,
-    readOnlyReason: viewed ? `${viewed.reason} Switch the top bar to the latest open report to add or change rows.` : null,
+    // the "switch to add or change rows" hint only for people who could add or change rows
+    readOnlyReason: viewed ? (canCreateRegister(def, user.role) ? `${viewed.reason} Switch the top bar to the latest open report to add or change rows.` : viewed.reason) : null,
     scopeDefaults: scopeDefaults(def),
   });
 });

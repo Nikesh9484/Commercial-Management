@@ -47,12 +47,18 @@ export async function proxy(request: NextRequest) {
     }
   }
   if (ok) {
-    if (role === "reporter" && !reporterAllowed(pathname)) {
-      if (pathname.startsWith("/api/")) return NextResponse.json({ error: "Your account can only download reports." }, { status: 403 });
+    if (role === "reporter" && !reporterAllowed(pathname, request.method)) {
+      if (pathname.startsWith("/api/")) return NextResponse.json({ error: "Your account can view and download, but not change anything." }, { status: 403 });
       const url = request.nextUrl.clone();
       url.pathname = "/reports";
       url.search = "";
       return NextResponse.redirect(url);
+    }
+    // the guide a view-only account opens is its own edition, covering only what that account can see
+    if (role === "reporter" && pathname === "/user-guide.pdf") {
+      const url = request.nextUrl.clone();
+      url.pathname = "/user-guide-view.pdf";
+      return NextResponse.rewrite(url);
     }
     const headers = new Headers(request.headers);
     headers.set("x-pathname", pathname);

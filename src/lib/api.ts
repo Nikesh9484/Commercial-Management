@@ -8,7 +8,7 @@ export function withUser<T>(handler: (user: UserInfo, ctx: T) => Promise<Respons
   return async (_req: Request, ctx: T) => {
     try {
       const user = await requireUser();
-      if (user.role === "reporter" && !reporterAllowed(new URL(_req.url).pathname)) throw new AuthError("Your account can only download reports.");
+      if (user.role === "reporter" && !reporterAllowed(new URL(_req.url).pathname, _req.method)) throw new AuthError("Your account can view and download, but not change anything.");
       return await handler(user, ctx);
     } catch (e) {
       return errorResponse(e);

@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import ExcelJS from "exceljs";
 import JSZip from "jszip";
 import { APP_NAME } from "../brand";
-import { getDb } from "../db";
+import { getDb, getSetting } from "../db";
 import { getRegisterDef } from "../registers";
 import { listRecords, lookupOptions } from "../registers/engine";
 import { listPeriods, latestPeriod } from "../snapshots";
@@ -217,8 +217,8 @@ interface Seed {
 function loadSeed(programmeId: number): Seed {
   const db = getDb();
   const programme = db.prepare("SELECT id, code, name, client_id, location_id FROM programmes WHERE id = ?").get(programmeId) as { id: number; code: string; name: string; client_id: number | null; location_id: number | null };
-  const assetId = db.prepare("SELECT value FROM app_settings WHERE key = 'current_asset_id'").get() as { value: string } | undefined;
-  const asset = (assetId ? (db.prepare("SELECT code, name FROM assets WHERE id = ? AND programme_id = ?").get(Number(assetId.value), programmeId) as { code: string; name: string } | undefined) : undefined) ?? (db.prepare("SELECT code, name FROM assets WHERE programme_id = ? ORDER BY id LIMIT 1").get(programmeId) as { code: string; name: string } | undefined) ?? { code: "", name: "" };
+  const assetId = getSetting(db, "current_asset_id");
+  const asset = (assetId ? (db.prepare("SELECT code, name FROM assets WHERE id = ? AND programme_id = ?").get(Number(assetId), programmeId) as { code: string; name: string } | undefined) : undefined) ?? (db.prepare("SELECT code, name FROM assets WHERE programme_id = ? ORDER BY id LIMIT 1").get(programmeId) as { code: string; name: string } | undefined) ?? { code: "", name: "" };
   const client = lookupOptions(db, "clients", true).find((c) => c.id === programme.client_id)?.label ?? "";
   const location = lookupOptions(db, "locations", true).find((c) => c.id === programme.location_id)?.label ?? "";
   const periods = listPeriods().slice().sort((a, b) => a.report_no - b.report_no) as unknown as RecordRow[];

@@ -3,6 +3,7 @@ import { getCurrentPeriod, getPreviousPeriod, latestPeriod, type PeriodRow } fro
 import { logAudit } from "./audit";
 import type { UserInfo } from "./registers/types";
 import { AuthError } from "./auth";
+import { PERSONAL_ROLES, type PersonalChoice } from "./personal-context";
 
 export interface Programme {
   id: number;
@@ -32,7 +33,8 @@ export interface AppContext {
   periods: { id: number; label: string; status: string; report_no: number }[];
 }
 
-/** Programme / Asset / Reporting Period shown in the top bar. Shared by all users. */
+/** Programme / Asset / Reporting Period shown in the top bar. Shared by the people who keep the data;
+ *  a read-only account sees its own choice instead (personal-context.ts). */
 export function getAppContext(): AppContext {
   const db = getDb();
   const programmes = db.prepare("SELECT id, code, name FROM programmes ORDER BY code").all() as Programme[];
@@ -52,8 +54,41 @@ export function getAppContext(): AppContext {
   return { programme, asset, period, previousPeriod: getPreviousPeriod(period), programmes, assets, periods };
 }
 
+/**
+ * A read-only account's own choice (Viewer / Reports only): worked out the same way as the shared
+ * one below – a new project brings its first sub-asset and its latest report – but returned to be
+ * kept in that user's browser instead of written to the shared settings.
+ */
+export function personalContextChoice(input: { programme_id?: number; asset_id?: number; period_id?: number }): PersonalChoice {
+  const db = getDb();
+  const now = getAppContext();
+  let programmeId = now.programme?.id;
+  let assetId = now.asset?.id;
+  let periodId = now.period?.id;
+  if (input.asset_id) {
+    const a = db.prepare("SELECT id, programme_id FROM assets WHERE id = ?").get(input.asset_id) as Asset | undefined;
+    if (!a) throw new AuthError("That sub-asset no longer exists.", 400);
+    assetId = a.id;
+    programmeId = a.programme_id;
+  } else if (input.programme_id) {
+    if (!db.prepare("SELECT 1 FROM programmes WHERE id = ?").get(input.programme_id)) throw new AuthError("That project no longer exists.", 400);
+    programmeId = input.programme_id;
+    if (programmeId !== now.programme?.id) {
+      assetId = (db.prepare("SELECT id FROM assets WHERE programme_id = ? ORDER BY code LIMIT 1").get(programmeId) as { id: number } | undefined)?.id;
+    }
+  }
+  if (programmeId !== now.programme?.id) periodId = programmeId ? latestPeriod(db, programmeId)?.id : undefined;
+  if (input.period_id) {
+    const p = db.prepare("SELECT id, programme_id FROM reporting_periods WHERE id = ?").get(input.period_id) as { id: number; programme_id: number } | undefined;
+    if (!p) throw new AuthError("That report no longer exists.", 400);
+    if (p.programme_id !== programmeId) throw new AuthError("That report belongs to another project. Switch the project in the top bar first.", 400);
+    periodId = p.id;
+  }
+  return { p: programmeId, a: assetId, r: periodId };
+}
+
 export function setAppContext(input: { programme_id?: number; asset_id?: number; period_id?: number }, user: UserInfo) {
-  if (user.role === "viewer" || user.role === "reporter") throw new AuthError("Your role cannot change the current programme / asset / period.");
+  if (PERSONAL_ROLES.has(user.role)) throw new AuthError("Your role keeps its own project / period choice.");
   const db = getDb();
   const before = getAppContext();
   if (input.asset_id) {

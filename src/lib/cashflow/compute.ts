@@ -117,7 +117,7 @@ function monthsBetween(a: string, b: string): number {
 }
 
 export function setRange(db: Database.Database, programmeId: number, start: string, count: number, user: UserInfo) {
-  if (user.role === "viewer") throw new AuthError("Viewers cannot change the cash flow range.");
+  if (user.role === "viewer" || user.role === "reporter") throw new AuthError("Viewers cannot change the cash flow range.");
   if (!/^\d{4}-\d{2}$/.test(start)) throw new ValidationError("Start month must look like 2026-09.");
   if (!Number.isInteger(count) || count < 1 || count > 120) throw new ValidationError("Number of months must be between 1 and 120.");
   setSetting(db, `cashflow_start_${programmeId}`, start);
@@ -242,7 +242,7 @@ export function getAccruals(db: Database.Database, programmeId: number): Accrual
 }
 
 export function saveCell(db: Database.Database, programmeId: number, input: { contract_id: number; month: string; forecast?: number | null; actual_override?: number | null }, user: UserInfo) {
-  if (user.role === "viewer") throw new AuthError("Viewers cannot change the cash flow.");
+  if (user.role === "viewer" || user.role === "reporter") throw new AuthError("Viewers cannot change the cash flow.");
   if (!/^\d{4}-\d{2}$/.test(input.month)) throw new ValidationError("Month must look like 2026-09.");
   const contract = db.prepare("SELECT id, title FROM contracts WHERE id = ? AND programme_id = ?").get(input.contract_id, programmeId) as { id: number; title: string } | undefined;
   if (!contract) throw new ValidationError("Contract not found in this programme.");
