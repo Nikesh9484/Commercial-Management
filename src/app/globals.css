@@ -136,6 +136,11 @@ body {
   color: #fff;
   border-color: #9f1d1d;
 }
+.btn-summary {
+  background: linear-gradient(135deg, #7c3aed, #2f80ed);
+  color: #fff;
+  border-color: #5b21b6;
+}
 .btn-excel {
   background: linear-gradient(180deg, #34c06b 0%, #1e7f47 100%);
   color: #fff;

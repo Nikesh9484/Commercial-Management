@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { AlertTriangle, FileDown, FileSpreadsheet, BookOpen, Lock, Unlock, Presentation, SlidersHorizontal } from "lucide-react";
+import { AlertTriangle, FileDown, FileSpreadsheet, BookOpen, Lock, Unlock, Presentation, SlidersHorizontal, Sparkles } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth";
 import { getAppContext } from "@/lib/context";
 import { listPeriods } from "@/lib/snapshots";
@@ -24,6 +24,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
     {
       heading: "Summaries",
       items: [
+        item("period_summary", "Period Summary – Key Period Movements", "The month in one click, as sent to the directors: projected cost to complete, budget position, forecast movement analysis, change status and the items behind every movement, with a written narrative – on screen, PDF, Excel or email draft"),
         item("dashboard", "Commercial Dashboard (Excel)", "The whole dashboard in one workbook: headline tiles, native Excel charts and one sheet per module with live formulas over the registers"),
         // the Excel edition is a working copy of the whole app (imports, locking, users): for the people who keep the data
         ...(isEditorRole(user.role) ? [item("excel-app", "Commercial Dashboard – Excel edition (.xlsm)", "Work entirely in Excel: sign in with the same users and roles, import the monthly report and stand-alone workbooks, lock periods, export PDF – loaded with today's data")] : []),
@@ -120,6 +121,18 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
                           </a>
                           <a className="btn btn-sm btn-secondary" href={`/api/export?section=excel-app-modules`} title="The macro source files, only needed if Excel refuses the macros in the .xlsm">
                             <FileDown size={14} /> VBA modules
+                          </a>
+                        </>
+                      ) : it.section === "period_summary" ? (
+                        <>
+                          <Link className="btn btn-sm btn-summary" href="/reports/period-summary">
+                            <Sparkles size={14} /> Open
+                          </Link>
+                          <a className="btn btn-sm btn-pdf" href={`/api/export?section=period_summary&format=pdf${pid}`}>
+                            <FileDown size={14} /> PDF
+                          </a>
+                          <a className="btn btn-sm btn-excel" href={`/api/export?section=period_summary&format=xlsx${pid}`}>
+                            <FileSpreadsheet size={14} /> Excel
                           </a>
                         </>
                       ) : it.section === "dashboard" ? (

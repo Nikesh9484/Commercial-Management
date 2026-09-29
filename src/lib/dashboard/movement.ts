@@ -55,6 +55,8 @@ export interface KeyMoveItem {
   now: number;
   delta: number;
   note: string;
+  /** the contractor / consultant the item belongs to ("" when not set) */
+  party: string;
 }
 
 /** Everything that moved one cost-report column (H, J, K, L or M) since the previous report – like the Excel "Key Period Movements" block. */
@@ -171,7 +173,7 @@ function keyMovements(
   before: { changes: RecordRow[]; ews: RecordRow[]; claims: RecordRow[] },
   kpis: Movement["kpis"],
 ): KeyMovement[] {
-  type Contrib = { col: KeyMovement["col"]; amount: number; title: string; state: string; label: string };
+  type Contrib = { col: KeyMovement["col"]; amount: number; title: string; state: string; label: string; party: string };
   // Map key = type + reference (so a change and a claim with the same number never collide); label = what is shown.
   const ref = (type: string, v: unknown, id: unknown) => {
     const raw = String(v ?? "").trim() || String(id);
@@ -180,43 +182,45 @@ function keyMovements(
   const collect = (rows: { changes: RecordRow[]; ews: RecordRow[]; claims: RecordRow[] }) => {
     const out = new Map<string, Contrib>();
     const state = (r: RecordRow) => String(r.overall_status_id__label ?? r.status ?? "");
+    const party = (r: RecordRow) => String(r.contractor_id__label ?? "").trim();
     for (const c of rows.changes) {
       const { k, label } = ref("CH", c.item_no, c.id);
       const v = changeContribution(c);
-      out.set(k, { label, col: v?.col ?? "K", amount: v?.amount ?? 0, title: String(c.description ?? ""), state: v ? `${v.col === "H" ? "DVO" : v.col === "J" ? "PVO/VO" : "RFC"} · ${state(c)}` : state(c) || "not in cost report" });
+      out.set(k, { label, party: party(c), col: v?.col ?? "K", amount: v?.amount ?? 0, title: String(c.description ?? ""), state: v ? `${v.col === "H" ? "DVO" : v.col === "J" ? "PVO/VO" : "RFC"} · ${state(c)}` : state(c) || "not in cost report" });
     }
     for (const e of rows.ews) {
       const { k, label } = ref("EW", e.ew_no, e.id);
       const live = e.status === "Open" && !!e.cost_line_id;
-      out.set(k, { label, col: "L", amount: live ? num(e.cost_impact) : 0, title: String(e.description ?? ""), state: String(e.status ?? "") });
+      out.set(k, { label, party: party(e), col: "L", amount: live ? num(e.cost_impact) : 0, title: String(e.description ?? ""), state: String(e.status ?? "") });
     }
     for (const cl of rows.claims) {
       const { k, label } = ref("CL", cl.claim_no, cl.id);
-      out.set(k, { label, col: "M", amount: cl.cost_line_id ? claimCostReportAmount(cl) : 0, title: String(cl.description ?? ""), state: String(cl.status ?? "") });
+      out.set(k, { label, party: party(cl), col: "M", amount: cl.cost_line_id ? claimCostReportAmount(cl) : 0, title: String(cl.description ?? ""), state: String(cl.status ?? "") });
     }
     return out;
   };
   const nowMap = collect(now);
   const prevMap = collect(before);
   const items: Record<KeyMovement["col"], KeyMoveItem[]> = { H: [], J: [], K: [], L: [], M: [] };
-  const push = (col: KeyMovement["col"], key: string, title: string, prev: number, cur: number, note: string) => {
+  const push = (col: KeyMovement["col"], key: string, title: string, prev: number, cur: number, note: string, party: string) => {
     const delta = r2(cur - prev);
     if (Math.abs(delta) < 0.005) return;
-    items[col].push({ key, title: title.slice(0, 100), prev: r2(prev), now: r2(cur), delta, note });
+    items[col].push({ key, title: title.slice(0, 100), prev: r2(prev), now: r2(cur), delta, note, party });
   };
   const keys = new Set([...nowMap.keys(), ...prevMap.keys()]);
   for (const key of keys) {
     const a = prevMap.get(key);
     const b = nowMap.get(key);
     const label = (b ?? a)!.label;
+    const party = (b ?? a)!.party;
     if (a && b) {
-      if (a.col === b.col) push(b.col, label, b.title, a.amount, b.amount, a.state === b.state ? "amount revised" : `${a.state} -> ${b.state}`);
+      if (a.col === b.col) push(b.col, label, b.title, a.amount, b.amount, a.state === b.state ? "amount revised" : `${a.state} -> ${b.state}`, party);
       else {
-        push(a.col, label, a.title, a.amount, 0, `moved to ${b.col === "H" ? "DVO" : b.col === "J" ? "PVO/VO" : b.col === "K" ? "RFC" : COL_LABELS[b.col]}`);
-        push(b.col, label, b.title, 0, b.amount, `from ${a.col === "H" ? "DVO" : a.col === "J" ? "PVO/VO" : a.col === "K" ? "RFC" : COL_LABELS[a.col]} · ${b.state}`);
+        push(a.col, label, a.title, a.amount, 0, `moved to ${b.col === "H" ? "DVO" : b.col === "J" ? "PVO/VO" : b.col === "K" ? "RFC" : COL_LABELS[b.col]}`, party);
+        push(b.col, label, b.title, 0, b.amount, `from ${a.col === "H" ? "DVO" : a.col === "J" ? "PVO/VO" : a.col === "K" ? "RFC" : COL_LABELS[a.col]} · ${b.state}`, party);
       }
-    } else if (b) push(b.col, label, b.title, 0, b.amount, `new · ${b.state}`);
-    else if (a) push(a.col, label, a.title, a.amount, 0, "removed from the register");
+    } else if (b) push(b.col, label, b.title, 0, b.amount, `new · ${b.state}`, party);
+    else if (a) push(a.col, label, a.title, a.amount, 0, "removed from the register", party);
   }
   return (["H", "J", "K", "L", "M"] as const).map((col) => {
     const list = items[col].sort((x, y) => Math.abs(y.delta) - Math.abs(x.delta));

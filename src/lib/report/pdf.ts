@@ -16,6 +16,7 @@ import { NO_BONDS_FILTER, bondsFilterLabel, type BondsFilter } from "../bonds/fi
 import { groupByParty, plural, type PartyGroup } from "./report-utils";
 import { buildTransfersReport } from "./transfers-report";
 import { buildFaReport } from "./fa-report";
+import { buildPeriodSummary, sar, sarMove } from "./period-summary";
 
 type Doc = PDFKit.PDFDocument;
 
@@ -67,6 +68,7 @@ export function resolveSections(keys: string[], opts: SectionOptions = {}): { ti
       out.push({ title: `Bonds & Insurance Status Report${tag ? ` – ${tag}` : ""}`, run: (ctx) => bondsStatusReport(ctx, f) });
     }
     else if (k === "transfers_report") out.push({ title: "Budget Transfers Status Report", run: transfersStatusReport });
+    else if (k === "period_summary") out.push({ title: "Period Summary – Key Period Movements", run: periodSummaryReport });
     else if (k === "level1") out.push({ title: "Schedule A – Cost Report Level 1 (Executive)", run: costLevel1 });
     else if (k === "level2") out.push({ title: "Schedule B – Cost Report Level 2 (Detailed)", run: costLevel2 });
     else if (k === "cashflow") out.push({ title: "Schedule I – Cash Flow", run: cashflow });
@@ -1220,6 +1222,157 @@ function changesStatusReport(ctx: Ctx) {
 
   doc.moveDown(0.5);
   doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(`Prepared from the Change Management Tracker of ${APP_NAME} as at ${formatDate(r.asOf)}${data.locked ? "" : " (draft – period not locked)"}. Value is the cost-report amount at the change's current live stage.`, { width });
+}
+
+/* ------------------------------------------------------------------ */
+/* Period Summary – the month's story as the directors get it by email  */
+
+/** Horizontal signed bars: increases to the right in red, reductions to the left in green. */
+function signedBars(ctx: Ctx, rows: { short: string; value: number }[]) {
+  const { doc } = ctx;
+  if (!rows.length) return;
+  const rowH = 16;
+  const h = rows.length * rowH + 10;
+  ensureSpace(ctx, h + 20);
+  const labelW = 120;
+  const x0 = PAGE.margin + labelW;
+  const w = PAGE.width - PAGE.margin * 2 - labelW - 90;
+  const max = Math.max(1, ...rows.map((r) => Math.abs(r.value)));
+  const mid = x0 + w / 2;
+  const top = doc.y + 4;
+  doc.moveTo(mid, top).lineTo(mid, top + rows.length * rowH).strokeColor(LINE).lineWidth(0.7).stroke();
+  rows.forEach((r, i) => {
+    const y = top + i * rowH;
+    const len = (Math.abs(r.value) / max) * (w / 2 - 4);
+    doc.fillColor("#172033").font("Helvetica").fontSize(7.5).text(r.short, PAGE.margin, y + 3, { width: labelW - 8, ellipsis: true, lineBreak: false });
+    if (Math.abs(r.value) >= 0.5) {
+      const adverse = r.value > 0;
+      doc.rect(adverse ? mid : mid - len, y + 3, len, rowH - 6).fill(adverse ? "#dc2626" : "#059669");
+    }
+    doc.fillColor(r.value > 0.5 ? "#b91c1c" : r.value < -0.5 ? "#047857" : MUTED).font("Helvetica-Bold").fontSize(7.5).text(sarMove(r.value), x0 + w + 6, y + 3, { width: 84, align: "right", lineBreak: false });
+  });
+  doc.y = top + rows.length * rowH + 8;
+  doc.x = PAGE.margin;
+}
+
+function periodSummaryReport(ctx: Ctx) {
+  const { doc, data } = ctx;
+  const ps = buildPeriodSummary(data, { name: "" });
+  const width = PAGE.width - PAGE.margin * 2;
+  const money = (v: unknown) => (v === null || v === undefined ? "" : formatMoney(v as number));
+  const move = (v: unknown) => (v === null || v === undefined ? "" : sarMove(v as number));
+  const adverse = (n: number | null) => (n === null ? null : n > 0.5 ? "#b91c1c" : n < -0.5 ? "#047857" : null);
+
+  // headline cards
+  const kpis: [string, string, string][] = [
+    [`Previous report${ps.previous ? ` – ${ps.previous.short}` : ""}`, ps.projected.prev === null ? "–" : sar(ps.projected.prev), "projected cost to complete (anticipated final account)"],
+    [`Updated position – ${ps.period.short}`, sar(ps.projected.now), `cut-off ${ps.period.cutOff}${ps.locked ? "" : " · draft"}`],
+    ["Net movement", sarMove(ps.projected.delta), ps.projected.deltaPct === null ? "no issued previous report" : `${ps.projected.deltaPct > 0 ? "+" : ""}${ps.projected.deltaPct.toFixed(2)}% on the previous forecast`],
+    [`Variance to approved budget – ${ps.budget.verdict}`, sarMove(ps.budget.variance), `${ps.budget.variancePct > 0 ? "+" : ""}${ps.budget.variancePct.toFixed(2)}% of ${sar(ps.budget.approved)}`],
+  ];
+  kpiCards(ctx, kpis, (k) => (k[0].startsWith("Net movement") ? adverse(ps.projected.delta) : k[0].startsWith("Variance") ? adverse(ps.budget.variance) : null));
+
+  subheading(ctx, "Projected cost to complete");
+  doc.fillColor("#172033").font("Helvetica").fontSize(9.5).text(ps.projected.narrative, { width, lineGap: 1.5 });
+  doc.moveDown(0.4);
+
+  subheading(ctx, "Budget position");
+  table(
+    ctx,
+    [
+      { key: "label", label: "", width: 3 },
+      { key: "value", label: "SAR", width: 1.4, align: "right", format: (v, r) => (r.signed ? sarMove(v as number) : money(v)) },
+    ],
+    [
+      { label: "Current forecast (anticipated final account)", value: ps.budget.forecast },
+      { label: "Approved budget (latest, incl. transfers)", value: ps.budget.approved },
+      { label: `Variance (${ps.budget.verdict})`, value: ps.budget.variance, signed: true, __bold: true },
+    ],
+    { rowStyle: (r) => (r.__bold ? { bold: true, bg: ZEBRA, color: adverse(ps.budget.variance) ?? undefined } : undefined) },
+  );
+  doc.fillColor(MUTED).font("Helvetica-Oblique").fontSize(8).text(`Note: ${ps.budget.note}`, { width });
+  doc.moveDown(0.5);
+
+  if (ps.hasComparison) {
+    subheading(ctx, "Forecast movement analysis", `What moved the anticipated final account since ${ps.previous!.label}.`);
+    table(
+      ctx,
+      [
+        { key: "label", label: "Movement", width: 3 },
+        { key: "value", label: "SAR", width: 1.4, align: "right", format: move },
+        { key: "note", label: "", width: 2.2 },
+      ],
+      [...ps.movement.rows, { label: "NET FORECAST MOVEMENT", value: ps.movement.net, __bold: true, note: "" }] as unknown as Record<string, unknown>[],
+      { rowStyle: (r) => (r.__bold ? { bold: true, bg: ZEBRA, color: adverse(ps.movement.net) ?? undefined } : undefined) },
+    );
+    doc.moveDown(0.3);
+    signedBars(ctx, ps.movement.rows);
+  }
+
+  if (ps.status.length) {
+    subheading(ctx, "Key period movements – change management monthly status", "Items still pending at each stage.");
+    table(
+      ctx,
+      [
+        { key: "label", label: "Category", width: 1.5 },
+        { key: "prev", label: ps.previous ? `Position last month (${ps.previous.short})` : "Position", width: 1.6, align: "right", format: (v) => `${v} pending` },
+        { key: "delta", label: "Movement", width: 1, align: "right", format: (v) => (Number(v) > 0 ? `+${v}` : String(v)) },
+        { key: "now", label: "Current outstanding", width: 1.4, align: "right", format: (v) => `${v} pending` },
+      ],
+      ps.status as unknown as Record<string, unknown>[],
+      { zebra: true },
+    );
+  }
+
+  if (ps.hasComparison && ps.categories.length) {
+    subheading(ctx, "Key period movements by category (value)");
+    table(
+      ctx,
+      [
+        { key: "label", label: "Category", width: 3 },
+        { key: "total", label: "Movement (SAR)", width: 1.4, align: "right", format: move },
+        { key: "balance", label: "Balance in this report (SAR)", width: 1.6, align: "right", format: money },
+        { key: "count", label: "Items", width: 0.6, align: "right" },
+      ],
+      ps.categories as unknown as Record<string, unknown>[],
+      { zebra: true, rowStyle: (r) => ({ color: adverse(r.total as number) ?? undefined }) },
+    );
+
+    const cols: Col[] = [
+      { key: "key", label: "Ref", width: 0.9 },
+      { key: "title", label: "Description", width: 3.4 },
+      { key: "party", label: "Contractor", width: 1.4 },
+      { key: "prev", label: "Previous (SAR)", width: 1.1, align: "right", format: money },
+      { key: "now", label: "Current (SAR)", width: 1.1, align: "right", format: money },
+      { key: "delta", label: "Movement", width: 1.1, align: "right", format: move },
+      { key: "note", label: "What happened", width: 1.6 },
+    ];
+    for (const c of ps.categories) {
+      ensureSpace(ctx, 120);
+      subheading(ctx, `${c.label} – ${sarMove(c.total)}`, `${plural(c.count, "item")} moved · balance now ${sar(c.balance)}`);
+      doc.fillColor("#172033").font("Helvetica").fontSize(9).text(c.narrative, { width, lineGap: 1.2 });
+      doc.moveDown(0.3);
+      if (c.groups.length) {
+        const rows = c.groups.flatMap((gr) => [{ key: `${gr.heading} – ${sarMove(gr.total)}`, __span: true }, ...gr.items]);
+        table(ctx, cols, rows as unknown as Record<string, unknown>[], { zebra: true, rowStyle: (r) => (r.__span ? { span: true } : { color: adverse(r.delta as number) ?? undefined }) });
+      }
+      doc.moveDown(0.3);
+    }
+  }
+
+  subheading(ctx, "Balances carried in the cost report");
+  table(
+    ctx,
+    [
+      { key: "label", label: "Column", width: 3 },
+      { key: "value", label: "SAR", width: 1.4, align: "right", format: money },
+    ],
+    ps.balances as unknown as Record<string, unknown>[],
+    { zebra: true },
+  );
+
+  doc.moveDown(0.5);
+  doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(`Prepared from ${APP_NAME} as at ${formatDateTime(ps.generatedAt)}${ps.locked ? "" : " (draft – period not locked)"}. Figures are the cost report's anticipated final account; movements compare with the previous issued report. Positive movements are increases in forecast cost.`, { width });
 }
 
 /* ------------------------------------------------------------------ */

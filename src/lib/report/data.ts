@@ -30,6 +30,8 @@ export interface ReportData {
   dashboard: DashboardData;
   movement: Movement | null;
   costReport: CostReport;
+  /** The previous issued report's cost report, when there is one (for movement and budget-hold comparisons). */
+  previousCostReport: CostReport | null;
   /** Level 1 as on the Excel "Level 01" sheet (categories across, report lines down). */
   level1Matrix: Level1Matrix;
   cashflow: Cashflow;
@@ -129,6 +131,7 @@ export function getReportData(programmeId: number, periodId: number): ReportData
     dashboard: getDashboard(db, programmeId, periodId),
     movement,
     costReport,
+    previousCostReport: prevReport,
     level1Matrix: level1Matrix(costReport, prevReport, movement?.keyMovements ?? null),
     cashflow,
     registers,

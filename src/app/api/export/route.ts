@@ -28,6 +28,7 @@ const NAMES: Record<string, string> = {
   ps_report: "Provisional_Sums_Status_Report",
   bonds_report: "Bonds_and_Insurance_Status_Report",
   transfers_report: "Budget_Transfers_Status_Report",
+  period_summary: "Period_Summary_Key_Movements",
   deck: "Cost_Report_Presentation",
   dashboard: "Commercial_Dashboard",
 };

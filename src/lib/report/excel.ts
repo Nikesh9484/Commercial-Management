@@ -10,6 +10,7 @@ import { buildBondsReport } from "./bonds-report";
 import { NO_BONDS_FILTER, type BondsFilter } from "../bonds/filter";
 import { buildTransfersReport } from "./transfers-report";
 import { buildFaReport } from "./fa-report";
+import { buildPeriodSummary, sarMove } from "./period-summary";
 import type { ReportData } from "./data";
 import type { SectionOptions } from "./pdf";
 import { REPORT_SCHEDULES } from "./schedules";
@@ -63,6 +64,7 @@ export async function renderSectionsExcel(data: ReportData, keys: string[], link
     else if (k === "ps_report") psReportSheet(wb, data);
     else if (k === "bonds_report") bondsReportSheet(wb, data, opts.bonds);
     else if (k === "transfers_report") transfersReportSheet(wb, data);
+    else if (k === "period_summary") periodSummarySheet(wb, data);
     else if (k === "level1" || k === "level2" || k.toUpperCase() === "A" || k.toUpperCase() === "B") {
       if (!costDone) costPair(wb, data, wantsL1 ? "Level 1 - Executive" : null, wantsL2 ? "Level 2 - Detailed" : null);
       costDone = true;
@@ -915,6 +917,70 @@ function execSheet(wb: ExcelJS.Workbook, d: ReportData) {
   ws.addRow(["Open actions"]).font = { bold: true, color: { argb: NAVY } };
   header(ws.addRow(["Item", "Topic", "Action", "Owner", "Due", "Status"]));
   for (const a of dash.actions) ws.addRow([a.item_no, a.topic, a.action, a.owner, a.due_date ? toDate(String(a.due_date)) : "", a.status]);
+}
+
+/** Period Summary – the key period movements as the directors get them, on one sheet. */
+export function periodSummarySheet(wb: ExcelJS.Workbook, d: ReportData) {
+  const ps = buildPeriodSummary(d, { name: "" });
+  const ws = wb.addWorksheet("Period Summary");
+  [14, 60, 22, 18, 18, 18, 40].forEach((w, i) => (ws.getColumn(i + 1).width = w));
+  titleBlock(ws, `Period Summary – Key Period Movements · ${ps.period.label}`, sub(d), 7);
+  const section = (t: string) => {
+    ws.addRow([]);
+    ws.addRow([t]).font = { bold: true, size: 11, color: { argb: NAVY } };
+  };
+  const moneyRow = (label: string, v: number | null, note = "", boldRow = false) => {
+    const r = ws.addRow(["", label, v === null ? "–" : v, note]);
+    r.getCell(3).numFmt = MONEY_FMT;
+    if (boldRow) r.font = { bold: true };
+    return r;
+  };
+  section("Projected cost to complete");
+  moneyRow(`Previous report${ps.previous ? ` (${ps.previous.label})` : ""}`, ps.projected.prev);
+  moneyRow(`Updated position (${ps.period.label})`, ps.projected.now);
+  moneyRow("Net movement", ps.projected.delta, ps.projected.deltaPct === null ? "" : `${ps.projected.deltaPct.toFixed(2)}%`, true);
+  ws.addRow(["", ps.projected.narrative]).alignment = { wrapText: true, vertical: "top" };
+  ws.mergeCells(ws.rowCount, 2, ws.rowCount, 7);
+  section("Budget position");
+  moneyRow("Current forecast (anticipated final account)", ps.budget.forecast);
+  moneyRow("Approved budget (latest, incl. transfers)", ps.budget.approved);
+  moneyRow(`Variance (${ps.budget.verdict})`, ps.budget.variance, `${ps.budget.variancePct.toFixed(2)}%`, true);
+  ws.addRow(["", `Note: ${ps.budget.note}`]).alignment = { wrapText: true, vertical: "top" };
+  ws.mergeCells(ws.rowCount, 2, ws.rowCount, 7);
+  if (ps.hasComparison) {
+    section(`Forecast movement analysis (since ${ps.previous!.label})`);
+    header(ws.addRow(["", "Movement", "SAR", "Note"]));
+    for (const r of ps.movement.rows) moneyRow(r.label, r.value, r.note ?? "");
+    moneyRow("NET FORECAST MOVEMENT", ps.movement.net, "", true);
+  }
+  if (ps.status.length) {
+    section("Key period movements – change management monthly status");
+    header(ws.addRow(["", "Category", "Position last month (pending)", "Movement", "Current outstanding (pending)"]));
+    for (const r of ps.status) ws.addRow(["", r.label, r.prev, r.delta, r.now]);
+  }
+  if (ps.hasComparison && ps.categories.length) {
+    section("Key period movements by category (value)");
+    header(ws.addRow(["", "Category", "Movement (SAR)", "Balance in this report (SAR)", "Items"]));
+    for (const c of ps.categories) {
+      const r = ws.addRow(["", c.label, c.total, c.balance, c.count]);
+      [3, 4].forEach((i) => (r.getCell(i).numFmt = MONEY_FMT));
+    }
+    for (const c of ps.categories) {
+      section(`${c.label} – ${sarMove(c.total)}`);
+      ws.addRow(["", c.narrative]).alignment = { wrapText: true, vertical: "top" };
+      ws.mergeCells(ws.rowCount, 2, ws.rowCount, 7);
+      header(ws.addRow(["Ref", "Description", "Contractor", "Previous (SAR)", "Current (SAR)", "Movement (SAR)", "What happened"]));
+      for (const g of c.groups) {
+        ws.addRow([g.heading]).font = { bold: true, italic: true, color: { argb: NAVY } };
+        for (const it of g.items) {
+          const r = ws.addRow([it.key, it.title, it.party, it.prev, it.now, it.delta, it.note]);
+          [4, 5, 6].forEach((i) => (r.getCell(i).numFmt = MONEY_FMT));
+        }
+      }
+    }
+  }
+  section("Balances carried in the cost report");
+  for (const b of ps.balances) moneyRow(b.label, b.value);
 }
 
 export interface CashflowRef {

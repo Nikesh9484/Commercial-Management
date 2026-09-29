@@ -19,7 +19,7 @@ interface Summary {
  *  - Phone / other mail apps: opens a mailto: draft with the text summary (attachments cannot be added by a web page).
  *  - Copy: puts the formatted summary on the clipboard to paste into any email.
  */
-export function EmailReportButton({ kind = "exec", label = "Email the Report", attachments = "Executive Summary.pdf · Cost Report Level 1.pdf · Cost Report Level 2.pdf", tone = "primary" }: { kind?: "exec" | "claims" | "final_accounts"; label?: string; attachments?: string; tone?: "primary" | "secondary" }) {
+export function EmailReportButton({ kind = "exec", label = "Email the Report", attachments = "Executive Summary.pdf · Cost Report Level 1.pdf · Cost Report Level 2.pdf", tone = "primary" }: { kind?: "exec" | "claims" | "final_accounts" | "period_summary"; label?: string; attachments?: string; tone?: "primary" | "secondary" }) {
   const [open, setOpen] = useState(false);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [error, setError] = useState<string | null>(null);

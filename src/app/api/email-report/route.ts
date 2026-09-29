@@ -6,6 +6,7 @@ import { getReportData } from "@/lib/report/data";
 import { renderSectionsPdf } from "@/lib/report/pdf";
 import { buildEmailSummary, buildEml } from "@/lib/report/email";
 import { buildClaimsEmail, buildFaEmail } from "@/lib/report/email-sections";
+import { buildPeriodSummaryEmail } from "@/lib/report/period-summary-email";
 import { todayIso } from "@/lib/format";
 
 /**
@@ -24,7 +25,8 @@ async function heavyGET(req: Request, ctx: unknown) {
     if (!periodId) return NextResponse.json({ error: "Choose a reporting period." }, { status: 400 });
     const data = getReportData(app.programme.id, periodId);
     const kind = url.searchParams.get("kind") ?? "exec";
-    const summary = kind === "claims" ? buildClaimsEmail(data, user) : kind === "final_accounts" ? buildFaEmail(data, user) : buildEmailSummary(data, { name: user.name, email: user.email });
+    const summary =
+      kind === "claims" ? buildClaimsEmail(data, user) : kind === "final_accounts" ? buildFaEmail(data, user) : kind === "period_summary" ? buildPeriodSummaryEmail(data, user) : buildEmailSummary(data, { name: user.name, email: user.email });
     if (url.searchParams.get("format") !== "eml") return NextResponse.json(summary);
 
     const suffix = `${app.programme.code}_No${data.period.report_no}_${todayIso()}${data.locked ? "" : "_DRAFT"}`;
@@ -34,7 +36,9 @@ async function heavyGET(req: Request, ctx: unknown) {
         ? [await pdf("claims_report", "Claims_Status_Report")]
         : kind === "final_accounts"
           ? [await pdf("fa_report", "Final_Account_Status_Report")]
-          : [await pdf("exec", "Executive_Summary"), await pdf("level1", "Cost_Report_Level_1"), await pdf("level2", "Cost_Report_Level_2")];
+          : kind === "period_summary"
+            ? [await pdf("period_summary", "Period_Summary_Key_Movements"), await pdf("exec", "Executive_Summary"), await pdf("level1", "Cost_Report_Level_1"), await pdf("level2", "Cost_Report_Level_2")]
+            : [await pdf("exec", "Executive_Summary"), await pdf("level1", "Cost_Report_Level_1"), await pdf("level2", "Cost_Report_Level_2")];
     const eml = buildEml({ from: user.email ? `${user.name} <${user.email}>` : undefined, to: summary.to, subject: summary.subject, html: summary.html, text: summary.text, attachments });
     return new Response(eml, {
       headers: { "Content-Type": "message/rfc822", "Content-Disposition": `attachment; filename="${summary.fileBase}.eml"` },
