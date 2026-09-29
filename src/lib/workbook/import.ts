@@ -12,6 +12,11 @@ import { logAudit } from "../audit";
 import { mergeDuplicateContractors } from "../contractors/merge";
 import { tidyText } from "../text/tidy";
 
+/** The words of a description, lower-case and stripped of punctuation – how two spellings of one item are told to be the same. */
+function wordsKey(v: unknown): string {
+  return String(v ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
 /** The free-prose fields whose wording is tidied on the way in. Everything else arrives untouched. */
 const TIDY_FIELDS = new Set(["description", "scope", "remark", "comments", "last_action"]);
 import { nowIso, formatMonthYear, parseDateInput } from "../format";
@@ -386,8 +391,34 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo, progres
             );
             if (candidates.length === 1) input.cost_line_id = candidates[0].id;
           }
-          // find existing record by key
-          const match = existingRows.find((e) => keyFields.every((k) => String(e[k] ?? "").trim().toLowerCase() === String(input[k] ?? "").trim().toLowerCase()));
+          // find existing record by key – then, for early warnings, by what it says: their numbers in the
+          // workbook are reused, missing or corrected from month to month (three "23"s, a "22" that became
+          // a "23", a blank), so a renumbered row must update the one already here, not sit beside it
+          let match = existingRows.find((e) => keyFields.every((k) => String(e[k] ?? "").trim().toLowerCase() === String(input[k] ?? "").trim().toLowerCase()));
+          if (def.key === "early_warnings") {
+            // a number this import already gave to another row is not a match; a number now on a
+            // differently-worded row gives way to the row that says the same thing
+            if (match && touched.has(match.id)) match = undefined;
+            const want = wordsKey(input.description);
+            if (want && (!match || (wordsKey(match.description) && wordsKey(match.description) !== want))) {
+              const byWords = existingRows.find((e) => !touched.has(e.id) && wordsKey(e.description) === want && (!input.cost_line_id || !e.cost_line_id || e.cost_line_id === input.cost_line_id));
+              if (byWords) match = byWords;
+            }
+          }
+          // An early warning's number moving from one row to another (the workbook renumbered them):
+          // the row that held the number is parked on a placeholder so the number is free, and takes
+          // this row's old number once that is free, until its own workbook row comes round.
+          let parked: { row: RecordRow; no: string } | null = null;
+          if (def.key === "early_warnings" && input.ew_no) {
+            const no = String(input.ew_no).trim().toLowerCase();
+            const other = existingRows.find((e) => e !== match && !touched.has(e.id) && String(e.ew_no ?? "").trim().toLowerCase() === no);
+            if (other) {
+              const tmp = `${input.ew_no} (old)`;
+              db.prepare(`UPDATE "${def.table}" SET ew_no = ? WHERE id = ?`).run(tmp, other.id);
+              other.ew_no = tmp;
+              if (match && match.ew_no && String(match.ew_no).trim().toLowerCase() !== no) parked = { row: other, no: String(match.ew_no) };
+            }
+          }
           if (match) {
             const before = match.updated_at;
             const after = updateRecord(def, match.id, input, user, "import");
@@ -395,6 +426,10 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo, progres
             else result.updated++;
             Object.assign(match, after);
             touched.add(match.id);
+            if (parked) {
+              db.prepare(`UPDATE "${def.table}" SET ew_no = ? WHERE id = ?`).run(parked.no, parked.row.id);
+              parked.row.ew_no = parked.no;
+            }
           } else {
             const created = createRecord(def, input, user, "import");
             existingRows.push(created as RecordRow);
@@ -431,6 +466,25 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo, progres
     }
   }
 
+  // The same early warning brought in twice under two numbers (a re-import after its number was
+  // corrected in the workbook) is one early warning: the copy this import did not touch goes.
+  let dedupedEws = 0;
+  if (monthly) {
+    const ids = touchedByRegister.get("early_warnings");
+    const def = getRegisterDef("early_warnings");
+    if (ids?.size && def) {
+      const rows = db.prepare(`SELECT id, description, cost_line_id, package_id FROM "${def.table}" WHERE programme_id = ?`).all(programmeId) as { id: number; description: string | null; cost_line_id: number | null; package_id: number | null }[];
+      const kept = new Map(rows.filter((r) => ids.has(r.id)).map((r) => [`${wordsKey(r.description)}|${r.cost_line_id ?? ""}|${r.package_id ?? ""}`, r.id]));
+      for (const r of rows) {
+        if (ids.has(r.id)) continue;
+        const k = `${wordsKey(r.description)}|${r.cost_line_id ?? ""}|${r.package_id ?? ""}`;
+        if (!wordsKey(r.description) || !kept.has(k)) continue;
+        db.prepare(`DELETE FROM "${def.table}" WHERE id = ?`).run(r.id);
+        dedupedEws++;
+      }
+    }
+  }
+
   // An import is where the same company gets entered a second time under a slightly different
   // spelling, so the tidy-up happens here rather than being left to be noticed later on a report
   // that has quietly split a contractor in two. Only names that match once full stops, spaces and
@@ -443,7 +497,7 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo, progres
     recordId: periodId,
     action: "import",
     user,
-    summary: `Imported workbook for ${period.label}: ${results.map((r) => `${r.sheet} → ${r.register} (${r.created} added, ${r.updated} updated, ${r.errors.length} errors)`).join("; ")}${pruned ? `; ${pruned} row(s) not in the workbook removed from this older report` : ""}${merged.groups ? `; ${merged.removed} duplicate contractor record(s) merged into ${merged.groups} ${merged.groups === 1 ? "company" : "companies"} (${merged.moved} record(s) moved)` : ""}`,
+    summary: `Imported workbook for ${period.label}: ${results.map((r) => `${r.sheet} → ${r.register} (${r.created} added, ${r.updated} updated, ${r.errors.length} errors)`).join("; ")}${pruned ? `; ${pruned} row(s) not in the workbook removed from this older report` : ""}${dedupedEws ? `; ${dedupedEws} duplicated early warning(s) removed` : ""}${merged.groups ? `; ${merged.removed} duplicate contractor record(s) merged into ${merged.groups} ${merged.groups === 1 ? "company" : "companies"} (${merged.moved} record(s) moved)` : ""}`,
   });
 
   // the library shows the monthly workbook the report came from; a stand-alone import does not replace that name

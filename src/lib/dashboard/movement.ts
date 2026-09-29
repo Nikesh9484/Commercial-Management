@@ -201,16 +201,39 @@ function keyMovements(
   };
   const nowMap = collect(now);
   const prevMap = collect(before);
+  // Pair last month's items with this month's: by reference while it still describes the same thing,
+  // then by wording (an early warning renumbered in the workbook, a claim given its tracker number,
+  // is still the same item), then by reference alone. Whatever is left over is new or removed.
+  const words = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const pairs: { key: string; a?: Contrib; b?: Contrib }[] = [];
+  const prevLeft = new Map(prevMap);
+  const nowLeft = new Map(nowMap);
+  const take = (pk: string, nk: string) => {
+    pairs.push({ key: nk, a: prevLeft.get(pk), b: nowLeft.get(nk) });
+    prevLeft.delete(pk);
+    nowLeft.delete(nk);
+  };
+  for (const [k, b] of nowMap) {
+    const a = prevLeft.get(k);
+    if (a && (!words(a.title) || !words(b.title) || words(a.title) === words(b.title))) take(k, k);
+  }
+  for (const [pk, a] of [...prevLeft]) {
+    const w = words(a.title);
+    if (!w) continue;
+    const type = pk.split("|")[0];
+    const hit = [...nowLeft].find(([nk, b]) => nk.startsWith(type + "|") && words(b.title) === w);
+    if (hit) take(pk, hit[0]);
+  }
+  for (const k of [...prevLeft.keys()]) if (nowLeft.has(k)) take(k, k);
+  for (const [k, a] of prevLeft) pairs.push({ key: k, a });
+  for (const [k, b] of nowLeft) pairs.push({ key: k, b });
   const items: Record<KeyMovement["col"], KeyMoveItem[]> = { H: [], J: [], K: [], L: [], M: [] };
   const push = (col: KeyMovement["col"], key: string, title: string, prev: number, cur: number, note: string, party: string) => {
     const delta = r2(cur - prev);
     if (Math.abs(delta) < 0.005) return;
     items[col].push({ key, title: title.slice(0, 100), prev: r2(prev), now: r2(cur), delta, note, party });
   };
-  const keys = new Set([...nowMap.keys(), ...prevMap.keys()]);
-  for (const key of keys) {
-    const a = prevMap.get(key);
-    const b = nowMap.get(key);
+  for (const { a, b } of pairs) {
     const label = (b ?? a)!.label;
     const party = (b ?? a)!.party;
     if (a && b) {
