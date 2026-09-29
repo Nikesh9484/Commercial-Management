@@ -3,7 +3,7 @@ import { memoryNote, releaseMemory } from "./heavy";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { getDb, getSetting, setSetting, wordsKey } from "../db";
+import { getDb, getSetting, setSetting, wordsKey, syntheticEwNo } from "../db";
 import { getRegisterDef } from "../registers";
 import { createRecord, updateRecord, listRecords, lookupOptions, ValidationError } from "../registers/engine";
 import type { UserInfo, RecordRow } from "../registers/types";
@@ -390,21 +390,24 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo, progres
           // workbook are reused, missing or corrected from month to month (three "23"s, a "22" that became
           // a "23", a blank), so a renumbered row must update the one already here, not sit beside it
           let match = existingRows.find((e) => keyFields.every((k) => String(e[k] ?? "").trim().toLowerCase() === String(input[k] ?? "").trim().toLowerCase()));
-          if (def.key === "early_warnings") {
-            // a number this import already gave to another row is not a match; a number now on a
-            // differently-worded row gives way to the row that says the same thing
+          if (def.key === "early_warnings" && syntheticEwNo(input.ew_no)) {
+            // Only for numbers the converter made up (a blank, reused or corrected column A): a number
+            // this import already gave to another row is not a match, and a number now on a
+            // differently-worded row gives way to the row that says the same thing about the same
+            // package, cost report line and contractor. A number the workbook gives itself is trusted.
             if (match && touched.has(match.id)) match = undefined;
             const want = wordsKey(input.description);
             if (want && (!match || (wordsKey(match.description) && wordsKey(match.description) !== want))) {
-              const byWords = existingRows.find((e) => !touched.has(e.id) && wordsKey(e.description) === want && (!input.cost_line_id || !e.cost_line_id || e.cost_line_id === input.cost_line_id));
+              const same = (a: unknown, b: unknown) => !a || !b || String(a) === String(b);
+              const byWords = existingRows.find((e) => !touched.has(e.id) && syntheticEwNo(e.ew_no) && wordsKey(e.description) === want && same(input.cost_line_id, e.cost_line_id) && same(input.package_id, e.package_id) && same(input.contractor_id, e.contractor_id));
               if (byWords) match = byWords;
             }
           }
-          // An early warning's number moving from one row to another (the workbook renumbered them):
-          // the row that held the number is parked on a placeholder so the number is free, and takes
-          // this row's old number once that is free, until its own workbook row comes round.
+          // An early warning's made-up number moving from one row to another (the workbook renumbered
+          // them): the row that held the number is parked on a placeholder so the number is free, and
+          // takes this row's old number once that is free, until its own workbook row comes round.
           let parked: { row: RecordRow; no: string } | null = null;
-          if (def.key === "early_warnings" && input.ew_no) {
+          if (def.key === "early_warnings" && syntheticEwNo(input.ew_no)) {
             const no = String(input.ew_no).trim().toLowerCase();
             const other = existingRows.find((e) => e !== match && !touched.has(e.id) && String(e.ew_no ?? "").trim().toLowerCase() === no);
             if (other) {

@@ -3,6 +3,8 @@ export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
     const backup = await import("./lib/cloud-backup");
     await backup.restoreIfNeeded();
+    const { repairEarlyWarnings } = await import("./lib/repairs/early-warnings");
+    repairEarlyWarnings();
     backup.startBackupLoop();
   }
 }

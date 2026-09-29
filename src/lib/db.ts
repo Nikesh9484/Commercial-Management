@@ -466,22 +466,36 @@ export function wordsKey(v: unknown): string {
 }
 
 /**
+ * A number the Marina converter made up from a blank, reused or corrected column A ("EW", "EW-2",
+ * "EW-23-4"). Only these are unreliable from month to month; a number the workbook itself gives an
+ * early warning ("EW 038 STE") identifies it and is never second-guessed.
+ */
+export function syntheticEwNo(v: unknown): boolean {
+  return /^EW(-\d+)*$/i.test(String(v ?? "").trim());
+}
+
+/** What makes two early warnings one item: the project, the wording, the package, the cost report line and the contractor. */
+export function ewIdentity(r: { programme_id?: unknown; description?: unknown; cost_line_id?: unknown; package_id?: unknown; contractor_id?: unknown }): string {
+  return `${r.programme_id ?? ""}|${wordsKey(r.description)}|${r.cost_line_id ?? ""}|${r.package_id ?? ""}|${r.contractor_id ?? ""}`;
+}
+
+/**
  * Removes the copies of early warnings that exist more than once in a project's live register
- * (same wording, package and cost report line). The oldest row is kept – links from other registers
- * and the previous report's stored copy point at it – and takes the newest copy's number and figures,
- * so it matches the latest workbook. Returns the number of rows removed.
+ * (same wording, package, cost report line and contractor) where every copy carries a made-up
+ * number – the renumbering case. The oldest row is kept – links from other registers and the
+ * previous report's stored copy point at it – and takes the newest copy's number and figures, so
+ * it matches the latest workbook. Returns the number of rows removed.
  */
 export function dedupeEarlyWarnings(db: Database.Database): number {
-  type Row = { id: number; programme_id: number | null; ew_no: string | null; description: string | null; cost_line_id: number | null; package_id: number | null; updated_at: string | null };
-  const rows = db.prepare("SELECT id, programme_id, ew_no, description, cost_line_id, package_id, updated_at FROM early_warnings ORDER BY id").all() as Row[];
+  type Row = { id: number; programme_id: number | null; ew_no: string | null; description: string | null; cost_line_id: number | null; package_id: number | null; contractor_id: number | null };
+  const rows = db.prepare("SELECT id, programme_id, ew_no, description, cost_line_id, package_id, contractor_id FROM early_warnings ORDER BY id").all() as Row[];
   const groups = new Map<string, Row[]>();
   for (const r of rows) {
-    const w = wordsKey(r.description);
-    if (!w) continue;
-    const k = `${r.programme_id ?? ""}|${w}|${r.cost_line_id ?? ""}|${r.package_id ?? ""}`;
+    if (!wordsKey(r.description) || !syntheticEwNo(r.ew_no)) continue;
+    const k = ewIdentity(r);
     groups.set(k, [...(groups.get(k) ?? []), r]);
   }
-  const copyFields = ["ew_no", "date_raised", "raised_by", "asset_id", "contractor_id", "description", "time_impact_days", "cost_impact", "likelihood", "status", "change_id", "notes", "updated_at", "updated_by"];
+  const copyFields = ["ew_no", "date_raised", "raised_by", "asset_id", "description", "time_impact_days", "cost_impact", "likelihood", "status", "change_id", "notes", "updated_at", "updated_by"];
   const cols = new Set((db.prepare('PRAGMA table_info("early_warnings")').all() as { name: string }[]).map((c) => c.name));
   const fields = copyFields.filter((f) => cols.has(f));
   let removed = 0;
