@@ -434,6 +434,20 @@ function seed(db: Database.Database) {
     setSetting(db, "tidied_imported_wording", "1");
   }
 
+  // The same early warning brought in twice under two numbers (a monthly workbook re-imported after
+  // its early warnings were renumbered) doubled the period movement. Runs once: of each set of rows
+  // in a project that say the same thing against the same package and cost report line, the
+  // original stays – under the latest number and figures – and the copies go.
+  if (getSetting(db, "deduped_early_warnings") !== "1") {
+    try {
+      const r = dedupeEarlyWarnings(db);
+      if (r) console.log(`[migration] removed ${r} duplicated early warning(s)`);
+    } catch (e) {
+      console.warn("[migration] early warning tidy skipped:", e);
+    }
+    setSetting(db, "deduped_early_warnings", "1");
+  }
+
   // Earlier versions seeded "(edit me)" placeholder names; give them their real names so no
   // report or cover page ever prints the placeholder.
   const rename = (table: string, from: string, to: string) => db.prepare(`UPDATE "${table}" SET name = ?, updated_at = ?, updated_by = 'system' WHERE name = ?`).run(to, stamp, from);
@@ -444,4 +458,51 @@ function seed(db: Database.Database) {
   rename("programmes", "Marina Village (Programme 1 – Triple Bay)", "The Marina");
   rename("assets", "Asset 1TB01031.01 (edit me)", "The Marina");
   for (const table of ["clients", "locations", "programmes", "assets"]) db.prepare(`UPDATE "${table}" SET name = TRIM(REPLACE(name, '(edit me)', '')) WHERE name LIKE '%(edit me)%'`).run();
+}
+
+/** Words only, lower case: the wording of two rows compared without punctuation, spacing or case. */
+export function wordsKey(v: unknown): string {
+  return String(v ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+/**
+ * Removes the copies of early warnings that exist more than once in a project's live register
+ * (same wording, package and cost report line). The oldest row is kept – links from other registers
+ * and the previous report's stored copy point at it – and takes the newest copy's number and figures,
+ * so it matches the latest workbook. Returns the number of rows removed.
+ */
+export function dedupeEarlyWarnings(db: Database.Database): number {
+  type Row = { id: number; programme_id: number | null; ew_no: string | null; description: string | null; cost_line_id: number | null; package_id: number | null; updated_at: string | null };
+  const rows = db.prepare("SELECT id, programme_id, ew_no, description, cost_line_id, package_id, updated_at FROM early_warnings ORDER BY id").all() as Row[];
+  const groups = new Map<string, Row[]>();
+  for (const r of rows) {
+    const w = wordsKey(r.description);
+    if (!w) continue;
+    const k = `${r.programme_id ?? ""}|${w}|${r.cost_line_id ?? ""}|${r.package_id ?? ""}`;
+    groups.set(k, [...(groups.get(k) ?? []), r]);
+  }
+  const copyFields = ["ew_no", "date_raised", "raised_by", "asset_id", "contractor_id", "description", "time_impact_days", "cost_impact", "likelihood", "status", "change_id", "notes", "updated_at", "updated_by"];
+  const cols = new Set((db.prepare('PRAGMA table_info("early_warnings")').all() as { name: string }[]).map((c) => c.name));
+  const fields = copyFields.filter((f) => cols.has(f));
+  let removed = 0;
+  const tx = db.transaction(() => {
+    for (const list of groups.values()) {
+      if (list.length < 2) continue;
+      const keep = list[0];
+      const newest = list[list.length - 1];
+      const src = db.prepare("SELECT * FROM early_warnings WHERE id = ?").get(newest.id) as Record<string, unknown>;
+      db.prepare(`UPDATE early_warnings SET ${fields.map((f) => `"${f}" = ?`).join(", ")} WHERE id = ?`).run(...fields.map((f) => src[f] as string | number | null), keep.id);
+      for (const dup of list.slice(1)) {
+        db.prepare("DELETE FROM early_warnings WHERE id = ?").run(dup.id);
+        db.prepare("INSERT INTO audit_log(register_key, record_id, action, user_id, user_name, at, summary, changes) VALUES('early_warnings', ?, 'delete', NULL, 'system', ?, ?, NULL)").run(
+          dup.id,
+          nowIso(),
+          `Removed duplicated early warning ${dup.ew_no ?? dup.id} ("${String(dup.description ?? "").slice(0, 60)}") – the same item as ${keep.ew_no ?? keep.id}, which now carries its number and figures`,
+        );
+        removed++;
+      }
+    }
+  });
+  tx();
+  return removed;
 }

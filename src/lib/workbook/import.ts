@@ -3,7 +3,7 @@ import { memoryNote, releaseMemory } from "./heavy";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { getDb, getSetting, setSetting } from "../db";
+import { getDb, getSetting, setSetting, wordsKey } from "../db";
 import { getRegisterDef } from "../registers";
 import { createRecord, updateRecord, listRecords, lookupOptions, ValidationError } from "../registers/engine";
 import type { UserInfo, RecordRow } from "../registers/types";
@@ -11,11 +11,6 @@ import { lockPeriod, getPeriod, latestPeriod, takeSnapshot, restoreFromSnapshot,
 import { logAudit } from "../audit";
 import { mergeDuplicateContractors } from "../contractors/merge";
 import { tidyText } from "../text/tidy";
-
-/** The words of a description, lower-case and stripped of punctuation – how two spellings of one item are told to be the same. */
-function wordsKey(v: unknown): string {
-  return String(v ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-}
 
 /** The free-prose fields whose wording is tidied on the way in. Everything else arrives untouched. */
 const TIDY_FIELDS = new Set(["description", "scope", "remark", "comments", "last_action"]);
