@@ -89,11 +89,12 @@ function upgradeKpiTables(d: Database.Database) {
   d.exec("UPDATE kpi_docs SET section = CASE section WHEN 'DVO' THEN 'dvo_front' WHEN 'PVO' THEN 'pvo_vo_front' WHEN 'VO' THEN 'vo_issued' WHEN 'RFC' THEN 'pvo_vo_approval' WHEN 'Correspondence' THEN 'vo_issued' ELSE section END WHERE section IN ('DVO','PVO','VO','RFC','Correspondence')");
 }
 
+/** Admin, editor and the reports user all prepare the KPI packs; only a viewer just looks. */
 export function canManageKpi(user: UserInfo): boolean {
-  return user.role === "admin" || user.role === "editor";
+  return user.role !== "viewer";
 }
 function assertManage(user: UserInfo) {
-  if (!canManageKpi(user)) throw new AuthError("Only Editors and Admins can add or change KPI documents.");
+  if (!canManageKpi(user)) throw new AuthError("A viewer account cannot add or change KPI documents.");
 }
 
 /** Which part of the pack a file belongs to, read from its folder and name: "1. DVO approval/…", "WTRAN … DVO", "PVO 036", "LTR-0040 VO". */

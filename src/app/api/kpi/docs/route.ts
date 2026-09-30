@@ -11,7 +11,7 @@ import { addKpiDoc, canManageKpi, KPI_MAX_FILE_BYTES } from "@/lib/kpi/store";
  */
 export async function POST(req: Request, ctx: unknown) {
   return withUser(async (user) => {
-    if (!canManageKpi(user)) throw new AuthError("Only Editors and Admins can add KPI documents.");
+    if (!canManageKpi(user)) throw new AuthError("A viewer account cannot add KPI documents.");
     const body = (await req.json().catch(() => ({}))) as { uploadId?: string; changeId?: number; name?: string; relPath?: string; mime?: string; size?: number; index?: number; count?: number; data?: string; section?: string };
     const changeId = Number(body.changeId);
     if (!Number.isInteger(changeId) || changeId <= 0) return NextResponse.json({ error: "Which change the document belongs to was not given." }, { status: 400 });

@@ -37,6 +37,7 @@ import {
 import { modules } from "@/lib/modules";
 import { APP_SHORT, APP_SUBTITLE } from "@/lib/brand";
 import { REPORTER_MODULES, type Role } from "@/lib/registers/types";
+import { PACK_TYPES } from "@/lib/packs/shared";
 
 const ICONS: Record<string, LucideIcon> = {
   ClipboardList,
@@ -73,6 +74,17 @@ export function Sidebar({ open, onClose, role, project }: { open: boolean; onClo
       <span className="truncate">{label}</span>
       {badge && <span className="ml-auto rounded bg-white/10 px-1.5 text-[10px] text-blue-100/70">{badge}</span>}
     </Link>
+  );
+
+  /** Document Packs – one entry per RSG document category. */
+  const packsMenu = (
+    <>
+      <div className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider text-blue-200/50">Document Packs</div>
+      {link("/packs", "All document packs", FileSignature)}
+      <div className="pl-4">
+        {PACK_TYPES.map((p) => link(`/packs/${p.key}`, p.short === p.label ? p.label : `${p.short} – ${p.label.replace(/^[^–]+–\s*/, "")}`, FileText))}
+      </div>
+    </>
   );
 
   /** The numbered module menu (with its sub-pages). */
@@ -132,6 +144,7 @@ export function Sidebar({ open, onClose, role, project }: { open: boolean; onClo
               {link("/reports/uncommitted-ew", "Uncommitted & Early Warnings", Sparkles)}
               {link("/reports/kpi", "KPI Report – F1 VOs", Target)}
               {link("/reports/builder", "Customise my reports", SlidersHorizontal)}
+              {packsMenu}
               <a href="/user-guide.pdf" target="_blank" rel="noopener" className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-blue-100/80 hover:bg-white/10 hover:text-white">
                 <FileText size={18} className="shrink-0" />
                 <span className="truncate">User guide (PDF)</span>
@@ -157,6 +170,7 @@ export function Sidebar({ open, onClose, role, project }: { open: boolean; onClo
               {link("/automation/claim-ear", "Claim EAR", Wand2)}
             </>
           )}
+          {packsMenu}
           <div className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider text-blue-200/50">System</div>
           {link("/reports", "Reports & downloads", FolderDown)}
           {link("/reports/period-summary", "Period Summary", Sparkles)}

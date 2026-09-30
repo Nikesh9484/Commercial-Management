@@ -163,6 +163,8 @@ export const REPORTER_PATHS = [
   "/",
   ...REPORTER_MODULES.map((m) => `/modules/${m}`),
   "/reports",
+  "/packs",
+  "/api/packs",
   "/api/export",
   "/api/report",
   "/api/email-report",
@@ -183,6 +185,9 @@ const REPORTER_WRITES: { method: string; path: string }[] = [
   { method: "POST", path: "/api/auth" },
   { method: "POST", path: "/api/custom-report" },
   { method: "PUT", path: "/api/context" },
+  // the KPI packs and the document packs are prepared by the user account as well as the admin:
+  // uploading files, typing the head office details and the form fields, building the packs
+  ...["POST", "PUT", "PATCH", "DELETE"].flatMap((method) => [{ method, path: "/api/kpi" }, { method, path: "/api/packs" }]),
 ];
 const under = (pathname: string, p: string) => pathname === p || pathname.startsWith(p + "/") || pathname.startsWith(p + "?");
 

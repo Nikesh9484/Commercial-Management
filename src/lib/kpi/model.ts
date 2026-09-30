@@ -198,28 +198,52 @@ export function buildKpi(data: ReportData, previous: ReportData | null, opts: Kp
     const it = baseItem(r, data, contracts, cutoff, opts);
     const p = prevById.get(it.changeId) ?? (it.itemNo ? prevByNo.get(it.itemNo.toLowerCase()) : undefined) ?? null;
     if (p) it.previous = { pvoValue: p.pvoValue, avvValue: p.avvValue, dvoRef: p.dvoRef, instructionRef: p.instructionRef, category: p.category };
+    // A KPI movement belongs to the month the stage is dated in: a PVO or VO dated inside this
+    // report's month (Open KPI), a DVO approved inside it (Closed KPI). A stage with an earlier date
+    // that only reached the register now was missed on the earlier report, not moved this month, and
+    // a change of value on an item the head office already has is noted, not reported.
+    const prevEnd = previous?.period.period_end ?? "";
+    const inMonth = (d: string | null) => !!d && (!prevEnd || d > prevEnd) && d <= cutoff;
+    const late = (d: string | null) => !!prevEnd && !!d && d <= prevEnd;
+    const stageDate = it.voDate ?? it.pvoDate;
+    const stageRef = it.voRef ? refLabel("VO", it.voRef) : it.pvoRef ? refLabel("PVO", it.pvoRef) : "";
     if (!previous) {
       // the first report: everything on it is reported for the first time
       it.movement = "new";
       it.movementNote = "First report – no earlier report to compare with";
     } else if (!p) {
-      it.movement = "new";
-      it.movementNote = it.category === "closed" ? "New on this report, DVO already approved" : `New on this report – ${it.voRef ? `${refLabel("VO", it.voRef)} recorded` : it.pvoRef ? `${refLabel("PVO", it.pvoRef)} recorded` : "recorded"}`;
+      const d = it.category === "closed" ? it.dvoDate : stageDate;
+      if (late(d)) {
+        it.movement = "unchanged";
+        it.movementNote = `Recorded late – ${it.category === "closed" ? refLabel("DVO", it.dvoRef) : stageRef} is dated ${d}, before this report's month (not a movement of this report)`;
+      } else {
+        it.movement = "new";
+        it.movementNote = it.category === "closed" ? `New on this report – ${refLabel("DVO", it.dvoRef)} approved${it.dvoDate ? ` ${it.dvoDate}` : ""}` : `New on this report – ${stageRef || "recorded"}${stageDate ? ` ${stageDate}` : ""}`;
+      }
     } else if (p.category !== "closed" && it.category === "closed") {
-      it.movement = "closed_now";
-      it.movementNote = `${refLabel("DVO", it.dvoRef)} approved this report${it.dvoDate ? ` (${it.dvoDate})` : ""}${it.avvValue !== null ? ` – AVV ${fmt(it.avvValue)}` : ""}`;
+      if (late(it.dvoDate)) {
+        it.movement = "unchanged";
+        it.movementNote = `Recorded late – ${refLabel("DVO", it.dvoRef)} is dated ${it.dvoDate}, before this report's month (not a movement of this report)`;
+      } else {
+        it.movement = "closed_now";
+        it.movementNote = `${refLabel("DVO", it.dvoRef)} approved this report${it.dvoDate ? ` (${it.dvoDate})` : ""}${it.avvValue !== null ? ` – AVV ${fmt(it.avvValue)}` : ""}`;
+      }
     } else {
+      const recorded: string[] = [];
+      // a stage dated this month is this month's movement; an undated stage counts when it is new against the previous report
+      if (it.voRef && (inMonth(it.voDate) || (!it.voDate && it.voRef !== p.voRef))) recorded.push(`${refLabel("VO", it.voRef)} recorded${it.voDate ? ` ${it.voDate}` : ""}`);
+      else if (it.pvoRef && (inMonth(it.pvoDate) || (!it.pvoDate && it.pvoRef !== p.pvoRef))) recorded.push(`${refLabel("PVO", it.pvoRef)} recorded${it.pvoDate ? ` ${it.pvoDate}` : ""}`);
+      if (it.dvoRef !== p.dvoRef && it.dvoRef && it.category === "open") recorded.push(`${refLabel("DVO", it.dvoRef)} recorded (pending)`);
       const notes: string[] = [];
-      if (it.instructionRef !== p.instructionRef && it.instructionRef) notes.push(`instruction now ${it.instructionRef}`);
-      if (it.dvoRef !== p.dvoRef && it.dvoRef) notes.push(`${refLabel("DVO", it.dvoRef)} recorded${it.category === "closed" ? "" : " (pending)"}`);
       if ((it.pvoValue ?? 0) !== (p.pvoValue ?? 0)) notes.push(`PVO value ${fmt(p.pvoValue)} → ${fmt(it.pvoValue)}`);
       if ((it.avvValue ?? 0) !== (p.avvValue ?? 0)) notes.push(`AVV ${fmt(p.avvValue)} → ${fmt(it.avvValue)}`);
-      if (notes.length) {
+      if (it.instructionRef !== p.instructionRef && it.instructionRef && !recorded.length) notes.push(`instruction now ${it.instructionRef}${late(it.voDate) ? ` (dated ${it.voDate}, before this report's month)` : ""}`);
+      if (recorded.length && it.category === "open") {
         it.movement = "updated";
-        it.movementNote = notes.join("; ");
+        it.movementNote = [...recorded, ...notes].join("; ");
       } else {
         it.movement = "unchanged";
-        it.movementNote = it.category === "closed" ? "Approved on an earlier report" : "No change since the previous report";
+        it.movementNote = it.category === "closed" ? "Approved on an earlier report" : notes.length ? `Reported earlier – ${notes.join("; ")} (not a KPI movement)` : "No change since the previous report";
       }
     }
     items.push(it);
