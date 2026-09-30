@@ -21,10 +21,12 @@ export async function POST(req: Request, ctx: unknown) {
     if (user.role !== "admin" && user.role !== "editor") throw new AuthError("Only Editors and Admins can import a workbook.");
     let name = "";
     let bytes: Buffer;
+    let chosenProgramme: number | null = null;
     const type = req.headers.get("content-type") ?? "";
     if (type.includes("application/json")) {
       // the app sends the file in base64 pieces so company web filters do not cut it short
-      const body = (await req.json()) as { uploadId?: string; name?: string; size?: number; index?: number; count?: number; data?: string };
+      const body = (await req.json()) as { uploadId?: string; name?: string; size?: number; index?: number; count?: number; data?: string; programmeId?: number };
+      if (body.programmeId) chosenProgramme = Number(body.programmeId);
       const part = Buffer.from(body.data ?? "", "base64");
       const id = appendUploadPart(body.uploadId || null, part);
       if ((body.index ?? 0) < (body.count ?? 1) - 1) return NextResponse.json({ uploadId: id });
@@ -68,10 +70,17 @@ export async function POST(req: Request, ctx: unknown) {
     releaseMemory();
     let worksheets = csvText !== null ? csvToSheets(csvText, name || "export.csv") : await readWorkbookValues(uploadPath(fileId));
     let conversion: WorkbookAnalysis["conversion"];
+    // the stand-alone trackers name their project on the import page; everything else follows the top bar
+    const programmeFor = () => {
+      const app = getAppContext();
+      const picked = chosenProgramme ? app.programmes.find((p) => p.id === chosenProgramme) : undefined;
+      return picked ?? app.programme;
+    };
     if (looksLikeAconexExport(worksheets)) {
       // The Aconex control account export: our project's contracts and budget holds, tied to the cost lines by contract code.
-      const app = getAppContext();
-      if (!app.programme) return NextResponse.json({ error: "Select a programme in the top bar first." }, { status: 400 });
+      const programme = programmeFor();
+      if (!programme) return NextResponse.json({ error: "Select a programme in the top bar first." }, { status: 400 });
+      const app = { programme };
       const db = getDb();
       const linesByFrag = new Map<string, { code: string; contractor: string }>();
       const holdLinesByKey = new Map<string, string>();
@@ -132,8 +141,9 @@ export async function POST(req: Request, ctx: unknown) {
     } else if (looksLikeAccommodationTracker(worksheets) || looksLikeCustomsTracker(worksheets)) {
       // The cost-recovery trackers (accommodation invoices, customs duties): keep our programme's rows
       // and tie each to our contractor and cost report line.
-      const app = getAppContext();
-      if (!app.programme) return NextResponse.json({ error: "Select a programme in the top bar first." }, { status: 400 });
+      const programme = programmeFor();
+      if (!programme) return NextResponse.json({ error: "Select a programme in the top bar first." }, { status: 400 });
+      const app = { programme };
       const db = getDb();
       const linesByFrag = new Map<string, { code: string; contractor: string }>();
       const contractors = new Map<number, { id: number; name: string; primary: boolean }>();

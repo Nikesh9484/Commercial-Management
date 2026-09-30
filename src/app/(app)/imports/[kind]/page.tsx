@@ -31,7 +31,7 @@ export const IMPORT_KINDS: Record<string, { title: string; subtitle: string; onl
     title: "Import accommodation invoice tracker",
     subtitle: "Upload the AMAALA Construction Village lease-agreement invoice tracker whenever it changes – it is not part of the monthly report – and the Cost Recovery page shows what each of our contractors has been invoiced, has paid or had recovered through its IPCs, and still owes.",
     only: ["accommodation_recovery"],
-    intro: "Upload the accommodation invoice tracker (the workbook with the \"L.A. Invoice Tracker (W)\" sheet, .xlsx or .xlsm). Only the lease agreements of the project in the top bar are kept – recognised by their asset code (1TB01031 …) or the program name on the row – and each is tied to our contractor by name. Rows already here are updated, so the tracker can be re-uploaded as often as it changes.",
+    intro: "Upload the accommodation invoice tracker (the workbook with the \"L.A. Invoice Tracker (W)\" sheet, .xlsx or .xlsm). Only the lease agreements of the project chosen below are kept – recognised by their asset code (1TB01031 …) or the program name on the row – and each is tied to our contractor by name. Rows already here are updated, so the tracker can be re-uploaded as often as it changes.",
     fileHint: "Accommodation invoice tracker (L.A. Invoice Tracker sheet)",
     doneHref: "/modules/cost-recovery",
     doneLabel: "Open Cost Recovery",
@@ -41,7 +41,7 @@ export const IMPORT_KINDS: Record<string, { title: string; subtitle: string; onl
     title: "Import customs recovery tracker",
     subtitle: "Upload the AMAALA Customs Recovery Tracker whenever it changes – it is not part of the monthly report – and the Cost Recovery page shows the customs duties RSG paid on each contractor's imports and how they are being recovered.",
     only: ["customs_recovery"],
-    intro: "Upload the customs recovery tracker (the workbook with the \"Summary-Site Team to Enter\" sheet). Only the contracts of the project in the top bar are kept – recognised by the asset code in the commercial lead's columns – together with the customs figures of vendors that are our contractors, each tied to its cost report line by contract code (031C13 → CN.031C13). Rows already here are updated on a re-upload.",
+    intro: "Upload the customs recovery tracker (the workbook with the \"Summary-Site Team to Enter\" sheet). Only the contracts of the project chosen below are kept – recognised by the asset code in the commercial lead's columns – together with the customs figures of vendors that are our contractors, each tied to its cost report line by contract code (031C13 → CN.031C13). Rows already here are updated on a re-upload.",
     fileHint: "AMAALA Customs Recovery Tracker (Summary sheet)",
     doneHref: "/modules/cost-recovery?tab=customs",
     doneLabel: "Open Cost Recovery",
@@ -49,9 +49,9 @@ export const IMPORT_KINDS: Record<string, { title: string; subtitle: string; onl
   },
   aconex: {
     title: "Import Aconex control account export",
-    subtitle: "Upload the control-account export from Aconex for the project in the top bar (one file per project) and the Aconex Cost Check reconciles its budget, commitments, changes and estimate at completion against the dashboard's cost report, line by line.",
+    subtitle: "Upload the control-account export from Aconex for the project you choose below (one file per project) and the Aconex Cost Check reconciles its budget, commitments, changes and estimate at completion against the dashboard's cost report, line by line.",
     only: ["aconex_control_accounts"],
-    intro: "Upload the Aconex control-account export (the .csv file, or the same table saved as .xlsx). Only the rows of the project in the top bar are kept: one per contract (1TB01031.01.CN.031C15) and per budget hold (…PS.98), each tied to its cost report line by contract code. Rows already here are replaced by the new figures on a re-upload.",
+    intro: "Upload the Aconex control-account export (the .csv file, or the same table saved as .xlsx). Only the rows of the project chosen below are kept: one per contract (1TB01031.01.CN.031C15) and per budget hold (…PS.98), each tied to its cost report line by contract code. Rows already here are replaced by the new figures on a re-upload.",
     fileHint: "control-account-export.csv",
     doneHref: "/modules/aconex-check",
     doneLabel: "Open Aconex Cost Check",
@@ -72,9 +72,9 @@ export async function generateMetadata({ params }: { params: Promise<{ kind: str
   return { title: IMPORT_KINDS[kind]?.title ?? RETIRED_IMPORTS[kind]?.title ?? "Import" };
 }
 
-export default async function ImportPage({ params, searchParams }: { params: Promise<{ kind: string }>; searchParams: Promise<{ period?: string }> }) {
+export default async function ImportPage({ params, searchParams }: { params: Promise<{ kind: string }>; searchParams: Promise<{ period?: string; programme?: string }> }) {
   const { kind } = await params;
-  const { period: periodParam } = await searchParams;
+  const { period: periodParam, programme: programmeParam } = await searchParams;
   const initialPeriodId = Number(periodParam) || null;
   const retired = RETIRED_IMPORTS[kind];
   if (retired) {
@@ -120,12 +120,19 @@ export default async function ImportPage({ params, searchParams }: { params: Pro
   });
   const nextNo = (periods[0]?.report_no ?? 0) + 1;
   const current = ctx.period ? periods.find((p) => p.id === ctx.period!.id) ?? null : null;
-  const standalone: StandaloneMode | undefined = spec.only && current ? { only: spec.only, period: { id: current.id, label: current.label }, intro: spec.intro ?? "", fileHint: spec.fileHint ?? "", doneHref: spec.doneHref ?? "/", doneLabel: spec.doneLabel ?? "Done" } : undefined;
+  // a stand-alone tracker names its project here (The Marina, VBH, and any project added later), not in the top bar
+  const project = spec.anyTime ? (ctx.programmes.find((p) => String(p.id) === programmeParam) ?? ctx.programme ?? ctx.programmes[0] ?? null) : null;
+  const standalone: StandaloneMode | undefined =
+    spec.only && spec.anyTime && project
+      ? { only: spec.only, period: { id: current?.id ?? 0, label: current?.label ?? "" }, project: { id: project.id, code: project.code, name: project.name }, intro: spec.intro ?? "", fileHint: spec.fileHint ?? "", doneHref: spec.doneHref ?? "/", doneLabel: spec.doneLabel ?? "Done" }
+      : spec.only && current
+        ? { only: spec.only, period: { id: current.id, label: current.label }, intro: spec.intro ?? "", fileHint: spec.fileHint ?? "", doneHref: spec.doneHref ?? "/", doneLabel: spec.doneLabel ?? "Done" }
+        : undefined;
 
   let blocker: React.ReactNode = null;
-  if (!ctx.programme) blocker = <>Select a programme in the top bar first.</>;
+  if (!ctx.programme && !project) blocker = <>Select a programme in the top bar first.</>;
   else if (user.role !== "admin" && user.role !== "editor") blocker = <>Only Editors and Admins can import.</>;
-  else if (spec.only && !current) blocker = <>Choose a reporting period in the top bar first – the import updates that report only.</>;
+  else if (spec.only && !current && !spec.anyTime) blocker = <>Choose a reporting period in the top bar first – the import updates that report only.</>;
   else if (spec.only && current && current.status === "Locked" && !spec.anyTime)
     blocker = (
       <>
@@ -142,18 +149,27 @@ export default async function ImportPage({ params, searchParams }: { params: Pro
         </div>
       ) : (
         <>
-          {spec.only && current && (
+          {spec.anyTime && project && (
+            <div className="card space-y-3 border-l-4 border-l-navy p-4 text-sm">
+              <div>
+                <span className="text-xs font-semibold uppercase tracking-wide text-muted">Which project is this file for?</span>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {ctx.programmes.map((p) => (
+                    <Link key={p.id} href={`/imports/${kind}?programme=${p.id}`} className={`btn btn-sm ${p.id === project.id ? "btn-primary" : "btn-secondary"}`}>
+                      {p.name} <span className="ml-1 text-[11px] opacity-80">{p.code}</span>
+                    </Link>
+                  ))}
+                </div>
+              </div>
+              <div className="text-muted">
+                Updating the <b>{project.name}</b> rows of this tracker. The tracker is not part of any monthly report: upload it whenever it changes, whatever report is selected in the top bar. A project added later appears here as its own button.
+              </div>
+            </div>
+          )}
+          {spec.only && current && !spec.anyTime && (
             <div className="card flex flex-wrap items-center justify-between gap-3 border-l-4 border-l-navy p-4 text-sm">
               <div>
-                {spec.anyTime ? (
-                  <>
-                    Updating the <b>{ctx.programme?.name}</b> rows of this tracker. The tracker is not part of a monthly report: upload it whenever it changes, whatever report is selected in the top bar.
-                  </>
-                ) : (
-                  <>
-                    Updating <b>{current.label}</b> only (the report selected in the top bar). To update another month, change the period in the top bar first.
-                  </>
-                )}
+                Updating <b>{current.label}</b> only (the report selected in the top bar). To update another month, change the period in the top bar first.
               </div>
               <Link href="/" className="text-xs text-accent hover:underline">
                 Executive Summary

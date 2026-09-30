@@ -121,6 +121,8 @@ export interface ImportRequest {
   createMissingLookups: boolean;
   /** Stand-alone imports: only these registers may be written (other sheets are ignored). */
   allowedRegisters?: string[];
+  /** The project the rows belong to, chosen on the import page (the cost-recovery trackers); otherwise the top bar's project. */
+  programmeId?: number;
   /** Kept for older clients; importing an older month no longer needs a confirmation. */
   allowOlder?: boolean;
   /** Name of the uploaded workbook, kept on the period for the report library. */
@@ -194,8 +196,15 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo, progres
   // Reporting period. Every report keeps its own data: the live registers belong to the latest report.
   // Importing an older month is done "in a sandbox": the latest report's live data is stored first,
   // the older month is imported and stored, and the live registers are put back afterwards.
-  const programmeId = Number(getSetting(db, "current_programme_id") ?? (db.prepare("SELECT id FROM programmes ORDER BY id LIMIT 1").get() as { id: number } | undefined)?.id ?? 1);
-  let periodId = req.period.id ?? null;
+  const recoveryOnly = !!req.allowedRegisters?.length && req.allowedRegisters.every((k) => (RECOVERY_REGISTERS as readonly string[]).includes(k));
+  const chosen = recoveryOnly && req.programmeId ? (db.prepare("SELECT id FROM programmes WHERE id = ?").get(Number(req.programmeId)) as { id: number } | undefined) : undefined;
+  const programmeId = chosen?.id ?? Number(getSetting(db, "current_programme_id") ?? (db.prepare("SELECT id FROM programmes ORDER BY id LIMIT 1").get() as { id: number } | undefined)?.id ?? 1);
+  let periodId = req.period?.id ?? null;
+  if (!periodId && recoveryOnly) {
+    // a stand-alone tracker is not tied to a report: the project's latest report only names the audit entry
+    periodId = latestPeriod(db, programmeId)?.id ?? null;
+    if (!periodId) throw new ValidationError("This project has no reporting period yet. Import its monthly report first.");
+  }
   if (!periodId) {
     if (!req.period.report_no || !req.period.period_end) throw new ValidationError("Choose an existing reporting period or give a report number and cut-off date for a new one.");
     const end = parseDateInput(req.period.period_end);
@@ -211,7 +220,6 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo, progres
   if (period.programme_id !== programmeId) throw new ValidationError(`${period.label} belongs to another project. Switch the project in the top bar first.`);
   // The cost-recovery trackers are not part of any month's report: they are uploaded when they
   // change, whatever report is selected, locked or not, and never go through the older-month sandbox.
-  const recoveryOnly = !!req.allowedRegisters?.length && req.allowedRegisters.every((k) => (RECOVERY_REGISTERS as readonly string[]).includes(k));
   if (period.status === "Locked" && !recoveryOnly) throw new ValidationError(`${period.label} is locked. Unlock it first if you really want to re-import that month.`);
   // the latest report owns the live registers; an older month is imported "in a sandbox"
   const latest = latestPeriod(db, programmeId);
@@ -270,7 +278,8 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo, progres
     setSetting(db, `workbook_map:${def.key}`, JSON.stringify({ ...headers, __signature: sig.join("|") }));
 
     const keyFields = importKeyFields(def);
-    const existingRows = listRecords(def);
+    // a stand-alone tracker's rows belong to the project chosen on its page, whatever the top bar shows
+    const existingRows = recoveryOnly ? listRecords(def, { allScopes: true }).filter((r) => Number(r.programme_id) === programmeId) : listRecords(def);
     const touched = touchedByRegister.get(def.key) ?? new Set<number>();
     touchedByRegister.set(def.key, touched);
     const hasPeriodField = def.fields.some((f) => f.key === "period_id");
@@ -380,6 +389,7 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo, progres
             }
           }
           if (hasPeriodField && !("period_id" in input)) input.period_id = periodId;
+          if (recoveryOnly && def.fields.some((f) => f.key === "programme_id")) input.programme_id = programmeId;
           if (def.key === "bonds" && typeof input.requirement_value === "number" && !colMap.some((c) => c.field.key === "requirement_type")) {
             // "Contract requirement" in a workbook is usually the SAR amount; a value up to 100 is treated as a percentage
             input.requirement_type = input.requirement_value > 100 ? "Fixed SAR amount" : "% of contract value";

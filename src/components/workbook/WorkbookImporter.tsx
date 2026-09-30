@@ -36,6 +36,8 @@ export interface StandaloneMode {
   only: string[];
   /** The report (period) being updated – always the one selected in the top bar. */
   period: { id: number; label: string };
+  /** A stand-alone tracker (not tied to any report): the project its rows belong to, chosen on the import page. */
+  project?: { id: number; code: string; name: string };
   intro: string;
   fileHint: string;
   doneHref: string;
@@ -86,7 +88,7 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo,
         res = await fetch("/api/workbook/analyze", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ uploadId, name: f.name, size: f.size, index: i, count, data }),
+          body: JSON.stringify({ uploadId, name: f.name, size: f.size, index: i, count, data, programmeId: standalone?.project?.id }),
         });
         text = await res.text();
       } catch (e) {
@@ -148,11 +150,12 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo,
     setPhase("Starting…");
     const body = {
       fileId: analysis.fileId,
-      period: standalone ? { id: standalone.period.id } : periodMode === "existing" ? { id: periodId } : { report_no: Number(reportNo.replace(/\D/g, "")) || undefined, period_end: periodEnd },
+      period: standalone?.project ? {} : standalone ? { id: standalone.period.id } : periodMode === "existing" ? { id: periodId } : { report_no: Number(reportNo.replace(/\D/g, "")) || undefined, period_end: periodEnd },
       sheets: analysis.sheets.map((s) => ({ sheet: s.name, headerRow: s.headerRow, register: mapping[s.name]?.register ?? null, columns: mapping[s.name]?.columns ?? {} })),
       lock: standalone ? false : lock,
       createMissingLookups: createLookups,
       allowedRegisters: standalone?.only ?? (excludeRegisters.length ? registers.map((r) => r.key) : undefined),
+      programmeId: standalone?.project?.id,
       fileName: analysis.fileName,
       excelCheck: analysis.conversion?.level1 ?? null,
       control: analysis.conversion?.control ?? null,
@@ -318,7 +321,15 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo,
             Excel file{standalone ? ` – ${standalone.fileHint}` : ""}
             <input type="file" accept=".xlsx,.xlsm,.csv" className="input" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
           </label>
-          {standalone ? (
+          {standalone?.project ? (
+            <div className="rounded-lg border border-line bg-slate-50 p-3 text-xs text-ink">
+              <div className="font-semibold text-muted">Stand-alone tracker – not tied to any report</div>
+              <div className="mt-1 text-sm font-semibold">
+                {standalone.project.name} <span className="font-normal text-muted">({standalone.project.code})</span>
+              </div>
+              <div className="mt-1 text-muted">Only this project&apos;s rows of the tracker are kept and updated in place; upload it whenever it changes. Nothing else in the dashboard changes.</div>
+            </div>
+          ) : standalone ? (
             <div className="rounded-lg border border-line bg-slate-50 p-3 text-xs text-ink">
               <div className="font-semibold text-muted">Updates this report only</div>
               <div className="mt-1 flex items-center gap-2 text-sm font-semibold">
