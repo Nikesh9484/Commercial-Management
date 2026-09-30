@@ -422,3 +422,34 @@ export function convertCustomsTracker(sheets: SheetValues[], ctx: RecoveryContex
 }
 
 export { cellText };
+
+/* ------------------------------------------------------- one file, every project */
+
+/**
+ * The accommodation and customs trackers are one AMAALA-wide file: one upload fills every project at
+ * once. Each project's rows are picked out with that project's own contractors and cost lines, then
+ * laid into a single sheet whose last column names the project – the importer files every row under
+ * it. The tracker key is prefixed with the project code so the two projects' rows never collide.
+ */
+export function convertRecoveryTrackers(sheets: SheetValues[], ctxs: RecoveryContext[], kind: "accommodation" | "customs"): RecoveryResult {
+  const parts = ctxs.map((ctx) => ({ ctx, res: kind === "accommodation" ? convertAccommodationTracker(sheets, ctx) : convertCustomsTracker(sheets, ctx) }));
+  const first = parts[0]?.res.sheets[0];
+  if (!first) return { sheets: [], notes: ["No project has been set up yet."], total: 0, kept: 0 };
+  const rows: unknown[][] = [];
+  const notes: string[] = [];
+  let total = 0;
+  let kept = 0;
+  for (const { ctx, res } of parts) {
+    const sheet = res.sheets[0];
+    for (const r of sheet?.rows ?? []) rows.push([`${ctx.programmeCode.toUpperCase()}|${String(r[0] ?? "")}`, ...r.slice(1), ctx.programmeCode]);
+    notes.push(...res.notes.map((n) => `${ctx.programmeName}: ${n}`));
+    total = Math.max(total, res.total);
+    kept += res.kept;
+  }
+  return {
+    sheets: [{ name: first.name, register: first.register, columns: [...first.columns, { label: "Project", key: "programme_id" }], rows }],
+    notes,
+    total,
+    kept,
+  };
+}

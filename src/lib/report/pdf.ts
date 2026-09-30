@@ -17,7 +17,8 @@ import { groupByParty, plural, type PartyGroup } from "./report-utils";
 import { buildTransfersReport } from "./transfers-report";
 import { buildFaReport } from "./fa-report";
 import { buildPeriodSummary, sar, sarMove } from "./period-summary";
-import { getAccommodationSummary, getCustomsSummary, buildUncommittedTable } from "../recovery/summary";
+import { getAccommodationSummary, getCustomsSummary } from "../recovery/summary";
+import { buildUncommittedTable } from "./uncommitted-ew";
 import { buildAconexReconciliation, ACONEX_MEASURES } from "../recovery/aconex";
 
 type Doc = PDFKit.PDFDocument;
@@ -1375,14 +1376,14 @@ function aconexReport(ctx: Ctx) {
   }
 }
 
-/** The consolidated "Uncommitted Costs and Early Warnings" table, one row per cost report line, in the programme-wide Level 5 layout. */
+/** The consolidated "Uncommitted Costs and Early Warnings" table for the report, one row per cost report line, in the programme-wide Level 5 layout, with the early warnings behind it. */
 function uncommittedEwReport(ctx: Ctx) {
   const { doc, data } = ctx;
   const width = PAGE.width - PAGE.margin * 2;
   const t = buildUncommittedTable(data);
   const money = (v: unknown) => (v === null || v === undefined || Math.abs(Number(v)) < 0.005 ? "–" : formatMoney(v as number));
   doc.fillColor(MUTED).font("Helvetica").fontSize(8.5).text(
-    `Every cost report line of ${data.programme.name} as the programme-wide "Level 5 – Contracts" sheet lays them out: approved budget, commitments, the uncommitted amounts by kind, the two recoveries and the estimate at completion, from ${data.period.label}${t.asOf.accommodation ? `, the accommodation tracker as of ${formatDate(t.asOf.accommodation)}` : ""}${t.asOf.customs ? ` and the customs tracker as of ${formatDate(t.asOf.customs)}` : ""}.`,
+    `Every cost report line of ${data.programme.name} in ${data.period.label}, as the programme-wide "Level 5 – Contracts" sheet lays them out: approved budget, commitments, the uncommitted amounts by kind, what is uncommitted / not required, the early warnings (cost report column L) and the estimate at completion – from this report's own registers${data.locked ? " (issued)" : " (draft)"}.`,
     { width },
   );
   doc.moveDown(0.5);
@@ -1392,25 +1393,47 @@ function uncommittedEwReport(ctx: Ctx) {
       { key: "code", label: "Code", width: 1.5 },
       { key: "name", label: "Name", width: 2.2 },
       { key: "contractor", label: "Contractor", width: 1.5 },
-      { key: "budget", label: "Approved budget", width: 1, align: "right", format: money },
-      { key: "commitments", label: "Commitments", width: 1, align: "right", format: money },
+      { key: "budget", label: "Current approved budget", width: 1, align: "right", format: money },
+      { key: "commitments", label: "Total commitments", width: 1, align: "right", format: money },
       { key: "voUnderProcess", label: "VO under process", width: 0.9, align: "right", format: money },
       { key: "eotClaims", label: "EOT claims", width: 0.9, align: "right", format: money },
       { key: "otherClaims", label: "Other claims", width: 0.9, align: "right", format: money },
-      { key: "uncommittedScope", label: "Uncommitted scope (RFC)", width: 0.9, align: "right", format: money },
-      { key: "earlyWarnings", label: "Early warnings", width: 0.9, align: "right", format: money },
-      { key: "accommodationRecovery", label: "Accommodation recovery", width: 0.9, align: "right", format: money },
-      { key: "customsRecovery", label: "Customs recovery", width: 0.9, align: "right", format: money },
+      { key: "uncommittedScope", label: "Identified uncommitted scope", width: 0.9, align: "right", format: money },
+      { key: "plantSupply", label: "Plant supply", width: 0.8, align: "right", format: money },
+      { key: "ffe", label: "FF&E", width: 0.8, align: "right", format: money },
       { key: "totalUncommitted", label: "Total uncommitted", width: 1, align: "right", format: money },
       { key: "notRequired", label: "Uncommitted / not required", width: 1, align: "right", format: money },
-      { key: "eac", label: "EAC", width: 1, align: "right", format: money },
+      { key: "earlyWarnings", label: "Early warnings", width: 1, align: "right", format: money },
+      { key: "eac", label: "Estimate at completion", width: 1, align: "right", format: money },
     ],
     t.rows.map((r) => ({ ...r, code: r.kind === "line" ? r.code : "" })) as unknown as Record<string, unknown>[],
     { totalRow: { ...t.total, code: "" } as unknown as Record<string, unknown>, rowStyle: (r) => (r.kind === "category" ? { bold: true, bg: ZEBRA, color: NAVY } : undefined) },
   );
-  if (t.unlinked.length) {
-    doc.moveDown(0.3);
-    doc.fillColor(MUTED).font("Helvetica-Oblique").fontSize(8).text(`Not tied to a cost report line: ${t.unlinked.map((u) => `${u.label} – ${u.source} ${formatMoney(u.amount)}`).join("; ")}.`, { width });
+  const withEws = t.rows.filter((r) => r.kind === "line" && r.ews.length);
+  if (withEws.length || t.unlinkedEws.length) {
+    subheading(ctx, "Early warnings behind column L", `${t.counts.ews} early warning(s) on the register, ${t.counts.openEws} open – as on the Early Warning sheet of the workbook, contract by contract.`);
+    const rows: Record<string, unknown>[] = [];
+    for (const r of withEws) {
+      rows.push({ __span: true, ewNo: `${r.code} – ${r.name}${r.contractor ? ` (${r.contractor})` : ""} – column L ${formatMoney(r.earlyWarnings)}` });
+      for (const e of r.ews) rows.push({ ewNo: e.ewNo, description: e.description, contractor: e.contractor, status: e.status, likelihood: e.likelihood, amount: e.amount });
+    }
+    if (t.unlinkedEws.length) {
+      rows.push({ __span: true, ewNo: "Not linked to a cost report line (not in column L)" });
+      for (const e of t.unlinkedEws) rows.push({ ewNo: e.ewNo, description: e.description, contractor: e.contractor, status: e.status, likelihood: e.likelihood, amount: e.amount });
+    }
+    table(
+      ctx,
+      [
+        { key: "ewNo", label: "EW No", width: 0.8 },
+        { key: "description", label: "Description", width: 3.4 },
+        { key: "contractor", label: "Contractor", width: 1.6 },
+        { key: "status", label: "Status", width: 0.7 },
+        { key: "likelihood", label: "Likelihood", width: 0.7 },
+        { key: "amount", label: "Cost impact (SAR)", width: 1, align: "right", format: money },
+      ],
+      rows,
+      { zebra: true, rowStyle: (r) => (r.__span ? { span: true } : undefined) },
+    );
   }
 }
 

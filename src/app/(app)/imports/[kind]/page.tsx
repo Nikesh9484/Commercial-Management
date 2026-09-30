@@ -8,11 +8,12 @@ import { getRegisterDef } from "@/lib/registers";
 import { IMPORTABLE } from "@/lib/workbook/analyze";
 import { standaloneOnly } from "@/lib/workbook/import";
 import { getDb } from "@/lib/db";
+import { formatDate } from "@/lib/format";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { WorkbookImporter, type StandaloneMode } from "@/components/workbook/WorkbookImporter";
 
 /** The stand-alone import pages (left menu "Stand-alone imports"). "monthly" is the full monthly workbook. */
-export const IMPORT_KINDS: Record<string, { title: string; subtitle: string; only?: string[]; exclude?: string[]; intro?: string; fileHint?: string; doneHref?: string; doneLabel?: string; /** not part of any month's report: may be uploaded whatever report is selected, locked or not */ anyTime?: boolean }> = {
+export const IMPORT_KINDS: Record<string, { title: string; subtitle: string; only?: string[]; exclude?: string[]; intro?: string; fileHint?: string; doneHref?: string; doneLabel?: string; /** not part of any month's report: may be uploaded whatever report is selected, locked or not */ anyTime?: boolean; /** one file per project: an upload box for each */ perProject?: boolean; /** one file for every project: each row is filed under the project it names */ shared?: boolean }> = {
   monthly: {
     title: "Import monthly workbook",
     subtitle: "Upload one of your Excel monthly reports and the app records it against a reporting period. Each month is stored as its own report, so months can be loaded in any order and each one shows its movement against the last. Bonds & Insurance, Invoices & Payments and Final Account Status all come from this workbook – Schedule G, Schedule H with its IPC sheets, and the FA Status sheet – so one upload keeps the whole month in step. Claims & Disputes are the exception: they are never taken from the workbook, because they come from the AMAALA Claims Tracker, which is a different file.",
@@ -30,32 +31,35 @@ export const IMPORT_KINDS: Record<string, { title: string; subtitle: string; onl
   accommodation: {
     title: "Import accommodation invoice tracker",
     subtitle: "Upload the AMAALA Construction Village lease-agreement invoice tracker whenever it changes – it is not part of the monthly report – and the Cost Recovery page shows what each of our contractors has been invoiced, has paid or had recovered through its IPCs, and still owes.",
-    only: ["accommodation_recovery"],
-    intro: "Upload the accommodation invoice tracker (the workbook with the \"L.A. Invoice Tracker (W)\" sheet, .xlsx or .xlsm). Only the lease agreements of the project chosen below are kept – recognised by their asset code (1TB01031 …) or the program name on the row – and each is tied to our contractor by name. Rows already here are updated, so the tracker can be re-uploaded as often as it changes.",
+    only: ["accommodation_recovery", "customs_recovery"],
+    intro: "Upload the accommodation invoice tracker (the workbook with the \"L.A. Invoice Tracker (W)\" sheet, .xlsx or .xlsm). It is one file for every project: the lease agreements of The Marina and of VBH are picked out by their asset code (1TB01031, 1TB01006 …) or the program name on the row, each is tied to that project's contractor by name, and each is filed under its own project. Rows already here are updated and rows no longer on the tracker are removed, so the tracker can be re-uploaded as often as it changes. The app recognises which tracker a file is – accommodation or customs – so a file uploaded on the wrong page still lands in its own register.",
     fileHint: "Accommodation invoice tracker (L.A. Invoice Tracker sheet)",
     doneHref: "/modules/cost-recovery",
     doneLabel: "Open Cost Recovery",
     anyTime: true,
+    shared: true,
   },
   customs: {
     title: "Import customs recovery tracker",
     subtitle: "Upload the AMAALA Customs Recovery Tracker whenever it changes – it is not part of the monthly report – and the Cost Recovery page shows the customs duties RSG paid on each contractor's imports and how they are being recovered.",
-    only: ["customs_recovery"],
-    intro: "Upload the customs recovery tracker (the workbook with the \"Summary-Site Team to Enter\" sheet). Only the contracts of the project chosen below are kept – recognised by the asset code in the commercial lead's columns – together with the customs figures of vendors that are our contractors, each tied to its cost report line by contract code (031C13 → CN.031C13). Rows already here are updated on a re-upload.",
+    only: ["customs_recovery", "accommodation_recovery"],
+    intro: "Upload the customs recovery tracker (the workbook with the \"Summary-Site Team to Enter\" sheet). It is one file for every project: the contracts of The Marina and of VBH are recognised by the asset code in the commercial lead's columns, together with the customs figures of vendors that are that project's contractors, each tied to its cost report line by contract code (031C13 → CN.031C13) and filed under its own project. Rows already here are updated on a re-upload and rows no longer on the tracker are removed.",
     fileHint: "AMAALA Customs Recovery Tracker (Summary sheet)",
     doneHref: "/modules/cost-recovery?tab=customs",
     doneLabel: "Open Cost Recovery",
     anyTime: true,
+    shared: true,
   },
   aconex: {
     title: "Import Aconex control account export",
-    subtitle: "Upload the control-account export from Aconex for the project you choose below (one file per project) and the Aconex Cost Check reconciles its budget, commitments, changes and estimate at completion against the dashboard's cost report, line by line.",
+    subtitle: "Aconex exports one control-account file per project, so there is one upload box for The Marina and one for VBH below. The Aconex Cost Check then reconciles each project's budget, commitments, changes and estimate at completion against the dashboard's cost report, line by line.",
     only: ["aconex_control_accounts"],
-    intro: "Upload the Aconex control-account export (the .csv file, or the same table saved as .xlsx). Only the rows of the project chosen below are kept: one per contract (1TB01031.01.CN.031C15) and per budget hold (…PS.98), each tied to its cost report line by contract code. Rows already here are replaced by the new figures on a re-upload.",
+    intro: "Upload this project's Aconex control-account export (the .csv file, or the same table saved as .xlsx). Only its rows are kept: one per contract (1TB01031.01.CN.031C15) and per budget hold (…PS.98), each tied to its cost report line by contract code. Rows already here are replaced by the new figures on a re-upload.",
     fileHint: "control-account-export.csv",
     doneHref: "/modules/aconex-check",
     doneLabel: "Open Aconex Cost Check",
     anyTime: true,
+    perProject: true,
   },
 };
 
@@ -72,9 +76,9 @@ export async function generateMetadata({ params }: { params: Promise<{ kind: str
   return { title: IMPORT_KINDS[kind]?.title ?? RETIRED_IMPORTS[kind]?.title ?? "Import" };
 }
 
-export default async function ImportPage({ params, searchParams }: { params: Promise<{ kind: string }>; searchParams: Promise<{ period?: string; programme?: string }> }) {
+export default async function ImportPage({ params, searchParams }: { params: Promise<{ kind: string }>; searchParams: Promise<{ period?: string }> }) {
   const { kind } = await params;
-  const { period: periodParam, programme: programmeParam } = await searchParams;
+  const { period: periodParam } = await searchParams;
   const initialPeriodId = Number(periodParam) || null;
   const retired = RETIRED_IMPORTS[kind];
   if (retired) {
@@ -120,17 +124,21 @@ export default async function ImportPage({ params, searchParams }: { params: Pro
   });
   const nextNo = (periods[0]?.report_no ?? 0) + 1;
   const current = ctx.period ? periods.find((p) => p.id === ctx.period!.id) ?? null : null;
-  // a stand-alone tracker names its project here (The Marina, VBH, and any project added later), not in the top bar
-  const project = spec.anyTime ? (ctx.programmes.find((p) => String(p.id) === programmeParam) ?? ctx.programme ?? ctx.programmes[0] ?? null) : null;
-  const standalone: StandaloneMode | undefined =
-    spec.only && spec.anyTime && project
-      ? { only: spec.only, period: { id: current?.id ?? 0, label: current?.label ?? "" }, project: { id: project.id, code: project.code, name: project.name }, intro: spec.intro ?? "", fileHint: spec.fileHint ?? "", doneHref: spec.doneHref ?? "/", doneLabel: spec.doneLabel ?? "Done" }
-      : spec.only && current
-        ? { only: spec.only, period: { id: current.id, label: current.label }, intro: spec.intro ?? "", fileHint: spec.fileHint ?? "", doneHref: spec.doneHref ?? "/", doneLabel: spec.doneLabel ?? "Done" }
-        : undefined;
+  // a stand-alone tracker is not tied to any report: either one upload box per project (Aconex) or one
+  // file for every project (the accommodation and customs trackers)
+  const trackerBase = spec.only && spec.anyTime ? { only: spec.only, period: { id: current?.id ?? 0, label: current?.label ?? "" }, intro: spec.intro ?? "", fileHint: spec.fileHint ?? "", doneHref: spec.doneHref ?? "/", doneLabel: spec.doneLabel ?? "Done" } : null;
+  const standalone: StandaloneMode | undefined = trackerBase ? (spec.shared ? { ...trackerBase, shared: true } : undefined) : spec.only && current ? { only: spec.only, period: { id: current.id, label: current.label }, intro: spec.intro ?? "", fileHint: spec.fileHint ?? "", doneHref: spec.doneHref ?? "/", doneLabel: spec.doneLabel ?? "Done" } : undefined;
+  // what each project holds from the last upload of this tracker
+  const primary = spec.only?.[0] ? getRegisterDef(spec.only[0]) : null;
+  const held = new Map(
+    ctx.programmes.map((p) => {
+      const row = primary ? (getDb().prepare(`SELECT COUNT(*) AS n, MAX(tracker_date) AS d FROM "${primary.table}" WHERE programme_id = ?`).get(p.id) as { n: number; d: string | null }) : { n: 0, d: null };
+      return [p.id, row.n ? `${row.n} row(s) held${row.d ? ` · tracker as of ${formatDate(row.d)}` : ""}` : "nothing uploaded yet"];
+    }),
+  );
 
   let blocker: React.ReactNode = null;
-  if (!ctx.programme && !project) blocker = <>Select a programme in the top bar first.</>;
+  if (!ctx.programme && !(spec.anyTime && ctx.programmes.length)) blocker = <>Select a programme in the top bar first.</>;
   else if (user.role !== "admin" && user.role !== "editor") blocker = <>Only Editors and Admins can import.</>;
   else if (spec.only && !current && !spec.anyTime) blocker = <>Choose a reporting period in the top bar first – the import updates that report only.</>;
   else if (spec.only && current && current.status === "Locked" && !spec.anyTime)
@@ -149,21 +157,19 @@ export default async function ImportPage({ params, searchParams }: { params: Pro
         </div>
       ) : (
         <>
-          {spec.anyTime && project && (
-            <div className="card space-y-3 border-l-4 border-l-navy p-4 text-sm">
-              <div>
-                <span className="text-xs font-semibold uppercase tracking-wide text-muted">Which project is this file for?</span>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {ctx.programmes.map((p) => (
-                    <Link key={p.id} href={`/imports/${kind}?programme=${p.id}`} className={`btn btn-sm ${p.id === project.id ? "btn-primary" : "btn-secondary"}`}>
-                      {p.name} <span className="ml-1 text-[11px] opacity-80">{p.code}</span>
-                    </Link>
-                  ))}
-                </div>
-              </div>
+          {spec.shared && (
+            <div className="card space-y-2 border-l-4 border-l-navy p-4 text-sm">
+              <div className="text-xs font-semibold uppercase tracking-wide text-muted">One file for every project</div>
               <div className="text-muted">
-                Updating the <b>{project.name}</b> rows of this tracker. The tracker is not part of any monthly report: upload it whenever it changes, whatever report is selected in the top bar. A project added later appears here as its own button.
+                This tracker covers the whole of AMAALA, so upload it once: every project&apos;s rows are picked out and filed under that project. It is not part of any monthly report – upload it whenever it changes, whatever report is selected in the top bar.
               </div>
+              <ul className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-muted">
+                {ctx.programmes.map((p) => (
+                  <li key={p.id}>
+                    <b className="text-ink">{p.name}</b> <span className="opacity-70">{p.code}</span> · {held.get(p.id)}
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
           {spec.only && current && !spec.anyTime && (
@@ -186,7 +192,24 @@ export default async function ImportPage({ params, searchParams }: { params: Pro
               </Link>
             </div>
           )}
-          <WorkbookImporter registers={registers} periods={periods} isAdmin={user.role === "admin"} defaultReportNo={nextNo} standalone={standalone} excludeRegisters={exclude} initialPeriodId={initialPeriodId} />
+          {spec.perProject && trackerBase ? (
+            ctx.programmes.map((p) => (
+              <section key={p.id} className="space-y-3 rounded-2xl border-2 border-navy/20 p-3 sm:p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3 px-1">
+                  <div>
+                    <div className="text-xs font-semibold uppercase tracking-wide text-muted">Upload for</div>
+                    <div className="text-base font-semibold text-ink">
+                      {p.name} <span className="text-sm font-normal text-muted">{p.code}</span>
+                    </div>
+                  </div>
+                  <div className="text-xs text-muted">{held.get(p.id)}</div>
+                </div>
+                <WorkbookImporter registers={registers} periods={periods} isAdmin={user.role === "admin"} defaultReportNo={nextNo} standalone={{ ...trackerBase, project: { id: p.id, code: p.code, name: p.name } }} excludeRegisters={exclude} initialPeriodId={initialPeriodId} />
+              </section>
+            ))
+          ) : (
+            <WorkbookImporter registers={registers} periods={periods} isAdmin={user.role === "admin"} defaultReportNo={nextNo} standalone={standalone} excludeRegisters={exclude} initialPeriodId={initialPeriodId} />
+          )}
         </>
       )}
     </div>

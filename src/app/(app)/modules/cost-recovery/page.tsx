@@ -1,12 +1,11 @@
 import Link from "next/link";
-import { AlertTriangle, FileSpreadsheet, Mail, Upload } from "lucide-react";
+import { AlertTriangle, Mail, Upload } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth";
 import { getAppContext } from "@/lib/context";
 import { getModule } from "@/lib/modules";
 import { getRegisterDef } from "@/lib/registers";
 import { listRecords } from "@/lib/registers/engine";
-import { getReportData } from "@/lib/report/data";
-import { buildUncommittedTable, getAccommodationSummary, getCustomsSummary, type UncommittedRow } from "@/lib/recovery/summary";
+import { getAccommodationSummary, getCustomsSummary } from "@/lib/recovery/summary";
 import { formatDate, formatMoney } from "@/lib/format";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { RegisterPage } from "@/components/register/RegisterPage";
@@ -14,19 +13,18 @@ import { ExportButtons } from "@/components/ui/ExportButtons";
 
 export const metadata = { title: "Cost Recovery – Accommodation & Customs" };
 
-type Tab = "accommodation" | "customs" | "table";
+type Tab = "accommodation" | "customs";
 
 /**
  * Module 13 – what contractors owe RSG: staff accommodation charges (the construction village
  * invoice tracker) and customs duties RSG paid on their imports (the customs recovery tracker),
- * with the consolidated "Uncommitted Costs and Early Warnings" table those figures feed.
  */
 export default async function CostRecoveryPage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
   const user = (await getCurrentUser())!;
   const mod = getModule("cost-recovery")!;
   const ctx = getAppContext();
   const { tab: tabParam } = await searchParams;
-  const tab: Tab = tabParam === "customs" ? "customs" : tabParam === "table" ? "table" : "accommodation";
+  const tab: Tab = tabParam === "customs" ? "customs" : "accommodation";
   const canImport = user.role === "admin" || user.role === "editor";
   if (!ctx.programme) {
     return (
@@ -40,11 +38,9 @@ export default async function CostRecoveryPage({ searchParams }: { searchParams:
   }
   const acc = getAccommodationSummary(listRecords(getRegisterDef("accommodation_recovery")!));
   const cus = getCustomsSummary(listRecords(getRegisterDef("customs_recovery")!), listRecords(getRegisterDef("changes")!));
-  const table = ctx.period ? buildUncommittedTable(getReportData(ctx.programme.id, ctx.period.id)) : null;
   const tabs: { key: Tab; label: string; count: string }[] = [
     { key: "accommodation", label: "Accommodation cost recovery", count: `${acc.totals.rows}` },
     { key: "customs", label: "Customs duty recovery", count: `${cus.totals.rows}` },
-    { key: "table", label: "Uncommitted costs & early warnings table", count: table ? `${table.rows.filter((r) => r.kind === "line").length}` : "–" },
   ];
   const money = (v: number) => formatMoney(v);
 
@@ -53,15 +49,10 @@ export default async function CostRecoveryPage({ searchParams }: { searchParams:
       <PageHeader
         eyebrow={`Module ${mod.no}`}
         title={mod.title}
-        subtitle="Money owed back to RSG by contractors: accommodation charges invoiced under the construction village lease agreements, and customs duties RSG paid on their imports. Both trackers are uploaded when they change, not every month, so the figures here are as of the tracker's own date."
+        subtitle="Money owed back to RSG by contractors: accommodation charges invoiced under the construction village lease agreements, and customs duties RSG paid on their imports. Both trackers are uploaded when they change, not every month, so the figures here are as of the tracker's own date and do not depend on the report selected in the top bar."
         actions={
           <span className="inline-flex flex-wrap items-center gap-1.5 rounded-xl border border-line bg-white px-2 py-1 shadow-sm">
             <ExportButtons section="recovery_report" label="Cost recovery report" />
-            {ctx.period && (
-              <a className="btn btn-sm btn-excel" href={`/api/export?section=uncommitted_ew&format=xlsx&period=${ctx.period.id}`} title="The consolidated Uncommitted Costs and Early Warnings table for this project, in the Level 5 contracts layout, ready to paste into the programme-wide sheet">
-                <FileSpreadsheet size={14} /> Uncommitted & EW table (Excel)
-              </a>
-            )}
           </span>
         }
       />
@@ -229,71 +220,7 @@ export default async function CostRecoveryPage({ searchParams }: { searchParams:
         </>
       )}
 
-      {tab === "table" &&
-        (table ? (
-          <>
-            <p className="text-sm text-muted">
-              Every cost report line of {ctx.programme.name} in the programme-wide &quot;Level 5 – Contracts&quot; layout: budget, commitments, the uncommitted amounts by kind and the two recoveries, from the report in the top bar
-              {table.asOf.accommodation ? ` and the accommodation tracker as of ${formatDate(table.asOf.accommodation)}` : ""}
-              {table.asOf.customs ? ` and the customs tracker as of ${formatDate(table.asOf.customs)}` : ""}. The Excel button above gives the same table ready to paste into the consolidated sheet.
-            </p>
-            <div className="card overflow-x-auto p-0">
-              <table className="w-full whitespace-nowrap text-xs">
-                <thead>
-                  <tr className="text-left text-muted">
-                    {["Code", "Name", "Contractor", "Approved budget", "Commitments", "VO under process", "EOT claims", "Other claims", "Uncommitted scope (RFC)", "Early warnings", "Accommodation recovery", "Customs recovery", "Total uncommitted", "Uncommitted / not required", "EAC"].map((h, i) => (
-                      <th key={h} className={`px-2 py-2 ${i >= 3 ? "text-right" : ""}`}>
-                        {h}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {table.rows.map((r) => (
-                    <Row key={r.code} r={r} />
-                  ))}
-                  <Row r={table.total} />
-                </tbody>
-              </table>
-            </div>
-            {table.unlinked.length > 0 && (
-              <p className="text-xs text-muted">
-                Not tied to a cost report line (no contract found for the contractor): {table.unlinked.map((u) => `${u.label} – ${u.source} ${money(u.amount)}`).join("; ")}. Set the cost report line on those tracker rows to place them.
-              </p>
-            )}
-          </>
-        ) : (
-          <div className="card flex items-center gap-2 p-5 text-sm text-muted">
-            <AlertTriangle size={16} /> Choose a reporting period in the top bar to build the table.
-          </div>
-        ))}
     </div>
-  );
-}
-
-function Row({ r }: { r: UncommittedRow }) {
-  const cls = r.kind === "total" ? "border-t-2 border-line bg-slate-100 font-semibold" : r.kind === "category" ? "bg-slate-50 font-semibold text-navy" : "border-t border-line";
-  const cell = (v: number, strong = false) => <td className={`px-2 py-1 text-right tnum ${strong && Math.abs(v) >= 0.5 ? "font-semibold" : ""} ${v < -0.5 ? "text-emerald-700" : ""}`}>{Math.abs(v) < 0.005 ? "–" : formatMoney(v)}</td>;
-  return (
-    <tr className={cls}>
-      <td className="px-2 py-1 font-mono text-[11px]">{r.kind === "line" ? r.code : ""}</td>
-      <td className="max-w-[20rem] truncate px-2 py-1" title={r.note || r.name}>
-        {r.name}
-      </td>
-      <td className="max-w-[14rem] truncate px-2 py-1 text-muted">{r.contractor}</td>
-      {cell(r.budget)}
-      {cell(r.commitments)}
-      {cell(r.voUnderProcess)}
-      {cell(r.eotClaims)}
-      {cell(r.otherClaims)}
-      {cell(r.uncommittedScope)}
-      {cell(r.earlyWarnings)}
-      {cell(r.accommodationRecovery, true)}
-      {cell(r.customsRecovery, true)}
-      {cell(r.totalUncommitted)}
-      {cell(r.notRequired)}
-      {cell(r.eac)}
-    </tr>
   );
 }
 

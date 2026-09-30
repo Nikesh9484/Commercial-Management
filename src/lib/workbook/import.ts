@@ -251,6 +251,8 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo, progres
   const monthly = !req.allowedRegisters;
   const standalone = standaloneOnly(db, programmeId);
   const touchedByRegister = new Map<string, Set<number>>();
+  // the projects each stand-alone tracker fed, to remove their rows the tracker no longer carries
+  const recoveryScope = new Map<string, Set<number>>();
   for (const m of req.sheets) {
     if (!m.register) continue;
     if (req.allowedRegisters && !req.allowedRegisters.includes(m.register)) continue;
@@ -279,7 +281,12 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo, progres
 
     const keyFields = importKeyFields(def);
     // a stand-alone tracker's rows belong to the project chosen on its page, whatever the top bar shows
-    const existingRows = recoveryOnly ? listRecords(def, { allScopes: true }).filter((r) => Number(r.programme_id) === programmeId) : listRecords(def);
+    // one AMAALA-wide tracker (accommodation, customs): a "Project [programme_id]" column names each row's project
+    const programmeCol = recoveryOnly ? (ws.rows.get(m.headerRow) ?? []).findIndex((v) => /\[programme_id\]\s*$/i.test(cellText(v))) : -1;
+    const programmeByCode = new Map(programmeCol >= 0 ? (db.prepare("SELECT id, code FROM programmes").all() as { id: number; code: string }[]).map((p) => [p.code.toUpperCase(), p.id] as const) : []);
+    const existingRows = recoveryOnly ? listRecords(def, { allScopes: true }).filter((r) => programmeCol >= 0 || Number(r.programme_id) === programmeId) : listRecords(def);
+    const projectsFed = recoveryScope.get(def.key) ?? new Set<number>();
+    recoveryScope.set(def.key, projectsFed);
     const touched = touchedByRegister.get(def.key) ?? new Set<number>();
     touchedByRegister.set(def.key, touched);
     const hasPeriodField = def.fields.some((f) => f.key === "period_id");
@@ -389,7 +396,10 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo, progres
             }
           }
           if (hasPeriodField && !("period_id" in input)) input.period_id = periodId;
-          if (recoveryOnly && def.fields.some((f) => f.key === "programme_id")) input.programme_id = programmeId;
+          if (recoveryOnly && def.fields.some((f) => f.key === "programme_id")) {
+            input.programme_id = (programmeCol >= 0 ? programmeByCode.get(cellText(row[programmeCol]).trim().toUpperCase()) : undefined) ?? programmeId;
+            projectsFed.add(Number(input.programme_id));
+          }
           if (def.key === "bonds" && typeof input.requirement_value === "number" && !colMap.some((c) => c.field.key === "requirement_type")) {
             // "Contract requirement" in a workbook is usually the SAR amount; a value up to 100 is treated as a percentage
             input.requirement_type = input.requirement_value > 100 ? "Fixed SAR amount" : "% of contract value";
@@ -468,6 +478,17 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo, progres
   // An older month rebuilt from its monthly workbook: rows the workbook did not contain are removed from
   // the registers it fed (matched rows keep their ids, so links from claims, bonds and final accounts hold).
   let pruned = 0;
+  // A stand-alone tracker is mirrored whole: for the projects it fed, rows the file no longer carries
+  // are removed – unless a row of that sheet failed, when nothing is removed until it is put right.
+  if (recoveryOnly) {
+    for (const [key, ids] of touchedByRegister) {
+      const def = getRegisterDef(key);
+      const fed = recoveryScope.get(key);
+      if (!def || !fed?.size || results.some((r) => r.register === key && r.errors.length)) continue;
+      const list = [...ids];
+      pruned += db.prepare(`DELETE FROM "${def.table}" WHERE programme_id IN (${[...fed].map(() => "?").join(",")}) AND id NOT IN (${list.map(() => "?").join(",") || "-1"})`).run(...fed, ...list).changes;
+    }
+  }
   if (older && monthly) {
     for (const [key, ids] of touchedByRegister) {
       const def = getRegisterDef(key);
@@ -510,7 +531,7 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo, progres
     recordId: periodId,
     action: "import",
     user,
-    summary: `Imported workbook for ${period.label}: ${results.map((r) => `${r.sheet} → ${r.register} (${r.created} added, ${r.updated} updated, ${r.errors.length} errors)`).join("; ")}${pruned ? `; ${pruned} row(s) not in the workbook removed from this older report` : ""}${dedupedEws ? `; ${dedupedEws} duplicated early warning(s) removed` : ""}${merged.groups ? `; ${merged.removed} duplicate contractor record(s) merged into ${merged.groups} ${merged.groups === 1 ? "company" : "companies"} (${merged.moved} record(s) moved)` : ""}`,
+    summary: `Imported workbook for ${period.label}: ${results.map((r) => `${r.sheet} → ${r.register} (${r.created} added, ${r.updated} updated, ${r.errors.length} errors)`).join("; ")}${pruned ? (recoveryOnly ? `; ${pruned} row(s) no longer on the tracker removed` : `; ${pruned} row(s) not in the workbook removed from this older report`) : ""}${dedupedEws ? `; ${dedupedEws} duplicated early warning(s) removed` : ""}${merged.groups ? `; ${merged.removed} duplicate contractor record(s) merged into ${merged.groups} ${merged.groups === 1 ? "company" : "companies"} (${merged.moved} record(s) moved)` : ""}`,
   });
 
   // the library shows the monthly workbook the report came from; a stand-alone import does not replace that name

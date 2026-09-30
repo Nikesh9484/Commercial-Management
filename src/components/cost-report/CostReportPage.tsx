@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useState } from "react";
+import { useScopeKey } from "@/components/layout/ScopeContext";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Download, Pencil, RefreshCw, AlertTriangle, CheckCircle2, Info } from "lucide-react";
@@ -31,6 +32,8 @@ export function CostReportPage({ canEdit, isAdmin, initialTab }: { canEdit: bool
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
 
+  // the project / asset / report in the top bar: the cost report is fetched again whenever it changes
+  const scopeKey = useScopeKey();
   const load = useCallback(
     () =>
       fetch("/api/cost-report", { cache: "no-store" })
@@ -40,7 +43,8 @@ export function CostReportPage({ canEdit, isAdmin, initialTab }: { canEdit: bool
           return j as CostReport & { level1Matrix?: Level1Matrix; excelCheck?: Level1Check | null };
         })
         .then(setReport, (e: Error) => setError(e.message)),
-    [],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [scopeKey],
   );
   useEffect(() => {
     load();

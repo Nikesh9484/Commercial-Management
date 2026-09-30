@@ -36,8 +36,10 @@ export interface StandaloneMode {
   only: string[];
   /** The report (period) being updated – always the one selected in the top bar. */
   period: { id: number; label: string };
-  /** A stand-alone tracker (not tied to any report): the project its rows belong to, chosen on the import page. */
+  /** A stand-alone tracker (not tied to any report): the project its rows belong to – one upload box per project. */
   project?: { id: number; code: string; name: string };
+  /** A stand-alone tracker that is one file for every project: each row is filed under the project it names. */
+  shared?: boolean;
   intro: string;
   fileHint: string;
   doneHref: string;
@@ -150,7 +152,7 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo,
     setPhase("Starting…");
     const body = {
       fileId: analysis.fileId,
-      period: standalone?.project ? {} : standalone ? { id: standalone.period.id } : periodMode === "existing" ? { id: periodId } : { report_no: Number(reportNo.replace(/\D/g, "")) || undefined, period_end: periodEnd },
+      period: standalone?.project || standalone?.shared ? {} : standalone ? { id: standalone.period.id } : periodMode === "existing" ? { id: periodId } : { report_no: Number(reportNo.replace(/\D/g, "")) || undefined, period_end: periodEnd },
       sheets: analysis.sheets.map((s) => ({ sheet: s.name, headerRow: s.headerRow, register: mapping[s.name]?.register ?? null, columns: mapping[s.name]?.columns ?? {} })),
       lock: standalone ? false : lock,
       createMissingLookups: createLookups,
@@ -329,6 +331,12 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo,
               </div>
               <div className="mt-1 text-muted">Only this project&apos;s rows of the tracker are kept and updated in place; upload it whenever it changes. Nothing else in the dashboard changes.</div>
             </div>
+          ) : standalone?.shared ? (
+            <div className="rounded-lg border border-line bg-slate-50 p-3 text-xs text-ink">
+              <div className="font-semibold text-muted">Stand-alone tracker – not tied to any report</div>
+              <div className="mt-1 text-sm font-semibold">One file for every project</div>
+              <div className="mt-1 text-muted">The Marina rows and the VBH rows are picked out of the same file and each is filed under its own project; upload it whenever it changes. Nothing else in the dashboard changes.</div>
+            </div>
           ) : standalone ? (
             <div className="rounded-lg border border-line bg-slate-50 p-3 text-xs text-ink">
               <div className="font-semibold text-muted">Updates this report only</div>
@@ -435,7 +443,7 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo,
       {result && (
         <div className="card p-5">
           <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold text-ink">
-            <span className="grid h-6 w-6 place-items-center rounded-full bg-emerald-600 text-xs text-white">3</span> Result for {result.period.label}
+            <span className="grid h-6 w-6 place-items-center rounded-full bg-emerald-600 text-xs text-white">3</span> Result{standalone?.project ? ` – ${standalone.project.name}` : standalone?.shared ? " – every project" : ` for ${result.period.label}`}
           </h2>
           <div className="mb-3 flex flex-wrap gap-2">
             {!standalone && <Chip tone={result.period.locked ? "green" : "amber"}>{result.period.locked ? "Period locked – snapshot stored" : "Period left open"}</Chip>}

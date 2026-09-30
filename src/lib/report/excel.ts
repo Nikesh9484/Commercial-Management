@@ -17,7 +17,8 @@ import { REPORT_SCHEDULES } from "./schedules";
 import { formatDate, formatDateTime, formatMoney, toDate } from "../format";
 import type { FieldDef, RecordRow, RegisterDef } from "../registers/types";
 import { getRegisterDef } from "../registers";
-import { getAccommodationSummary, getCustomsSummary, buildUncommittedTable } from "../recovery/summary";
+import { getAccommodationSummary, getCustomsSummary } from "../recovery/summary";
+import { buildUncommittedTable } from "./uncommitted-ew";
 import { buildAconexReconciliation, ACONEX_MEASURES, measureDecides } from "../recovery/aconex";
 
 import { XL, MONEY_FMT, titleBlock, headerRow, totalRow, sectionRow, sumFormula, finishWorkbook, setWorkbookLink } from "../xlsx-style";
@@ -999,18 +1000,18 @@ export function aconexSheet(wb: ExcelJS.Workbook, d: ReportData) {
   for (const l of rec.lines) put(l);
 }
 
-/** The consolidated "Uncommitted Costs and Early Warnings" table in the programme-wide Level 5 layout, ready to paste. */
+/** The consolidated "Uncommitted Costs and Early Warnings" table for the report in the programme-wide Level 5 layout, ready to paste, with the early warnings behind it on a second sheet. */
 export function uncommittedEwSheet(wb: ExcelJS.Workbook, d: ReportData) {
   const t = buildUncommittedTable(d);
   const ws = wb.addWorksheet("Uncommitted & Early Warnings");
-  const cols = ["Program", "Code", "Name", "Contractor", "Current Approved Budget", "Total Commitments (Approved & Pending)", "VO Under Process", "EOT Claims", "Other Claims", "Identified Uncommitted Scope (RFC)", "Early Warnings (cost report L)", "Accommodation Cost Recovery (outstanding)", "Customs Duty Recovery (to recover)", "Total Uncommitted", "Uncommitted / Not Required", "Estimate at Completion", "Basis"];
-  [10, 30, 44, 30, 20, 20, 18, 16, 16, 18, 18, 18, 18, 18, 18, 20, 50].forEach((w, i) => (ws.getColumn(i + 1).width = w));
-  titleBlock(ws, `Uncommitted Costs and Early Warnings – ${d.programme.name} (${d.programme.code})`, `${sub(d)}${t.asOf.accommodation ? ` · accommodation tracker as of ${formatDate(t.asOf.accommodation)}` : ""}${t.asOf.customs ? ` · customs tracker as of ${formatDate(t.asOf.customs)}` : ""}`, cols.length);
+  const cols = ["Program", "Code", "Name", "Contractor", "Current Approved Budget", "Total Commitments (Approved & Pending)", "VO Under Process", "EOT Claims", "Other Claims", "Identified Uncommitted Scope", "Plant Supply", "FF&E", "Total Uncommitted", "UNCOMMITTED / NOT REQUIRED", "Early Warnings", "Estimate at Completion"];
+  [10, 30, 44, 30, 20, 20, 18, 16, 16, 18, 14, 14, 18, 18, 18, 20].forEach((w, i) => (ws.getColumn(i + 1).width = w));
+  titleBlock(ws, `Uncommitted Costs and Early Warnings – ${d.programme.name} (${d.programme.code}) – ${d.period.label}`, `${sub(d)} · from this report's own registers${d.locked ? " (issued)" : " (draft)"}`, cols.length);
   header(ws.addRow(cols));
   ws.getRow(ws.rowCount).height = 42;
   const program = d.programme.code.replace(/^\d/, "P").slice(0, 3);
   const put = (r: typeof t.total, style?: "category" | "total") => {
-    const row = ws.addRow([program, r.kind === "line" ? r.code : "", r.name, r.contractor, r.budget, r.commitments, r.voUnderProcess, r.eotClaims, r.otherClaims, r.uncommittedScope, r.earlyWarnings, r.accommodationRecovery, r.customsRecovery, r.totalUncommitted, r.notRequired, r.eac, r.note]);
+    const row = ws.addRow([program, r.kind === "line" ? r.code : "", r.name, r.contractor, r.budget, r.commitments, r.voUnderProcess, r.eotClaims, r.otherClaims, r.uncommittedScope, r.plantSupply, r.ffe, r.totalUncommitted, r.notRequired, r.earlyWarnings, r.eac]);
     for (let i = 5; i <= 16; i++) row.getCell(i).numFmt = MONEY_FMT;
     if (style === "total") totalRow(row);
     else if (style === "category") {
@@ -1021,15 +1022,36 @@ export function uncommittedEwSheet(wb: ExcelJS.Workbook, d: ReportData) {
   };
   for (const r of t.rows) put(r, r.kind === "category" ? "category" : undefined);
   put(t.total, "total");
-  if (t.unlinked.length) {
-    ws.addRow([]);
-    ws.addRow([`Not tied to a cost report line: ${t.unlinked.map((u) => `${u.label} – ${u.source} ${formatMoney(u.amount)}`).join("; ")}`]).font = { italic: true, color: { argb: XL.muted } };
-  }
   ws.addRow([]);
-  ws.addRow(["Current Approved Budget = cost report column G (latest budget incl. transfers); Total Commitments = column I (awarded + DVOs); VO Under Process = column J (PVOs); EOT / Other Claims = column M split by claim type; Identified Uncommitted Scope = column K (RFCs); Early Warnings = column L; Total Uncommitted = J + K + L + M; Uncommitted / Not Required = G − I; Estimate at Completion = column N. The two recoveries are what the trackers show as still to be recovered from the contractor of each line."]).font = { italic: true, size: 9, color: { argb: XL.muted } };
+  ws.addRow(["Current Approved Budget = cost report column G (latest budget incl. transfers); Total Commitments = column I (awarded + DVOs); VO Under Process = column J (PVOs); EOT / Other Claims = column M split by claim type; Identified Uncommitted Scope = column K (RFCs); Plant Supply and FF&E are not tracked separately on the dashboard; Total Uncommitted = the sum of those; Uncommitted / Not Required = G − I; Early Warnings = column L; Estimate at Completion = column N."]).font = { italic: true, size: 9, color: { argb: XL.muted } };
   ws.mergeCells(ws.rowCount, 1, ws.rowCount, cols.length);
   ws.getRow(ws.rowCount).alignment = { wrapText: true, vertical: "top" };
   ws.getRow(ws.rowCount).height = 48;
+
+  // the early warnings behind column L, contract by contract
+  const ws2 = wb.addWorksheet("Early Warnings by contract");
+  [30, 40, 12, 60, 34, 12, 12, 18, 14].forEach((w, i) => (ws2.getColumn(i + 1).width = w));
+  titleBlock(ws2, `Early warnings behind column L – ${d.programme.name} – ${d.period.label}`, `${t.counts.ews} early warning(s) on the register, ${t.counts.openEws} open – as on the Early Warning sheet of the workbook`, 9);
+  header(ws2.addRow(["Code", "Contract", "EW No", "Description", "Contractor", "Status", "Likelihood", "Cost impact (SAR)", "Date raised"]));
+  for (const r of t.rows) {
+    if (r.kind !== "line" || !r.ews.length) continue;
+    for (const e of r.ews) {
+      const row = ws2.addRow([r.code, r.name, e.ewNo, e.description, e.contractor, e.status, e.likelihood, e.amount, e.raised ? toDate(e.raised) : null]);
+      row.getCell(8).numFmt = MONEY_FMT;
+      row.getCell(9).numFmt = "dd-mmm-yy";
+    }
+    const sum = ws2.addRow([r.code, `${r.name} – column L`, "", "", "", "", "", r.earlyWarnings, null]);
+    sum.getCell(8).numFmt = MONEY_FMT;
+    totalRow(sum, XL.subtotalFill);
+  }
+  for (const e of t.unlinkedEws) {
+    const row = ws2.addRow(["", "Not linked to a cost report line", e.ewNo, e.description, e.contractor, e.status, e.likelihood, e.amount, e.raised ? toDate(e.raised) : null]);
+    row.getCell(8).numFmt = MONEY_FMT;
+    row.getCell(9).numFmt = "dd-mmm-yy";
+  }
+  const tot = ws2.addRow(["", "Total – column L", "", "", "", "", "", t.total.earlyWarnings, null]);
+  tot.getCell(8).numFmt = MONEY_FMT;
+  totalRow(tot);
 }
 
 export function periodSummarySheet(wb: ExcelJS.Workbook, d: ReportData) {

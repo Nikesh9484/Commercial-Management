@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useScopeKey } from "@/components/layout/ScopeContext";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Plus, Search, Download, Upload, Pencil, Trash2, History, ChevronUp, ChevronDown, ChevronsUpDown, RefreshCw, Lock, Unlock, Filter, X, ExternalLink } from "lucide-react";
@@ -62,6 +63,8 @@ export function RegisterPage({
 }) {
   const toast = useToast();
   const router = useRouter();
+  // the project / asset / report in the top bar: the rows are fetched again whenever it changes
+  const scopeKey = useScopeKey();
   const [data, setData] = useState<Loaded | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -88,6 +91,7 @@ export function RegisterPage({
   }, [registerKey, onRows]);
 
   useEffect(() => {
+    void scopeKey; // a project, asset or report switch in the top bar fetches the rows again
     let live = true;
     fetchRegister(registerKey).then(
       (loaded) => {
@@ -100,7 +104,7 @@ export function RegisterPage({
     return () => {
       live = false;
     };
-  }, [registerKey, onRows]);
+  }, [registerKey, onRows, scopeKey]);
 
   const def = data?.def;
   const tableFields = useMemo(() => {
