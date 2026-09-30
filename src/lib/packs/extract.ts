@@ -1,321 +1,428 @@
-import { fieldForLabel, normLabel, type PackType, type PackValues } from "./shared";
+import { readPositioned, valueRight, valueBelow, numericRowsAfter, peopleUnder, peopleWithHeadings, moneyOf, findLabel, type PosPage } from "./positioned";
+import type { PackValues } from "./shared";
 
 /**
- * What the dashboard reads out of the files uploaded into a pack – without any AI: the last
- * approved pack of the same kind (its form values, wording and signatories), the RFC (the scope and
- * reason of the change) and the cost proposal (its total). Every value read this way only fills a
- * field that is still blank, and stays editable on the pack.
+ * What the dashboard reads out of the files uploaded into a pack – no AI, no typing: the last
+ * approved pack of the same kind gives the project's particulars, the contract figures, the budget
+ * lines, the standard wording and the signatories; the RFC gives the scope, the reason and the
+ * contractual basis; the cost assessment gives the value. Every reading is a value placed beside
+ * its label on the form, read by position.
  */
 
-/** The text of a PDF, page by page, with the lines kept in reading order. */
-export async function extractPdfText(bytes: Buffer): Promise<string[]> {
-  try {
-    const { PDFParse } = await import("pdf-parse");
-    const parser = new PDFParse({ data: bytes });
-    try {
-      const r = await parser.getText();
-      const pages: string[] = [];
-      for (let i = 1; i <= (r.total ?? 0); i++) pages.push(r.getPageText(i));
-      return pages;
-    } finally {
-      await parser.destroy?.();
-    }
-  } catch {
-    return [];
-  }
+export interface Reading {
+  values: PackValues;
+  /** which file gave each value */
+  sources: Record<string, string>;
 }
 
-const lines = (text: string) => text.replace(/\r/g, "").split("\n").map((l) => l.replace(/\s+/g, " ").trim()).filter(Boolean);
-
-/** Is this line a value rather than another label? (labels end with ":" or are short title-case words the form uses) */
-function looksLikeValue(l: string, type: PackType): boolean {
-  if (!l || /:$/.test(l)) return false;
-  if (/^(name|position|signature|date|sign|page \d|-|–|—|…\.*|\.{3,})$/i.test(l)) return false;
-  return !fieldForLabel(type, l);
-}
-
-/** A value read from a form is taken only when it looks like what the field holds – the text of an RSG form PDF comes out in a jumbled order. */
-const VALID: Record<string, RegExp> = {
-  destination: /^AMAALA( Destination)?$/i,
-  program_name: /^Program \d{1,2} ?- ?[A-Za-z][A-Za-z ]{2,40}$/,
-  program_no: /^\d{1,2}$/,
-  project_name: /^(?!(Code|Name|Date|Title|Description|Reference|Program|Project)$)[A-Z][A-Za-z&' ]{3,60}$/,
-  project_code: /^[A-Z]\d{2}$|^1TB\d{5}(\.\d{2})?$/,
-  development_name: /^[A-Z][A-Za-z ]{2,30}$/,
-  development_no: /^[A-Z]{1,4}$/,
-  contract_no: /^(1TB\d{5}(\.\d{2}\.[A-Z]{2}\.)?|TB01|1TB01)[-.]?\d{3}[A-Z]\d{2}(-\d{4})?$/,
-  contract_ref: /^(1TB\d{5}|TB01|1TB01)[-.]?\d{3}[A-Z]\d{2}(-\d{4})?$/,
-  ewbs_code: /^[A-Z]\.TB\.\d{2}\.[A-Z]\d{2}( \(.*\))?$|^[A-Z]{2}\.\d{3}[A-Z]\d{2}(\.\d{2})?$/,
-  works_package: /^[A-Z][A-Za-z0-9&,'/ -]{8,120}$/,
-  contractor: /^[A-Z][A-Za-z0-9&.,' -]{4,80}(LLC|Ltd|Co\.?|Company|Limited|Inc\.?|Contracting|Engineering|Industries|Group|Consultants?|Services)\.?$/i,
-  requesting_department: /^[A-Z][A-Za-z ]{3,40}$/,
-  rom_basis: /^(Existing Contract BoQ rates|New Rates|Mix of both)$/i,
-  budget_source: /^[ABC]\)/,
-  root_cause: /^[A-Z][A-Za-z ]+ [–-] [A-Za-z ]+( [–-] [A-Za-z /]+)?$/,
-  eac_included: /^(Yes|No)$/i,
-  clauses: /clause/i,
-  determination_clause: /clause/i,
-  template_rev: /^Template Revision/i,
-  contractor_address: /\d/,
+const POSITION = /(director|manager|head of|officer|specialist|engineer|chairman|representative|lead|executive|associate|senior|group|planner|analyst|surveyor|controller|chief|ceo|cfo|coo|partner|consultant)/i;
+const money = (s: string) => {
+  const n = moneyOf(s);
+  return n === null ? "" : String(Math.round(n * 100) / 100);
 };
+const dateOf = (s: string) => {
+  const m = s.match(/(\d{1,2})[-\s]([A-Za-z]{3})[-\s](\d{2,4})/);
+  if (!m) return s.match(/\d{4}-\d{2}-\d{2}/)?.[0] ?? "";
+  const months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+  const mi = months.indexOf(m[2].toLowerCase().slice(0, 3));
+  if (mi < 0) return "";
+  const y = m[3].length === 2 ? `20${m[3]}` : m[3];
+  return `${y}-${String(mi + 1).padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+};
+const set = (r: Reading, key: string, v: string | undefined, source: string) => {
+  const t = String(v ?? "").trim();
+  if (!t || t === "-" || t === "–") return;
+  r.values[key] = t;
+  r.sources[key] = source;
+};
+const lines = (people: { name: string; position: string }[]) => people.map((p) => p.name).join("\n");
+const positions = (people: { name: string; position: string }[]) => people.map((p) => p.position).join("\n");
 
-/**
- * The values of the last approved pack: for every field, the line that follows its label on the
- * form ("Program Name:" → "Program 01 - Marina Village"), kept only when it reads as that field
- * does. Values that name the earlier pack itself (its number, date, title, amounts) are never
- * taken – only the pattern is: the project's particulars, the standard wording and the signatories.
- */
-export function valuesFromReference(pages: string[], type: PackType): PackValues {
-  const out: PackValues = {};
-  const all = pages.flatMap(lines);
-  for (let i = 0; i < all.length; i++) {
-    const f = fieldForLabel(type, all[i]);
-    if (!f || !VALID[f.key] || out[f.key]) continue;
-    const same = all[i].match(/^[^:]{2,60}:\s*(.+)$/);
-    const candidates = [same?.[1] ?? "", all[i + 1] ?? ""].map((x) => x.trim()).filter(Boolean);
-    const v = candidates.find((c) => looksLikeValue(c, type) && c.length <= 160 && VALID[f.key].test(c));
-    if (v) out[f.key] = v;
-  }
-  // the RSG PVO / DVO forms come out of a PDF in a jumbled order, so only their representatives are
-  // taken from the signature area; the reports and the RFA list their signatories in reading order
-  const sig = signatories(all);
-  if (type.key === "pvo" || type.key === "dvo" || type.key === "vo" || type.key === "rfc") for (const k of ["prepared_by", "prepared_position", "checked_by", "checked_position", "approved_by", "approved_position"]) delete sig[k];
-  if (type.key === "rfa" && sig.approved_by) {
-    sig.executive_approver = sig.approved_by;
-    sig.executive_position = sig.approved_position;
-    delete sig.approved_by;
-    delete sig.approved_position;
-  }
-  Object.assign(out, sig);
-  const basis = all.find((l) => /^pursuant to (contract )?(sub-)?clause/i.test(l) && l.length < 240);
-  if (basis && type.fields.some((f) => f.key === "contractual_basis")) out.contractual_basis = basis;
-  if (type.fields.some((f) => f.key === "revision_history")) {
-    const hist = revisionHistory(all);
-    if (hist) out.revision_history = hist;
-  }
-  if (type.fields.some((f) => f.key === "review_panel")) {
-    const panel = reviewPanel(all);
-    if (panel) out.review_panel = panel;
-  }
-  if (type.fields.some((f) => f.key === "recommended_by")) {
-    const rec = recommendedBy(all);
-    if (rec) out.recommended_by = rec;
-  }
-  return out;
+export async function positioned(bytes: Buffer): Promise<PosPage[]> {
+  return readPositioned(bytes);
 }
 
-const POSITION = /(director|manager|head of|officer|specialist|engineer|chairman|representative|lead|executive|associate|senior|group|planner|analyst|surveyor|controller|chief|ceo|cfo|coo)/i;
+export type DocKind = "pvo" | "dvo" | "rfa" | "ear" | "rfc" | "cost" | "unknown";
 
-const NAME_WORD = "(?:Mr\\.?|Ms\\.?|Mrs\\.?|Dr\\.?|Al|El|De|Van|Von|Bin|Abdul|(?![A-Z]{2,}(?:\\s|$))[A-Z][A-Za-z'’.-]+)";
-const PERSON = new RegExp(`^${NAME_WORD}(?:\\s+${NAME_WORD}){1,3}$`);
-const POSITION_START = /^(Sr\.?|Senior|Head|Group|Associate|Executive|Chief|Director|Manager|Specialist|Chairman|Lead|Planning|Commercial|Project|Programme|Program|Junior|Principal|Assistant|General|Employer'?s|Contractor'?s|Deputy|Vice|President|Partner|Consultant|Engineer|Quantity|Cost|Contracts?|Claims?|Legal|Finance|Financial|Technical|Design|Construction|Development|Operations?|Aviation|Site|Resident)\b/i;
-
-/** Two to four title-case words ("Stuart Prosser", "Fahad AlBalawi", "Tareq El Emam") – not a form label, not all capitals. */
-const isPersonName = (l: string) => PERSON.test(l) && !POSITION.test(l) && !/\b(Destination|Amaala|Contract|Project|Program|Budget|Total|Value|Name|Position|Signature|Date|Section|Description|Reference|Document|Title|Revision|Marina|Village|Triple|Bay|Island|Jetty|Boardwalk|Hotel|Note|Form|Order|Variation|Approval|Function|Details)\b/i.test(l);
-
-/**
- * "Rufino Bautista Sr. Commercial Manager" → name and position (the shortest name followed by a
- * position word); "Blake Lombard" + next line "Associate Director - Commercial" likewise. A position
- * that wraps onto the following line ("… Head of Cost, Commercial &" / "Procurement") is joined.
- */
-function namePosition(line: string, next: string): { name: string; position: string } | null {
-  const clean = (x: string) => x.replace(/\s*(Name|Position|Signature|Date)(\s|$).*$/i, "").trim();
-  const cont = (pos: string) => (/[&\/,'’-]$|'s$|\bof$|\band$/.test(pos) || (next && next.split(/\s+/).length <= 3 && !/[:\d]/.test(next) && !isPersonName(next) && !/^(prepared|reviewed|checked|approved|recommended|executive)/i.test(next) && /^[A-Z(]/.test(next)) ? `${pos} ${next}`.trim() : pos);
-  const words = line.trim().split(/\s+/);
-  for (let n = 2; n <= Math.min(4, words.length - 1); n++) {
-    const name = words.slice(0, n).join(" ");
-    const rest = words.slice(n).join(" ");
-    if (isPersonName(name) && POSITION_START.test(rest) && POSITION.test(rest)) return { name, position: clean(cont(rest)) };
-  }
-  if (isPersonName(line.trim()) && next && POSITION.test(next) && next.length < 90) return { name: line.trim(), position: clean(next) };
-  return null;
+/** What a PDF is, from the headings on its first pages – so a file in any entry is read the right way. */
+export function classifyDoc(pages: PosPage[], slotHint: string): DocKind {
+  const head = pages.slice(0, 3).flatMap((p) => p.rows.flatMap((r) => r.cells.map((c) => c.s))).join(" ").toLowerCase();
+  const all = pages.slice(0, 6).flatMap((p) => p.rows.flatMap((r) => r.cells.map((c) => c.s))).join(" ").toLowerCase();
+  if (/proposed variation order \(pvo\)|rsg-cm-frm-0013/.test(head)) return "pvo";
+  if (/determination of variation order|rsg-cm-frm-0014|rgs-cm-frm-0014|pvo to dvo cost movement/.test(head)) return "dvo";
+  if (/request for approval form|rsg-pr-frm-0004|trs-pr-frm-0004/.test(head)) return "rfa";
+  if (/employer'?s assessment report|extension of time report|revision history/.test(head)) return "ear";
+  if (/request for change|change request form|rsg-cm-frm-0011|\brfc\b.*\bform\b/.test(head)) return "rfc";
+  if (/grand total|unit price|unite price|\bqty\b|cost proposal|bill of quantit|\bboq\b|rate breakdown/.test(all)) return "cost";
+  if (slotHint === "cost" || slotHint === "rfc" || slotHint === "details") return slotHint === "cost" ? "cost" : "rfc";
+  return "unknown";
 }
 
-/** "Executive Director - Development Bradley Vercoe" → the position and the name that ends the line. */
-function positionName(line: string): { position: string; name: string } | null {
-  const words = line.trim().split(/\s+/);
-  for (let n = 2; n <= Math.min(4, words.length - 1); n++) {
-    const name = words.slice(words.length - n).join(" ");
-    const pos = words.slice(0, words.length - n).join(" ");
-    if (isPersonName(name) && POSITION.test(pos)) return { position: pos.replace(/[\s–-]+$/, ""), name };
+/* ------------------------------------------------------------------ */
+/* the last approved PVO (RSG-CM-FRM-0013)                             */
+
+const GENERAL: [string, string, (string | RegExp)[]?][] = [
+  ["pvo_no", "Proposed Variation Order No", ["Date"]],
+  ["rfc_ref", "RFC/CRF Reference", ["Requesting Department"]],
+  ["requesting_department", "Requesting Department"],
+  ["development_name", "Development Name", ["Development No"]],
+  ["development_no", "Development No"],
+  ["program_name", "Program Name", ["Program No"]],
+  ["program_no", "Program No"],
+  ["project_name", "Project Name", ["Project Code"]],
+  ["project_code", "Project Code"],
+  ["contractor", "Vendor Name", ["EWBS Code"]],
+  ["ewbs_code", "EWBS Code"],
+  ["works_package", "Works Package", ["ACC Contract No"]],
+  ["contract_no", "ACC Contract No"],
+  ["destination", "Destination"],
+];
+
+export function readReferencePvo(pages: PosPage[]): Reading {
+  const r: Reading = { values: {}, sources: {} };
+  const src = "previous PVO";
+  const form = pages.slice(0, Math.min(3, pages.length));
+  for (const [key, label, not] of GENERAL) set(r, key, valueRight(form, label, { notLabels: not }), src);
+  if (!r.values.destination) {
+    const d = findLabel(form, "Destination");
+    if (d) {
+      const below = d.page.rows[d.page.rows.indexOf(d.row) + 1]?.cells.find((c) => /amaala/i.test(c.s));
+      set(r, "destination", below?.s, src);
+    }
   }
-  return null;
+  set(r, "title", valueRight(form, "Title of this Variation"), src);
+  set(r, "eac_included", valueRight(form, "Is this change included in the latest EAC"), src);
+  set(r, "root_cause", valueRight(form, "Root Cause for this change"), src);
+  set(r, "scope", valueBelow(form, "Scope of works / services (brief)", ["Contractual basis", "b) Estimated Cost", "a) Reason", "Root Cause", "Explain if"]), src);
+  set(r, "reason", valueBelow(form, "a) Reason for Proposed Variation Order", ["Scope of works", "Contractual basis", "Root Cause", "Explain if", "b) Estimated"]), src);
+  set(r, "contractual_basis", valueBelow(form, "Contractual basis for variation entitlement", ["b) Estimated Cost", "Basis of ROM", "Reference"]), src);
+  const eac = valueBelow(form, "Explain if the topic was included within the EAC", ["Root Cause", "a) Reason", "Scope of works", "Contractual basis"]);
+  set(r, "eac_explanation", eac.split("\n")[0], src);
+  set(r, "original_contract", money(valueRight(form, "Original Contract Value")), src);
+  set(r, "approved_dvos", money(valueRight(form, /^Approved DVOs$/)), src);
+  set(r, "approved_pvos", money(valueRight(form, /^Approved PVOs$/)), src);
+  set(r, "current_revised", money(valueRight(form, "Current Revised Contract Value")), src);
+  set(r, "total_value", money(valueRight(form, "Total Value (in SAR)") || valueRight(form, "This Proposed Variation Order (PVO)")), src);
+  set(r, "other_contracts", money(valueRight(form, "Sub-Total (SAR)")), src);
+  set(r, "original_completion", dateOf(valueRight(form, "a) Original Contract Completion Date")), src);
+  set(r, "approved_eot", (valueRight(form, "b) Approved EOTs (Days)") || "").replace(/\.00$/, ""), src);
+  set(r, "current_completion", dateOf(valueRight(form, "c) Current Revised Completion Date")), src);
+  set(r, "time_impact", (valueRight(form, "d) Estimated 'time impact' of this variation (Days)") || "").replace(/\.00$/, ""), src);
+  set(r, "other_eots", (valueRight(form, "e) Other anticipated EOTs") || "").replace(/\.00$/, ""), src);
+  set(r, "time_comments", valueBelow(form, "Comments", ["4. Time Impact", "Prepared", "a) Original"], 3), src);
+  // the cost items of the previous PVO: one line per row of the item table
+  const items = numericRowsAfter(form, /^Reference$/, "Sub-Total", 1, 12).filter((row) => row.some((c) => /[A-Za-z]{3}/.test(c) && !/^SAR$/i.test(c)));
+  if (items.length) set(r, "cost_items", items.map((row, i) => {
+    const nums = row.filter((c) => moneyOf(c) !== null);
+    const desc = row.find((c) => /[A-Za-z]{3}/.test(c) && !/^SAR$/i.test(c)) ?? "";
+    const add = nums.length ? money(nums[nums.length - 1]) : "";
+    const omit = nums.length > 1 ? money(nums[0]) : "";
+    return `${i + 1} – ${desc} – ${omit || "0"} – ${add || "0"}`;
+  }).join("\n"), src);
+  // b) package budget position: the row of the contract
+  const pkg = numericRowsAfter(form, "b) Package Budget position", "c) Budget Transfer details", 5, 8)[0];
+  if (pkg) {
+    const nums = pkg.filter((c) => moneyOf(c) !== null || c === "-").map((c) => money(c));
+    // A current approved budget, B approved contract, C approved DVOs, D approved PVOs, E remaining, F this PVO, E-F variance
+    if (nums.length >= 6) {
+      set(r, "approved_contract", nums[1], src);
+      set(r, "approved_dvos", nums[2] || r.values.approved_dvos, src);
+      set(r, "approved_pvos", nums[3] || r.values.approved_pvos, src);
+      set(r, "remaining_budget", nums[4], src);
+    }
+  }
+  // c) budget transfer details: From (hold) and To (this contract)
+  const tr = numericRowsAfter(form, "c) Budget Transfer details", "Note: The approval", 2, 6);
+  for (const row of tr) {
+    const acct = row.find((c) => /^1TB\d{5}\.\d{2}\.[A-Z]{2}\./.test(c)) ?? "";
+    const nums = row.filter((c) => moneyOf(c) !== null).map((c) => money(c));
+    if (/^from$/i.test(row[0])) {
+      set(r, "budget_line", acct, src);
+      set(r, "budget_available", nums[0], src);
+      set(r, "budget_source", "B) Budget Transfer Required", src);
+    } else if (/^to$/i.test(row[0])) set(r, "budget_to_line", acct, src);
+  }
+  if (!r.values.budget_source) set(r, "budget_source", "A) No Additional Budget or Budget Transfer Required", src);
+  if (!r.values.budget_line) {
+    const m = eac.match(/(1TB\d{5}\.\d{2}\.[A-Z]{2}\.\S+)\s*=\s*([\d,]+\.\d{2})/);
+    if (m) {
+      set(r, "budget_line", m[1], src);
+      set(r, "budget_available", money(m[2]), src);
+    }
+  }
+  if (!r.values.budget_to_line && r.values.contract_no) set(r, "budget_to_line", `${r.values.contract_no}.00`, src);
+  // d) the ACC table by category, kept as read
+  const acc = numericRowsAfter(form, "d) Project / Asset Budget position", "Comments", 8, 14).filter((row) => /[A-Za-z]{3}/.test(row[0]));
+  if (acc.length) set(r, "acc_table", JSON.stringify(acc.map((row) => [row[0], ...row.slice(1).filter((c) => moneyOf(c) !== null || c === "-").map((c) => money(c) || "0")])), src);
+  // the signatories: everything under Prepared, Checked and Approved
+  const prepared = peopleUnder(form, "Prepared/Initiated By", ["Checked by", "Approved by"], (s) => POSITION.test(s));
+  const checked = peopleUnder(form, "Checked by (Pre-Approval)", ["Approved by"], (s) => POSITION.test(s));
+  const approved = peopleUnder(form, /^Approved by/, [/^RSG-CM-FRM/, "Comments"], (s) => POSITION.test(s));
+  if (prepared.length) {
+    set(r, "prepared_by", lines(prepared), src);
+    set(r, "prepared_position", positions(prepared), src);
+  }
+  if (checked.length) {
+    set(r, "checked_by", lines(checked), src);
+    set(r, "checked_position", positions(checked), src);
+  }
+  if (approved.length) {
+    set(r, "approved_by", lines(approved), src);
+    set(r, "approved_position", positions(approved), src);
+  }
+  // the VO form in the pack names the representatives
+  const erep = peopleUnder(pages, /^Approved and Issued by/i, [/^Received by/i, /^RSG-CM-FRM/], (x) => POSITION.test(x))[0];
+  if (erep) {
+    set(r, "employer_rep", erep.name, src);
+    set(r, "employer_rep_position", erep.position, src);
+  }
+  const crep = peopleUnder(pages, /^Received by \((Consultant\/)?Contractor'?s Representative\)/i, [/^Approved/i, /^RSG-CM-FRM/], (x) => POSITION.test(x))[0];
+  if (crep) {
+    set(r, "contractor_rep", crep.name, src);
+    set(r, "contractor_rep_position", crep.position, src);
+  }
+  return r;
 }
 
-/** The pairs of name and position that follow "Prepared", "Checked / Reviewed" and "Approved" (or the executive approval of an RFA). */
-function signatories(all: string[]): PackValues {
-  const out: PackValues = {};
-  const heads: [RegExp, string, string][] = [
-    [/^prepared\s*\/?\s*(initiated)?\s*by/i, "prepared_by", "prepared_position"],
-    [/^checked by|^reviewed by/i, "checked_by", "checked_position"],
-    [/^approved by|^approved and issued by|^executive approval|^final determination by the employer/i, "approved_by", "approved_position"],
-  ];
-  for (let i = 0; i < all.length; i++) {
-    for (const [re, nameKey, posKey] of heads) {
-      if (!re.test(all[i]) || out[nameKey]) continue;
-      for (let j = i + 1; j < Math.min(all.length, i + 6); j++) {
-        if (/^note/i.test(all[j])) continue;
-        const np = namePosition(all[j], all[j + 1] ?? "");
-        if (np && isPersonName(np.name)) {
-          out[nameKey] = np.name;
-          out[posKey] = np.position;
-          break;
-        }
+/* ------------------------------------------------------------------ */
+/* the last approved DVO (RSG-CM-FRM-0014 / 0027)                      */
+
+export function readReferenceDvo(pages: PosPage[]): Reading {
+  const r: Reading = { values: {}, sources: {} };
+  const src = "previous DVO";
+  const form = pages.slice(0, Math.min(4, pages.length));
+  set(r, "dvo_no", valueRight(form, "Variation Order No", { notLabels: ["Date"] }), src);
+  set(r, "program_name", valueRight(form, "Program Name", { notLabels: ["Project Code"] }), src);
+  set(r, "project_code", valueRight(form, "Project Code"), src);
+  set(r, "project_name", valueRight(form, "Project Name", { notLabels: ["Contract Ref"] }), src);
+  set(r, "contract_ref", valueRight(form, "Contract Ref"), src);
+  set(r, "works_package", valueRight(form, /^Works Package$/, { notLabels: ["Contractor/Consultant"] }), src);
+  set(r, "contractor", valueRight(form, "Contractor/Consultant"), src);
+  set(r, "destination", valueRight(form, "Destination"), src);
+  set(r, "contract_price", money(valueRight(form, "Contract Price [a]")), src);
+  set(r, "commencement_date", dateOf(valueRight(form, "Contract Commencement Date")), src);
+  set(r, "previous_dvos", money(valueRight(form, "Sum of Previous Determination of", { nextRow: true })), src);
+  set(r, "interim_vos", money(valueRight(form, "account payments) [c]") || valueRight(form, "Sum of Interim Value Variations", { nextRow: true })), src);
+  set(r, "dvo_value", money(valueRight(form, "This Variation Order [d]") || valueRight(form, /^Total Value$/)), src);
+  set(r, "revised_contract", money(valueRight(form, "Revised Contract Price", { nextRow: true })), src);
+  set(r, "vo_pct", valueRight(form, "VO's % Original Contract Price"), src);
+  set(r, "original_completion", dateOf(valueRight(form, "Original Contract Completion Date [x]")), src);
+  set(r, "previous_eot", (valueRight(form, "Previous Approved Extension of Time (Days) [y]") || "").replace(/\.00$/, ""), src);
+  set(r, "this_eot", (valueRight(form, "This Agreed Extension of Time (Days) [z]") || "").replace(/\.00$/, ""), src);
+  set(r, "total_eot", (valueRight(form, "Total Extension (Days Difference to the Original") || "").replace(/\.00$/, ""), src);
+  set(r, "revised_completion", dateOf(valueRight(form, "Revised Contract Completion Date [x+y+z]") || valueRight(form, "Revised Contract Price")), src);
+  set(r, "title", valueBelow(form, "Variation Order Title", ["Reason for Variation Order"], 2).replace(/^DVO[\s-]*\d+\s*-\s*/i, ""), src);
+  set(r, "reason", valueBelow(form, "Reason for Variation Order", ["Instruction Reference", "Contract Reconciliation"], 6), src);
+  const info = numericRowsAfter(form, "Document Ref. No", "Final Determination", 0, 6);
+  void info;
+  // the representatives
+  for (const pg of form) {
+    for (const row of pg.rows) {
+      const cells = row.cells;
+      if (cells.length >= 2 && /contractor'?s representative/i.test(cells[1].s) && /^[A-Za-z ]{4,40}$/.test(cells[0].s)) {
+        set(r, "contractor_rep", cells[0].s.replace(/\b([A-Z])([A-Z]+)/g, (_m, a, b) => a + b.toLowerCase()), src);
+        set(r, "contractor_rep_position", cells[1].s.replace(/\s*\(\s*/g, " (").replace(/\s+\)/g, ")"), src);
+      }
+      if (cells.length >= 2 && /employer'?s representative/i.test(cells[1].s) && /^[A-Za-z ]{4,40}$/.test(cells[0].s)) {
+        set(r, "employer_rep", cells[0].s.replace(/\b([A-Z])([A-Z]+)/g, (_m, a, b) => a + b.toLowerCase()), src);
+        set(r, "employer_rep_position", cells[1].s.replace(/\s*\(\s*/g, " (").replace(/\s+\)/g, ")"), src);
       }
     }
   }
-  // the representatives on a DVO
-  const titleCase = (x: string) => x.replace(/\S+/g, (w) => (w === w.toUpperCase() && w.length > 1 ? w[0] + w.slice(1).toLowerCase() : w));
-  const rep = all.findIndex((l) => /contractor'?s representative\)?$/i.test(l) && /chairman|director|manager|general|representative/i.test(l));
-  if (rep > 0) {
-    const prev = titleCase(all[rep - 1]);
-    const np = namePosition(prev, all[rep]) ?? (isPersonName(prev) ? { name: prev, position: all[rep] } : null);
-    if (np && isPersonName(np.name)) {
-      out.contractor_rep = np.name;
-      out.contractor_rep_position = np.position;
+  // the review panel on the 0027 form
+  const panel: string[] = [];
+  for (const pg of form) for (const row of pg.rows) {
+    const c = row.cells;
+    if (c.length >= 2 && /^Employer'?s /i.test(c[1].s) && POSITION.test(c[1].s) && /^[A-Za-z ]{4,40}$/.test(c[0].s)) panel.push(`${c[1].s} – ${c[0].s}`);
+    else if (c.length >= 2 && /^Employer'?s /i.test(c[0].s) && POSITION.test(c[0].s) && /^[A-Za-z ]{4,40}$/.test(c[1].s)) panel.push(`${c[0].s} – ${c[1].s}`);
+  }
+  if (panel.length) set(r, "review_panel", [...new Set(panel)].join("\n"), src);
+  // the budget particulars annexure
+  const bp = valueRight(pages, "SOURCE OF THE BUDGET");
+  if (bp) {
+    const m = bp.match(/(1TB\d{5}\.\d{2}\.[A-Z]{2}\.\S+)\s*:?\s*SAR\s*([\d,]+\.\d{2})/);
+    if (m) {
+      set(r, "budget_line", m[1], src);
+      set(r, "budget_available", money(m[2]), src);
     }
   }
-  const emp = all.findIndex((l) => /employer'?s representative\)?$/i.test(l) && /head of|director/i.test(l));
-  if (emp > 0) {
-    const prev = titleCase(all[emp - 1]);
-    const np = namePosition(prev, all[emp]) ?? (isPersonName(prev) ? { name: prev, position: all[emp] } : null);
-    if (np && isPersonName(np.name)) {
-      out.employer_rep = np.name;
-      out.employer_rep_position = np.position;
+  const bd = valueRight(pages, "DESTINATION OF THE BUDGET");
+  if (bd) set(r, "budget_to_line", bd.match(/1TB\d{5}\.\d{2}\.[A-Z]{2}\.\S+/)?.[0] ?? "", src);
+  return r;
+}
+
+/* ------------------------------------------------------------------ */
+/* the last approved RFA (RSG-PR-FRM-0004)                             */
+
+export function readReferenceRfa(pages: PosPage[]): Reading {
+  const r: Reading = { values: {}, sources: {} };
+  const src = "previous RFA";
+  set(r, "contact", valueRight(pages, "Contact Information") || valueBelow(pages, "Contact Information", ["RFA Form Reference"], 1), src);
+  set(r, "requesting_department", valueRight(pages, "Requesting Department"), src);
+  const fund = [valueRight(pages, "Project Budget / Funding Source"), valueBelow(pages, "Project Budget / Funding Source", ["Budget Remaining"], 3)].find((x) => x.length > 8) ?? "";
+  set(r, "funding_source", fund.replace(/\n/g, " "), src);
+  set(r, "preferred_tenderer", valueRight(pages, "Preferred Tenderer"), src);
+  set(r, "contract_price", valueRight(pages, "Contract Price"), src);
+  const people: string[] = [];
+  let exec = false;
+  for (const pg of pages) {
+    const start = pg.rows.findIndex((row) => row.cells.some((c) => /^Recommended for Approval$/i.test(c.s)));
+    if (start < 0) continue;
+    let pendingFn = "";
+    for (let i = start + 1; i < pg.rows.length; i++) {
+      const cells = pg.rows[i].cells.filter((c) => !/^(function|name|signature|date|sign)$/i.test(c.s) && !/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(c.s));
+      if (!cells.length) continue;
+      if (/^Executive Approval$/i.test(cells[0].s)) {
+        exec = true;
+        continue;
+      }
+      if (exec) {
+        if (cells.length >= 2) {
+          set(r, "executive_approver", cells[0].s, src);
+          set(r, "executive_position", cells[1].s, src);
+        } else if (!r.values.executive_approver) set(r, "executive_approver", cells[0].s, src);
+        else set(r, "executive_position", cells[0].s, src);
+        if (r.values.executive_approver && r.values.executive_position) break;
+        continue;
+      }
+      const isPerson = (x: string) => /^(Mr\.?\s+|Ms\.?\s+|Dr\.?\s+)?[A-Z][a-z'’.-]+(\s+[A-Z][A-Za-z'’.-]+){1,3}$/.test(x) && !POSITION.test(x);
+      if (cells.length >= 2 && isPerson(cells[cells.length - 1].s)) {
+        const fn = cells.slice(0, -1).map((c) => c.s).join(" ");
+        people.push(`${pendingFn ? `${pendingFn} ` : ""}${fn} – ${cells[cells.length - 1].s}`);
+        pendingFn = "";
+      } else if (isPerson(cells[0].s) && pendingFn) {
+        people.push(`${pendingFn} – ${cells[0].s}`);
+        pendingFn = "";
+      } else pendingFn = pendingFn ? `${pendingFn} ${cells.map((c) => c.s).join(" ")}` : cells.map((c) => c.s).join(" ");
+    }
+    break;
+  }
+  // a function that wrapped onto the row after its name ("… – Destination" / "Development Rosanna Chopra") is put back together
+  for (let i = 1; i < people.length; i++) {
+    const m = people[i].match(/^((?!Executive|Senior|Head|Group|Chief|Director|Associate|Manager|Deputy|General)[A-Z][a-z]+)\s+((?:Executive|Senior|Head|Group|Chief|Director|Associate|Manager)\b.*)$/);
+    if (m && /[–-]\s*[A-Za-z]+$/.test(people[i - 1].split(" – ")[0])) {
+      const [fn, name] = [people[i - 1].slice(0, people[i - 1].lastIndexOf(" – ")), people[i - 1].slice(people[i - 1].lastIndexOf(" – ") + 3)];
+      people[i - 1] = `${fn} ${m[1]} – ${name}`;
+      people[i] = m[2];
     }
   }
-  return out;
+  if (people.length) set(r, "recommended_by", people.join("\n"), src);
+  return r;
 }
 
-/** The revision history of an EAR: every name / position under "Prepared by:", "Reviewed by:" and "Approved by:" until the table of contents. */
-function revisionHistory(all: string[]): string {
-  const start = all.findIndex((l) => /^revision history$/i.test(l));
-  if (start < 0) return "";
-  const end = all.findIndex((l, i) => i > start && /^table of contents$/i.test(l));
-  const block = all.slice(start + 1, end > 0 ? end : start + 80);
-  const rows: string[] = [];
-  let role = "";
-  for (let i = 0; i < block.length; i++) {
-    const l = block[i];
-    const r = l.match(/^(prepared by|reviewed by|checked by|approved by):?$/i);
-    if (r) {
-      role = r[1].replace(/\b\w/g, (c) => c.toUpperCase());
-      continue;
+/* ------------------------------------------------------------------ */
+/* the last approved EAR (the issued report)                            */
+
+export function readReferenceEar(pages: PosPage[]): Reading {
+  const r: Reading = { values: {}, sources: {} };
+  const src = "previous EAR";
+  set(r, "template_rev", pages.flatMap((p) => p.rows).flatMap((row) => row.cells).find((c) => /^Template Revision/i.test(c.s))?.s, src);
+  const hist = pages.slice(0, 4).find((p) => p.rows.some((row) => row.cells.some((c) => /^Revision History$/i.test(c.s))));
+  if (hist) {
+    const people = peopleWithHeadings(hist, /^(Prepared|Reviewed|Checked|Approved) by:?$/i, (s) => POSITION.test(s));
+    if (people.length) {
+      set(r, "revision_history", people.map((p) => `${p.heading} – ${p.name} – ${p.position}`).join("\n"), src);
+      const by = (h: RegExp) => people.filter((p) => h.test(p.heading));
+      const prep = by(/prepared/i);
+      const rev = by(/reviewed|checked/i);
+      const app = by(/approved/i);
+      if (prep.length) {
+        set(r, "prepared_by", prep.map((p) => p.name).join("\n"), src);
+        set(r, "prepared_position", prep.map((p) => p.position).join("\n"), src);
+      }
+      if (rev.length) {
+        set(r, "checked_by", rev.map((p) => p.name).join("\n"), src);
+        set(r, "checked_position", rev.map((p) => p.position).join("\n"), src);
+      }
+      if (app.length) {
+        set(r, "approved_by", app.map((p) => p.name).join("\n"), src);
+        set(r, "approved_position", app.map((p) => p.position).join("\n"), src);
+      }
     }
-    if (!role) continue;
-    const np = namePosition(l, block[i + 1] ?? "");
-    if (np && isPersonName(np.name) && !rows.some((x) => x.includes(`– ${np.name} –`))) {
-      rows.push(`${role} – ${np.name} – ${np.position}`);
-      if (np.position.endsWith(block[i + 1] ?? "\u0000")) i++;
+  }
+  const cover = pages[0];
+  if (cover) {
+    const t = cover.rows.map((row) => row.cells.map((c) => c.s).join(" ")).join("\n");
+    const m = t.match(/Contract No\.? & Title:?\s*([^\n]+?)\s*-\s*([\s\S]+?)(?=\n\s*Contractor:|\n\s*Date:|$)/i);
+    if (m) {
+      set(r, "contract_no", m[1].trim(), src);
+      set(r, "contract_title", m[2].replace(/\s*\n\s*/g, " ").trim(), src);
     }
+    const c = t.match(/Contractor:?\s*\n?([^\n]+)/i);
+    if (c) set(r, "contractor", c[1].trim(), src);
   }
-  return rows.join("\n");
+  const sig = pages.flatMap((p) => p.rows).find((row) => row.cells.some((c) => /Employer'?s Representative/i.test(c.s) && /\(/.test(c.s)));
+  if (sig) set(r, "signatory", sig.cells.map((c) => c.s).join(" "), src);
+  return r;
 }
 
-/** The review and recommendation panel of a DVO: "Employer's Planning Director" … with the names beside them. */
-function reviewPanel(all: string[]): string {
-  const rows: string[] = [];
-  const positions = all.map((l, i) => [l, i] as const).filter(([l]) => /^employer'?s (associate |senior |planning |projects? )?(director|manager|head)/i.test(l) && l.length < 70);
-  for (const [pos, i] of positions) {
-    const near = all.slice(Math.max(0, i - 4), i + 5).find((l) => isPersonName(l));
-    rows.push(`${pos} – ${near ?? ""}`);
-  }
-  return [...new Set(rows)].join("\n");
+/* ------------------------------------------------------------------ */
+/* the RFC and the cost assessment                                     */
+
+const RFC_STOPS = [/^(reason|scope|justification|contractual basis|estimated|cost|time impact|budget|root cause|prepared|checked|approved|attachments?|general information|particulars|description|title)/i, /^\d\)\s/, /^[a-e]\)\s/];
+
+/** The RFC: the change's title, scope, reason, contractual basis and root cause, from whichever RSG headings the form uses. */
+export function readRfc(pages: PosPage[]): Reading {
+  const r: Reading = { values: {}, sources: {} };
+  const src = "RFC";
+  const flat = pages.flatMap((p) => p.rows.map((row) => row.cells.map((c) => c.s).join(" ")));
+  const ref = flat.map((l) => l.match(/\b(1TB\d{5}-\d{3}[A-Z]\d{2}-AMA-(?:RFC|CRF|VOR|EMI|EI)-[A-Z]{2}-\d{4})\b/)?.[1]).find(Boolean);
+  set(r, "rfc_ref", ref ?? valueRight(pages, /^(RFC|CRF) (No|Reference|Ref)\.?:?$/i), src);
+  set(r, "title", valueRight(pages, /^(Title( of (this|the) (change|variation|request))?|Subject|Change Title|RFC Title):?$/i) || valueBelow(pages, /^(Title( of (this|the) (change|variation|request))?|Subject|Change Title):?$/i, RFC_STOPS, 2), src);
+  set(r, "scope", valueBelow(pages, /^(Scope of (works?|services|(the )?change)( \/ services)?( \(brief\))?|Description of (the )?(change|works?)|Proposed (change|scope)|Scope):?$/i, RFC_STOPS, 25), src);
+  set(r, "reason", valueBelow(pages, /^(Reason(s)? for (the )?(change|request|variation|proposed variation order)|Reason|Justification( for (the )?change)?|Purpose):?$/i, RFC_STOPS, 25), src);
+  set(r, "contractual_basis", valueBelow(pages, /^(Contractual basis( for (variation )?entitlement)?|Contract basis|Basis of entitlement):?$/i, RFC_STOPS, 4), src);
+  set(r, "root_cause", valueRight(pages, /^Root Cause( for this change)?:?$/i), src);
+  set(r, "initiated_by", valueRight(pages, /^(Initiated by|Change Initiator|Requested by):?$/i), src);
+  const rom = valueRight(pages, /^(Estimated cost( impact)?( \(ROM\))?|ROM( estimate)?|Cost impact):?$/i);
+  if (money(rom)) set(r, "rom_estimate", money(rom), src);
+  const ti = valueRight(pages, /^(Time impact( \(days\))?|Estimated time impact):?$/i);
+  if (/^\d+/.test(ti)) set(r, "time_impact", ti.replace(/\D.*$/, ""), src);
+  return r;
 }
 
-/** The "Recommended for Approval" list of an RFA: the function and the name that ends its line, wrapped functions joined. */
-function recommendedBy(all: string[]): string {
-  const start = all.findIndex((l) => /^recommended for approval$/i.test(l));
-  if (start < 0) return "";
-  const rows: string[] = [];
-  let fn: string[] = [];
-  for (let i = start + 1; i < Math.min(all.length, start + 80); i++) {
-    const l = all[i];
-    if (/^executive approval/i.test(l) || /^sign$/i.test(l)) break;
-    if (/^(function|name|signature|date)(\s+(name|signature|date))*$/i.test(l)) continue;
-    const pn = positionName(l);
-    if (pn) {
-      rows.push(`${[...fn, pn.position].join(" ")} – ${pn.name}`);
-      fn = [];
-    } else if (isPersonName(l)) {
-      if (fn.length) rows.push(`${fn.join(" ")} – ${l}`);
-      fn = [];
-    } else if (l.length < 60 && !/\d{2}\/\d{2}/.test(l)) fn.push(l);
-  }
-  return rows.join("\n");
-}
-
-/** The paragraph under a heading of the RFC ("Scope of works", "Reason", "Justification") up to the next heading. */
-function sectionAfter(all: string[], heads: RegExp, stop: RegExp, max = 12): string {
-  const i = all.findIndex((l) => heads.test(l));
-  if (i < 0) return "";
-  const same = all[i].replace(heads, "").replace(/^[:\s-]+/, "").trim();
-  const body: string[] = same ? [same] : [];
-  for (let j = i + 1; j < Math.min(all.length, i + 1 + max); j++) {
-    const l = all[j];
-    if (stop.test(l) || /:$/.test(l)) break;
-    if (/^page \d+ of \d+$/i.test(l) || /^rsg-|^trs-|^#classification/i.test(l)) continue;
-    body.push(l);
-  }
-  return body.join("\n").trim();
-}
-
-const RFC_STOP = /^(reason|scope|justification|contractual basis|estimated|cost|time impact|budget|root cause|prepared|checked|approved|attachments?|\d\)|[a-e]\)|general information|particulars)/i;
-
-/** The scope, reason and contractual basis as the RFC states them – they are written into the PVO. */
-export function valuesFromRfc(pages: string[]): PackValues {
-  const all = pages.flatMap(lines);
-  const out: PackValues = {};
-  const scope = sectionAfter(all, /^(scope of (works?|services|change)|description of (the )?change|proposed change|scope)\b/i, RFC_STOP);
-  const reason = sectionAfter(all, /^(reason for (the )?(change|request|variation)|reason|justification for (the )?change|justification)\b/i, RFC_STOP);
-  const basis = sectionAfter(all, /^(contractual basis( for (variation )?entitlement)?|contract basis)\b/i, RFC_STOP, 4);
-  const root = all.find((l) => /^root cause/i.test(l));
-  const good = (t: string) => t.length >= 25 && /[a-z]{3}/i.test(t) && !/^[\/:.,\-–]/.test(t);
-  if (good(scope)) out.scope = scope;
-  if (good(reason)) out.reason = reason;
-  if (good(basis)) out.contractual_basis = basis;
-  if (root) {
-    const v = root.replace(/^root cause( for this change)?:?\s*/i, "").trim();
-    const next = all[all.indexOf(root) + 1] ?? "";
-    const rc = v || (/–|-/.test(next) && next.length < 80 ? next : "");
-    if (rc && /^[A-Z][A-Za-z ]+ [–-] /.test(rc)) out.root_cause = rc;
-  }
-  const rfcRef = all.map((l) => l.match(/\b(1TB\d{5}-\d{3}[A-Z]\d{2}-AMA-(?:RFC|CRF|VOR|EMI)-[A-Z]{2}-\d{4})\b/)?.[1]).find(Boolean);
-  if (rfcRef) out.rfc_ref = rfcRef;
-  return out;
-}
-
-/** The total of a cost proposal: the amount on the last "Total" line (grand total, total value, total in SAR). */
-export function totalFromCost(pages: string[]): string | null {
-  const all = pages.flatMap(lines);
-  const money = /\(?-?\d{1,3}(?:,\d{3})+(?:\.\d{2})?\)?|\(?-?\d+\.\d{2}\)?/g;
-  let best: number | null = null;
-  for (const l of all) {
-    if (!/\b(grand total|total value|total \(sar\)|total in sar|sub-?total|total)\b/i.test(l)) continue;
-    const nums = (l.match(money) ?? []).map((m) => {
-      const neg = /^\(|-/.test(m);
-      const n = Number(m.replace(/[(),\s-]/g, ""));
-      return neg ? -n : n;
-    }).filter((n) => Number.isFinite(n) && Math.abs(n) >= 1);
+/** The cost assessment: the last "total" row's amount is the value; a bracketed total is an omission. */
+export function readCost(pages: PosPage[], title: string): Reading {
+  const r: Reading = { values: {}, sources: {} };
+  const src = "cost assessment";
+  let bestN: number | null = null;
+  let bestGrand = false;
+  for (const pg of pages) for (const row of pg.rows) {
+    const text = row.cells.map((c) => c.s).join(" ");
+    if (!/\btotal\b/i.test(text)) continue;
+    const nums = row.cells.map((c) => moneyOf(c.s)).filter((n): n is number => n !== null && Math.abs(n) >= 1);
     if (!nums.length) continue;
-    const grand = /grand total|total value|total in sar|total \(sar\)/i.test(l);
     const n = nums[nums.length - 1];
-    if (best === null || grand || Math.abs(n) > Math.abs(best)) best = n;
+    const grand = /grand total|total value|total in sar|total \(sar\)|total for/i.test(text) && !/for one/i.test(text);
+    if (bestN === null || grand || (!bestGrand && Math.abs(n) >= Math.abs(bestN))) {
+      bestN = n;
+      bestGrand = bestGrand || grand;
+    }
   }
-  return best === null ? null : String(Math.round(best * 100) / 100);
+  if (bestN === null) return r;
+  const total = Math.round(bestN * 100) / 100;
+  set(r, "total_value", String(Math.abs(total)), src);
+  set(r, "dvo_value", String(Math.abs(total)), src);
+  set(r, "amount", String(Math.abs(total)), src);
+  set(r, "rom_estimate", String(Math.abs(total)), src);
+  if (total < 0) set(r, "omit", String(Math.abs(total)), src);
+  else set(r, "add", String(total), src);
+  set(r, "cost_items", `1 – ${title || "As per the attached cost assessment"} – ${total < 0 ? Math.abs(total) : 0} – ${total < 0 ? 0 : total}`, src);
+  const subject = valueRight(pages, /^Subject:?$/i);
+  if (subject) set(r, "cost_subject", subject, src);
+  return r;
 }
 
-/** Only fields still blank take a read value; returns the keys that were filled. */
-export function mergeBlank(current: PackValues, read: PackValues, type: PackType): { values: PackValues; filled: string[] } {
-  const known = new Set(type.fields.map((f) => f.key));
-  const values = { ...current };
-  const filled: string[] = [];
-  for (const [k, v] of Object.entries(read)) {
-    if (!known.has(k) || !v || String(current[k] ?? "").trim()) continue;
-    values[k] = String(v).slice(0, 4000);
-    filled.push(k);
-  }
-  return { values, filled };
+/** The approved PVO behind a DVO: its number, value and title. */
+export function readApprovedPvoForDvo(pages: PosPage[]): Reading {
+  const r = readReferencePvo(pages);
+  const out: Reading = { values: {}, sources: {} };
+  const src = "approved PVO";
+  set(out, "vo_no", r.values.pvo_no ? `VO-${r.values.pvo_no.replace(/\D/g, "").padStart(3, "0")}` : "", src);
+  set(out, "pvo_value", r.values.total_value, src);
+  set(out, "title", r.values.title, src);
+  set(out, "reason", r.values.scope, src);
+  for (const k of ["program_name", "project_name", "project_code", "works_package", "contractor", "contract_no", "budget_line", "budget_available", "budget_to_line", "acc_table"]) if (r.values[k]) set(out, k, r.values[k], src);
+  set(out, "instruction_ref", r.values.rfc_ref, src);
+  return out;
 }
-
-export { normLabel };

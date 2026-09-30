@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { withUser, readJson } from "@/lib/api";
-import { getDoc, removeDoc, updateDoc } from "@/lib/packs/store";
+import { getDoc, removeDocAndRebuild, updateDoc } from "@/lib/packs/store";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -17,6 +17,6 @@ export async function PATCH(req: Request, ctx: Ctx) {
 export const DELETE = withUser<Ctx>(async (user, { params }) => {
   const { id } = await params;
   if (!getDoc(Number(id))) return NextResponse.json({ error: "That document is no longer here." }, { status: 404 });
-  removeDoc(Number(id), user);
+  await removeDocAndRebuild(Number(id), user);
   return NextResponse.json({ ok: true });
 });

@@ -6,6 +6,7 @@ import { buildDocx, buildEarDocx, fillTemplate } from "./word";
 import { buildCompiledPack, renderFormPdf, safeFileName, type FormMeta, type PackPart, type PartItem } from "./pdf";
 import { renderBasisPage, renderBudgetParticulars, renderChangeLog, renderDraftVo, renderDvoForm, renderEarReport, renderIndexPage, renderPvoForm, renderRfaForm, type AccRow } from "./forms";
 import { changeLogRows, type ChangeLogRow } from "./data";
+import { overlayDvo, overlayPvo, overlayRfa } from "./overlay";
 import { caseValues, getTemplate, listDocs, readDocBytes, readTemplateBytes, type PackCase } from "./store";
 import { defaultPackFileName, packType, REFERENCE_SLOT, slotsFor, type PackDoc, type PackType, type PackValues } from "./shared";
 
@@ -65,8 +66,52 @@ function logRows(c: PackCase): ChangeLogRow[] {
   return [];
 }
 
-/** The document itself, laid out as the RSG document of that category. */
+/** The uploaded template of the pack: the last approved document of the same kind, as a PDF. */
+function referenceBytes(c: PackCase, t: PackType): Buffer | null {
+  const docs = listDocs(c.id).filter((d) => /\.pdf$/i.test(d.name));
+  const inSlot = docs.find((d) => d.slot === REFERENCE_SLOT) ?? (t.key === "dvo" ? undefined : docs.find((d) => d.slot === "pvo"));
+  const d = inSlot ?? docs.find((d) => (t.key === "pvo" && /pvo/i.test(d.name) && !/dvo/i.test(d.name)) || (t.key === "dvo" && /dvo/i.test(d.name)) || (t.key === "rfa" && /rfa/i.test(d.name)));
+  return d ? readDocBytes(d) : null;
+}
+
+/** The category of the cost line behind the pack (the ACC table row this PVO sits on). */
+function lineCategory(c: PackCase): string {
+  if (!c.source_id || c.source_table !== "changes") return "";
+  try {
+    const db = getDb();
+    const r = db.prepare("SELECT l.category FROM changes ch JOIN cost_lines l ON l.id = ch.cost_line_id WHERE ch.id = ?").get(c.source_id) as { category: string | null } | undefined;
+    return r?.category ?? "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * The document itself. When the last approved document of the kind was uploaded as the template,
+ * its own form pages are used and this pack's values written onto them; otherwise the form is drawn
+ * by the dashboard in the RSG layout.
+ */
 export async function renderDocumentPdf(c: PackCase, t: PackType, values: PackValues, meta: FormMeta): Promise<Buffer> {
+  const ref = ["pvo", "dvo", "rfa"].includes(t.key) ? referenceBytes(c, t) : null;
+  if (ref) {
+    try {
+      const out =
+        t.key === "pvo"
+          ? await overlayPvo(ref, values, { targetCategory: lineCategory(c) })
+          : t.key === "dvo"
+            ? await overlayDvo(ref, values)
+            : await overlayRfa(
+                ref,
+                values,
+                listDocs(c.id)
+                  .filter((d) => d.slot !== REFERENCE_SLOT)
+                  .map((d) => d.name.replace(/\.[a-z0-9]+$/i, "")),
+              );
+      if (out) return out;
+    } catch (e) {
+      console.error("pack overlay failed, drawing the form instead:", e);
+    }
+  }
   switch (t.key) {
     case "pvo":
       return renderPvoForm(t, values, meta, { acc: accRows(c, values), changeLog: logRows(c) });
@@ -150,7 +195,7 @@ export async function renderOutput(c: PackCase, format: OutputFormat, user: User
     return { bytes: await buildDocx(t, values, meta), fileName: safeFileName(base, "docx"), mime: DOCX, note: "built-in layout (no template uploaded for this category)" };
   }
   const form = await renderDocumentPdf(c, t, values, meta);
-  if (format === "pdf") return { bytes: form, fileName: safeFileName(base, "pdf"), mime: "application/pdf", note: "document drawn by the dashboard in the RSG layout" };
+  if (format === "pdf") return { bytes: form, fileName: safeFileName(base, "pdf"), mime: "application/pdf", note: referenceBytes(c, t) ? "written onto the uploaded template's form pages" : "document drawn by the dashboard in the RSG layout" };
   const docs = listDocs(c.id).filter((d) => d.slot !== REFERENCE_SLOT);
   const { front, parts } = await assemble(c, t, values, meta, docs, form);
   const bytes = await buildCompiledPack({ type: t, values, meta, fileName: base, front, parts });

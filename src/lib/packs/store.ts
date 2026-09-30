@@ -8,8 +8,10 @@ import { logAudit } from "../audit";
 import { nowIso } from "../format";
 import type { UserInfo } from "../registers/types";
 import { formatPages, keyPages, readPdfPages } from "../kpi/pages";
+import type { PosPage } from "./positioned";
 import { PACK_STATUSES, packType, slotsFor, REFERENCE_SLOT, type PackCase, type PackDoc, type PackTemplate, type PackTypeKey, type PackValues, type TemplateInspection } from "./shared";
-import { extractPdfText, mergeBlank, totalFromCost, valuesFromReference, valuesFromRfc } from "./extract";
+import { classifyDoc, positioned, readApprovedPvoForDvo, readCost, readReferenceDvo, readReferenceEar, readReferencePvo, readReferenceRfa, readRfc, type DocKind, type Reading } from "./extract";
+import { autoValues } from "./data";
 
 export * from "./shared";
 
@@ -301,7 +303,8 @@ export async function addDoc(caseId: number, input: { name: string; relPath?: st
   // the approved PVO behind a DVO goes in as its cover pages and workflow approvals only; the reference pack is read, not compiled
   const keyOnly = slot === "pvo";
   const pages = read && keyOnly ? formatPages(keyPages(read.kinds)) : "";
-  const prior = d.prepare("SELECT * FROM pack_docs WHERE case_id = ? AND rel_path = ?").get(caseId, rel) as PackDoc | undefined;
+  // the same file uploaded again into the same entry replaces the earlier copy (the same file in another entry is another copy)
+  const prior = d.prepare("SELECT * FROM pack_docs WHERE case_id = ? AND rel_path = ? AND slot = ?").get(caseId, rel, slot) as PackDoc | undefined;
   if (prior) removeDoc(prior.id, user, true);
   const dir = path.join(packDataDir(), String(caseId));
   fs.mkdirSync(dir, { recursive: true });
@@ -313,39 +316,137 @@ export async function addDoc(caseId: number, input: { name: string; relPath?: st
   d.prepare("UPDATE pack_docs SET disk_path = ? WHERE id = ?").run(disk, id);
   d.prepare("UPDATE pack_cases SET updated_at = ?, updated_by = ? WHERE id = ?").run(nowIso(), user.name, caseId);
   logAudit(getDb(), { registerKey: "pack_docs", recordId: id, action: "create", user, summary: `Document packs: ${rel} added to ${t.short} ${c.ref} (${slot})` });
-  // what the file says fills the fields still blank: the last approved pack, the RFC, the cost proposal
-  const filled = read ? await prefillFrom(c, slot, input.bytes, user) : [];
+  // the pack is built from its files: every value is read again whenever a file arrives
+  const before = caseValues(getCase(caseId)!);
+  const after = await rebuildValues(caseId, user);
+  const filled = Object.keys(after.values).filter((k) => !k.startsWith("__") && after.values[k] !== before[k]);
   return { ...getDoc(id)!, filled } as PackDoc & { filled: string[] };
 }
 
-async function prefillFrom(c: PackCase, slot: string, bytes: Buffer, user: UserInfo): Promise<string[]> {
+/**
+ * Builds the pack's values from what it has – no typing: the register item gives the base; the
+ * last approved document of the same kind (the template) gives the project's particulars, the
+ * contract figures, the budget lines, the wording and the signatories; the RFC gives the scope,
+ * reason and basis; the cost assessment gives the value. Later sources win over earlier ones. The
+ * source of every value is kept beside it, so the page can say where each one came from.
+ */
+export async function rebuildValues(caseId: number, user: UserInfo): Promise<{ values: PackValues; sources: Record<string, string> }> {
+  const c = getCase(caseId);
+  if (!c) throw new ValidationError("That pack is no longer here.");
   const t = packType(c.pack_type)!;
-  if (![REFERENCE_SLOT, "rfc", "cost", "details"].includes(slot)) return [];
-  try {
-    const pages = await extractPdfText(bytes);
-    if (!pages.length) return [];
-    let read: PackValues = {};
-    if (slot === REFERENCE_SLOT) read = valuesFromReference(pages, t);
-    else if (slot === "rfc" || slot === "details") read = valuesFromRfc(pages);
-    else if (slot === "cost") {
-      const total = totalFromCost(pages);
-      if (total) {
-        const key = t.fields.some((f) => f.key === "total_value") ? "total_value" : t.fields.some((f) => f.key === "dvo_value") ? "dvo_value" : t.fields.some((f) => f.key === "amount") ? "amount" : "rom_estimate";
-        read = { [key]: total };
-        if (t.fields.some((f) => f.key === "add") && Number(total) >= 0) read.add = total;
-        if (t.fields.some((f) => f.key === "omit") && Number(total) < 0) read.omit = String(-Number(total));
+  const docs = listDocs(caseId);
+  const base = autoValues(c.pack_type, c.programme_id, c.source_id, user);
+  const values: PackValues = { ...base.values };
+  const sources: Record<string, string> = {};
+  for (const k of Object.keys(values)) if (values[k]) sources[k] = c.source_id ? "register" : "project";
+  const apply = (r: Reading, keep: string[] = []) => {
+    for (const [k, v] of Object.entries(r.values)) {
+      if (!v || keep.includes(k)) continue;
+      if (k !== "acc_table" && k !== "cost_subject" && !t.fields.some((f) => f.key === k)) continue;
+      values[k] = v;
+      sources[k] = r.sources[k];
+    }
+  };
+  // every PDF is read and recognised by its own headings; the entry it was put in only breaks a tie,
+  // so a document dropped into "Other attachment" is still read and used
+  const read: { doc: PackDoc; pages: PosPage[]; kind: DocKind }[] = [];
+  for (const d of docs.filter((x) => /\.pdf$/i.test(x.name))) {
+    const bytes = readDocBytes(d);
+    if (!bytes) continue;
+    const pages = await positioned(bytes);
+    if (pages.length) read.push({ doc: d, pages, kind: classifyDoc(pages, d.slot) });
+  }
+  const readAll = async (slot: string) => {
+    const want: DocKind[] = slot === REFERENCE_SLOT ? (t.key === "pvo" ? ["pvo"] : t.key === "dvo" ? ["dvo"] : t.key === "rfa" ? ["rfa"] : t.key === "eot_ear" || t.key === "cost_ear" ? ["ear"] : ["pvo", "dvo"]) : slot === "pvo" ? ["pvo"] : slot === "rfc" || slot === "details" ? ["rfc"] : slot === "cost" ? ["cost"] : [];
+    // the files in the entry itself first (the entry is the user's word on what the file is), then any file elsewhere that reads as that kind
+    const inSlot = read.filter((x) => x.doc.slot === slot);
+    const elsewhere = read.filter((x) => x.doc.slot !== slot && want.includes(x.kind) && !(slot === "pvo" && x.doc.slot === REFERENCE_SLOT) && !(slot === REFERENCE_SLOT && x.doc.slot === "pvo"));
+    return [...inSlot, ...elsewhere].map((x) => x.pages);
+  };
+  // 1. the template – the last approved document of the same kind
+  for (const pages of await readAll(REFERENCE_SLOT)) {
+    if (!pages.length) continue;
+    // what names the earlier document itself is not carried over: its number, its date, its title and value are this pack's own
+    const own = ["pvo_no", "dvo_no", "rfa_no", "date", "title", "scope", "reason", "total_value", "dvo_value", "add", "omit", "cost_items", "rfc_ref", "eac_explanation", "letter_ref", "report_ref", "claim_no", "eot_no"];
+    if (t.key === "pvo") {
+      const ref = readReferencePvo(pages);
+      apply(ref, own);
+      // the next number after the previous PVO, unless the register already names this one
+      if (!values.pvo_no && ref.values.pvo_no && /^\d+$/.test(ref.values.pvo_no)) {
+        values.pvo_no = String(Number(ref.values.pvo_no) + 1).padStart(3, "0");
+        sources.pvo_no = "previous PVO + 1";
+      }
+    } else if (t.key === "dvo") {
+      const ref = readReferenceDvo(pages);
+      apply(ref, [...own, "previous_dvos", "revised_contract", "vo_pct", "this_eot", "total_eot", "revised_completion", "previous_eot"]);
+      // the previous determination's [b] plus its own [d] are this one's sum of previous determinations; likewise the days
+      const n = (x: string | undefined) => Number(String(x ?? "").replace(/[^0-9.\-]/g, "")) || 0;
+      if (ref.values.previous_dvos || ref.values.dvo_value) {
+        values.previous_dvos = String(Math.round((n(ref.values.previous_dvos) + n(ref.values.dvo_value)) * 100) / 100);
+        sources.previous_dvos = "previous DVO [b] + [d]";
+      }
+      if (ref.values.previous_eot || ref.values.this_eot) {
+        values.previous_eot = String(n(ref.values.previous_eot) + n(ref.values.this_eot));
+        sources.previous_eot = "previous DVO [y] + [z]";
+      }
+      if (!values.dvo_no && ref.values.dvo_no) {
+        const m = ref.values.dvo_no.match(/^(.*?)(\d+)$/);
+        if (m) {
+          values.dvo_no = `${m[1]}${String(Number(m[2]) + 1).padStart(m[2].length, "0")}`;
+          sources.dvo_no = "previous DVO + 1";
+        }
       }
     }
-    const cur = getCase(c.id)!;
-    const { values, filled } = mergeBlank(caseValues(cur), read, t);
-    if (filled.length) {
-      db().prepare("UPDATE pack_cases SET values_json = ?, updated_at = ?, updated_by = ? WHERE id = ?").run(JSON.stringify(values), nowIso(), user.name, c.id);
-      logAudit(getDb(), { registerKey: "pack_cases", recordId: c.id, action: "update", user, summary: `Document packs: ${t.short} ${cur.ref} – ${filled.length} field(s) read from the ${slot === REFERENCE_SLOT ? "reference pack" : slot === "cost" ? "cost proposal" : "RFC"} (${filled.join(", ")})` });
-    }
-    return filled;
-  } catch {
-    return [];
+    else if (t.key === "rfa") apply(readReferenceRfa(pages), own);
+    else if (t.key === "eot_ear" || t.key === "cost_ear") apply(readReferenceEar(pages), own);
+    else apply(readReferencePvo(pages), own);
   }
+  // 2. the approved PVO behind a DVO
+  if (t.key === "dvo") for (const pages of await readAll("pvo")) if (pages.length) apply(readApprovedPvoForDvo(pages));
+  // 3. the RFC (or the RFA details): the change itself
+  for (const slot of ["rfc", "details"]) for (const pages of await readAll(slot)) if (pages.length) apply(readRfc(pages));
+  // 4. the cost assessment: the value
+  for (const pages of await readAll("cost")) if (pages.length) apply(readCost(pages, values.title || c.title));
+  // the figures that follow from the others
+  const num = (k: string) => Number(String(values[k] ?? "").replace(/[^0-9.\-]/g, "")) || 0;
+  const r2s = (n: number) => String(Math.round(n * 100) / 100);
+  if (t.key === "pvo") {
+    if (!values.add && !values.omit && values.total_value) values.add = values.total_value;
+    const orig = num("original_contract");
+    if (orig) {
+      values.current_revised = r2s(orig + num("approved_dvos"));
+      values.potential_revised = r2s(orig + num("approved_dvos") + num("approved_pvos") + num("total_value"));
+      sources.current_revised = sources.potential_revised = "calculated";
+    }
+    if (values.budget_available) {
+      values.revised_budget = r2s(num("budget_available") - num("total_value"));
+      values.remaining_budget = values.remaining_budget || r2s(num("approved_contract") ? num("budget_available") : 0);
+      sources.revised_budget = "calculated";
+    }
+    if (values.pvo_no && !/^\d{3}$/.test(values.pvo_no) && /^\d+$/.test(values.pvo_no)) values.pvo_no = values.pvo_no.padStart(3, "0");
+  }
+  if (t.key === "dvo") {
+    const a = num("contract_price");
+    const e = a + num("previous_dvos") + num("interim_vos") + num("dvo_value");
+    if (a) {
+      values.revised_contract = r2s(e);
+      values.vo_pct = `${(((e - a) / a) * 100).toFixed(2)}%`;
+      sources.revised_contract = sources.vo_pct = "calculated";
+    }
+    values.total_eot = String(num("previous_eot") + num("this_eot"));
+    if (values.pvo_value && values.dvo_value) {
+      const diff = Math.round((num("pvo_value") - num("dvo_value")) * 100) / 100;
+      values.movement_note = diff === 0 ? "The DVO value equals the approved PVO value." : `The DVO value is ${diff > 0 ? "lower" : "higher"} than the approved PVO value, with a variance of SAR ${Math.abs(diff).toLocaleString("en", { minimumFractionDigits: 2 })}.`;
+      sources.movement_note = "calculated";
+    }
+    if (!values.add && values.dvo_value) values.add = values.dvo_value;
+    if (!values.description && values.dvo_no) values.description = `This ${values.dvo_no} confirms the change associated with the following instruction issued:\n1. Variation Order ${values.vo_no || "No. -"}${values.instruction_ref ? ` Ref: ${values.instruction_ref}` : ""} for ${values.title || c.title}.`;
+  }
+  values.__sources = JSON.stringify(sources);
+  const ref = t.key === "pvo" ? values.pvo_no || c.ref : t.key === "dvo" ? values.dvo_no || c.ref : t.key === "rfa" ? values.rfa_no || c.ref : c.ref;
+  const title = values.title || c.title;
+  db().prepare("UPDATE pack_cases SET values_json = ?, ref = ?, title = ?, updated_at = ?, updated_by = ? WHERE id = ?").run(JSON.stringify(values), String(ref ?? "").slice(0, 80), String(title ?? "").slice(0, 300), nowIso(), user.name, caseId);
+  return { values, sources };
 }
 
 export function updateDoc(id: number, patch: { slot?: string; sort_order?: number; pages?: string }, user: UserInfo): PackDoc {
@@ -370,6 +471,13 @@ export function removeDoc(id: number, user: UserInfo, quiet = false) {
   db().prepare("DELETE FROM pack_docs WHERE id = ?").run(id);
   if (cur.disk_path) fs.rmSync(path.join(packDataDir(), cur.disk_path), { force: true });
   if (!quiet) logAudit(getDb(), { registerKey: "pack_docs", recordId: id, action: "delete", user, summary: `Document packs: ${cur.rel_path} removed from pack #${cur.case_id}` });
+}
+
+/** Reads a pack's values from its remaining files after a document is removed. */
+export async function removeDocAndRebuild(id: number, user: UserInfo) {
+  const cur = getDoc(id);
+  removeDoc(id, user);
+  if (cur) await rebuildValues(cur.case_id, user);
 }
 
 export function readDocBytes(doc: PackDoc): Buffer | null {

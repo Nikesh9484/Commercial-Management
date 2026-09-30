@@ -232,6 +232,14 @@ function signatureBlock(ctx: Ctx, who: [string, string, string, string?][]) {
   doc.y = y;
 }
 
+/** One signature row per name when a role lists several people ("Majid Waleed Alharbi\nBlake Lombard"). */
+function pairs(label: string, names: string, positionsText: string, note?: string): [string, string, string, string?][] {
+  const ns = String(names ?? "").split("\n").map((x) => x.trim()).filter(Boolean);
+  const ps = String(positionsText ?? "").split("\n").map((x) => x.trim());
+  if (!ns.length) return [[label, "", ps[0] ?? "", note]];
+  return ns.map((n, i) => [i === 0 ? label : "", n, ps[i] ?? "", i === 0 ? note : undefined]);
+}
+
 /** "1 – text – 0 – 1,234.00" lines → rows */
 function itemRows(text: string, fallback: [string, string, string, string]): string[][] {
   const rows = String(text ?? "")
@@ -336,12 +344,35 @@ export async function renderPvoForm(type: PackType, values: PackValues, meta: Fo
   doc.y += 12;
   doc.fillColor(INK).font("Helvetica-Bold").fontSize(7.5).text("d) Project / Asset Budget position (after this PVO):", M, doc.y + 2);
   doc.y += 12;
-  const accRows = extras.acc.map((r) => {
-    const totalCommit = r.commitments + r.pvos;
-    return [r.category, sar(r.budget), sar(r.contract), sar(r.dvos), sar(r.commitments), "0.00", sar(r.pvos), sar(totalCommit), sar(r.thisPvo), "0.00", sar(r.pvos + r.thisPvo), sar(r.budget - r.commitments - r.pvos - r.thisPvo)];
-  });
-  const sum = (i: number) => extras.acc.reduce((t, r) => t + [r.budget, r.contract, r.dvos, r.commitments, 0, r.pvos, r.commitments + r.pvos, r.thisPvo, 0, r.pvos + r.thisPvo, r.budget - r.commitments - r.pvos - r.thisPvo][i], 0);
-  accRows.push(["TOTALS", ...Array.from({ length: 11 }, (_, i) => sar(sum(i)))]);
+  // the ACC table as read from the previous PVO (this PVO placed on its own category), else from the cost report
+  let accRows: string[][] = [];
+  let fromTemplate: string[][] = [];
+  try {
+    fromTemplate = ctx.raw.acc_table ? (JSON.parse(ctx.raw.acc_table) as string[][]) : [];
+  } catch {
+    fromTemplate = [];
+  }
+  if (fromTemplate.length) {
+    const cat = fromTemplate.find((row) => /construction/i.test(row[0])) ?? fromTemplate[0];
+    const rows = fromTemplate.filter((row) => !/^totals?$/i.test(row[0])).map((row) => {
+      const n = row.slice(1).map((x) => Number(x) || 0);
+      // A budget, B contract, C DVOs, D commitments, E pending, F PVOs, G total, H this PVO, I other, J pending PVOs, K remaining – this PVO replaces the previous one's
+      const [A, B, C, D, E, F] = n;
+      const H = row === cat ? total : 0;
+      const I = row === cat ? Math.max(0, (n[8] ?? 0) + (n[7] ?? 0)) : n[8] ?? 0;
+      const G = D + E + F;
+      return [row[0], sar(A), sar(B), sar(C), sar(D), sar(E), sar(F), sar(G), sar(H), sar(I), sar(H + I), sar(A - G - H - I)];
+    });
+    const sums = Array.from({ length: 11 }, (_, i) => rows.reduce((t, r) => t + num(r[i + 1].replace(/[()]/g, (m) => (m === "(" ? "-" : ""))), 0));
+    accRows = [...rows, ["TOTALS", ...sums.map((x) => sar(x))]];
+  } else {
+    accRows = extras.acc.map((r) => {
+      const totalCommit = r.commitments + r.pvos;
+      return [r.category, sar(r.budget), sar(r.contract), sar(r.dvos), sar(r.commitments), "0.00", sar(r.pvos), sar(totalCommit), sar(r.thisPvo), "0.00", sar(r.pvos + r.thisPvo), sar(r.budget - r.commitments - r.pvos - r.thisPvo)];
+    });
+    const sum = (i: number) => extras.acc.reduce((t, r) => t + [r.budget, r.contract, r.dvos, r.commitments, 0, r.pvos, r.commitments + r.pvos, r.thisPvo, 0, r.pvos + r.thisPvo, r.budget - r.commitments - r.pvos - r.thisPvo][i], 0);
+    accRows.push(["TOTALS", ...Array.from({ length: 11 }, (_, i) => sar(sum(i)))]);
+  }
   table(ctx, ["Control Account", "Current Approved Budget [A]", "Approved Contract [B]", "Approved DVOs [C]", "Total Approved Commitments [D=B+C]", "Pending Contracts [E]", "Approved PVOs [F]", "Total Commitments [G=D+E+F]", "This PVO [H]", "Other PVOs in circulation [I]", "Total Pending PVOs [J=H+I]", "Remaining Budget [K=A−G−J]"], accRows.length > 1 ? accRows : [["(cost report not available)", ...Array(11).fill("-")]], [0.12, 0.09, 0.085, 0.08, 0.09, 0.065, 0.08, 0.09, 0.08, 0.065, 0.075, 0.08], { align: ["left", ...Array(11).fill("right")] as ("left" | "right")[], boldLast: accRows.length > 1, size: 5.4 });
   section(ctx, "4. Time Impact (Contract level):");
   const eot = num(ctx.raw.approved_eot);
@@ -352,9 +383,9 @@ export async function renderPvoForm(type: PackType, values: PackValues, meta: Fo
   ], 2, 0.55);
   doc.y += 6;
   signatureBlock(ctx, [
-    ["Prepared/Initiated By:", v.prepared_by, v.prepared_position, "Note: Signatures for preparation are already received on attached CRF forms"],
-    ["Checked by (Pre-Approval):", v.checked_by, v.checked_position, "Note: Signatures for approval are already received on attached CRF forms"],
-    ["Approved by:", v.approved_by, v.approved_position, "- Routed through Aconex Workflow -"],
+    ...pairs("Prepared/Initiated By:", v.prepared_by, v.prepared_position, "Note: Signatures for preparation are already received on attached CRF forms"),
+    ...pairs("Checked by (Pre-Approval):", v.checked_by, v.checked_position, "Note: Signatures for approval are already received on attached CRF forms"),
+    ...pairs("Approved by:", v.approved_by, v.approved_position, "- Routed through Aconex Workflow -"),
   ]);
   finish(ctx);
   return done;
