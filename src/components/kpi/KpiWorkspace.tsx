@@ -3,10 +3,11 @@
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronDown, ChevronRight, FileDown, FolderUp, Paperclip, Trash2, Upload } from "lucide-react";
+import { PAGE_KIND_LABEL, type PageKind } from "@/lib/kpi/pages";
 import { useToast } from "@/components/ui/Toast";
 import { Chip } from "@/components/ui/Chip";
 import { formatDate, formatMoney } from "@/lib/format";
-import { KPI_SECTIONS, KPI_SECTION_LABEL, MOVEMENT_LABEL, type KpiDoc, type KpiItem } from "@/lib/kpi/shared";
+import { KPI_SECTIONS, KPI_SECTION_LABEL, KPI_SECTION_HINT, KPI_SECTION_NO, MOVEMENT_LABEL, kpiSectionsFor, type KpiDoc, type KpiItem, type KpiSection } from "@/lib/kpi/shared";
 
 export interface KpiRow {
   item: KpiItem;
@@ -30,29 +31,23 @@ function toBase64(blob: Blob): Promise<string> {
 }
 
 /** The KPI entries of one category for one report: movement, details, supporting documents and the pack. */
-export function KpiWorkspace({ periodId, category, rows, earlier, canManage, previousLabel }: { periodId: number; category: "closed" | "open"; rows: KpiRow[]; earlier: KpiRow[]; canManage: boolean; previousLabel: string | null }) {
-  const [movedOnly, setMovedOnly] = useState(false);
+export function KpiWorkspace({ periodId, category, rows, canManage, previousLabel }: { periodId: number; category: "closed" | "open"; rows: KpiRow[]; canManage: boolean; previousLabel: string | null }) {
   const [open, setOpen] = useState<Set<number>>(new Set());
-  const [showEarlier, setShowEarlier] = useState(false);
   const toggle = (id: number) => setOpen((s) => {
     const n = new Set(s);
     if (n.has(id)) n.delete(id);
     else n.add(id);
     return n;
   });
-  const shown = movedOnly ? rows.filter((r) => r.item.movement !== "unchanged") : rows;
+  const shown = rows;
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted">
-        <div>
-          {category === "closed" ? "DVOs recorded as Approved on this report – the head office files them under this month with the DVO, the instruction, the PVO and the RFC / CRF behind each." : "PVOs and VOs recorded with the DVO still pending – the head office wants the instruction, the PVO and the RFC / CRF behind each, and a root cause where the 90-day norm is passed."}
-        </div>
-        <label className="inline-flex items-center gap-2">
-          <input type="checkbox" checked={movedOnly} onChange={(e) => setMovedOnly(e.target.checked)} /> Only what moved {previousLabel ? `since ${previousLabel}` : "this report"}
-        </label>
+      <div className="text-xs text-muted">
+        {category === "closed" ? "DVOs recorded as Approved on this report – the head office files them under this month with the DVO, the instruction, the PVO and the RFC / CRF behind each." : "PVOs and VOs recorded or changed on this report with the DVO still pending – the head office wants the instruction, the PVO and the RFC / CRF behind each, and a root cause where the 90-day norm is passed."}
+        {previousLabel ? ` Compared with ${previousLabel}.` : ""}
       </div>
       {shown.length === 0 ? (
-        <div className="card p-5 text-sm text-muted">{movedOnly ? "Nothing moved under this heading since the previous report." : `No ${category === "closed" ? "approved DVOs" : "pending VOs or PVOs"} on this report.`}</div>
+        <div className="card p-5 text-sm text-muted">{category === "closed" ? "No DVO was approved on this report." : "No PVO or VO was recorded or changed on this report."}</div>
       ) : (
         <div className="card overflow-hidden p-0">
           <table className="w-full text-sm">
@@ -78,24 +73,6 @@ export function KpiWorkspace({ periodId, category, rows, earlier, canManage, pre
           </table>
         </div>
       )}
-      {earlier.length > 0 && (
-        <div className="card p-4 text-sm">
-          <button className="flex items-center gap-2 text-left font-medium text-ink" onClick={() => setShowEarlier((v) => !v)}>
-            {showEarlier ? <ChevronDown size={16} /> : <ChevronRight size={16} />} DVOs approved on earlier reports ({earlier.length}) – already reported, kept for reference
-          </button>
-          {showEarlier && (
-            <div className="mt-3 overflow-x-auto">
-              <table className="w-full text-xs">
-                <tbody>
-                  {earlier.map((r) => (
-                    <Row key={r.item.changeId} r={r} periodId={periodId} category="closed" canManage={canManage} open={open.has(r.item.changeId)} onToggle={() => toggle(r.item.changeId)} />
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 }
@@ -109,8 +86,9 @@ function Row({ r, periodId, category, canManage, open, onToggle }: { r: KpiRow; 
   const [fileName, setFileName] = useState(r.fileName);
   const [rootCause, setRootCause] = useState(r.rootCause);
   const [progress, setProgress] = useState<string | null>(null);
-  const fileInput = useRef<HTMLInputElement>(null);
   const dirInput = useRef<HTMLInputElement>(null);
+  const slotInputs = useRef<Record<string, HTMLInputElement | null>>({});
+  const slots = kpiSectionsFor(category);
   const over = category === "open" && (it.remainingDays ?? 1) < 0;
   const packName = fileName.trim() || r.defaultFileName;
 
@@ -121,7 +99,7 @@ function Row({ r, periodId, category, canManage, open, onToggle }: { r: KpiRow; 
     else router.refresh();
   }
 
-  async function upload(list: FileList | null) {
+  async function upload(list: FileList | null, section?: KpiSection) {
     if (!list || !list.length) return;
     const picked = Array.from(list).filter((f) => !/^(\.|~\$|thumbs\.db$|desktop\.ini$)/i.test(f.name));
     if (!picked.length) return;
@@ -137,7 +115,7 @@ function Row({ r, periodId, category, canManage, open, onToggle }: { r: KpiRow; 
         const data = await toBase64(f.slice(i * CHUNK, (i + 1) * CHUNK));
         let j: { error?: string; uploadId?: string; doc?: KpiDoc } = {};
         try {
-          const res = await fetch("/api/kpi/docs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ uploadId, changeId: it.changeId, name: f.name, relPath: rel, mime: f.type, size: f.size, index: i, count, data }) });
+          const res = await fetch("/api/kpi/docs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ uploadId, changeId: it.changeId, name: f.name, relPath: rel, mime: f.type, size: f.size, index: i, count, data, section }) });
           j = await res.json().catch(() => ({}));
           if (!res.ok) {
             toast(`${rel}: ${j.error ?? "upload failed"}`, "error");
@@ -159,10 +137,10 @@ function Row({ r, periodId, category, canManage, open, onToggle }: { r: KpiRow; 
     if (added) toast(`${added} document${added === 1 ? "" : "s"} added to ${it.itemNo}.`);
   }
 
-  async function move(doc: KpiDoc, section: string) {
-    const res = await fetch(`/api/kpi/docs/${doc.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ section }) });
+  async function patch(doc: KpiDoc, body: { section?: string; pages?: string }) {
+    const res = await fetch(`/api/kpi/docs/${doc.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const j = await res.json().catch(() => ({}));
-    if (!res.ok) return toast(j.error ?? "Could not move the document.", "error");
+    if (!res.ok) return toast(j.error ?? "Could not change the document.", "error");
     setDocs((cur) => cur.map((d) => (d.id === doc.id ? j.doc : d)));
   }
 
@@ -173,7 +151,6 @@ function Row({ r, periodId, category, canManage, open, onToggle }: { r: KpiRow; 
     setDocs((cur) => cur.filter((d) => d.id !== doc.id));
   }
 
-  const bySection = KPI_SECTIONS.map((s) => ({ section: s, docs: docs.filter((d) => d.section === s) })).filter((g) => g.docs.length);
   return (
     <>
       <tr className={`border-t border-line ${open ? "bg-slate-50" : ""}`}>
@@ -266,61 +243,98 @@ function Row({ r, periodId, category, canManage, open, onToggle }: { r: KpiRow; 
                   <div className="flex flex-wrap gap-1.5">
                     {canManage && (
                       <>
-                        <input ref={fileInput} type="file" multiple className="hidden" accept=".pdf,.png,.jpg,.jpeg" onChange={(e) => { upload(e.target.files); e.target.value = ""; }} />
                         <input ref={dirInput} type="file" multiple className="hidden" {...({ webkitdirectory: "", directory: "" } as Record<string, string>)} onChange={(e) => { upload(e.target.files); e.target.value = ""; }} />
-                        <button className="btn btn-xs btn-secondary" onClick={() => fileInput.current?.click()} disabled={!!progress}>
-                          <Upload size={12} /> Upload files
-                        </button>
-                        <button className="btn btn-xs btn-secondary" onClick={() => dirInput.current?.click()} disabled={!!progress} title="A folder with sub-folders such as A. DVO, B. Instruction, C. PVO, D. RFC – each file is filed under its part">
-                          <FolderUp size={12} /> Upload folder
+                        <button className="btn btn-xs btn-secondary" onClick={() => dirInput.current?.click()} disabled={!!progress} title="A folder holding every part: each file is filed under the part its folder or name says (1. DVO approval, 2. DVO, 3. PVO VO approval, 4. PVO VO, 5. VO issued)">
+                          <FolderUp size={12} /> Upload a folder
                         </button>
                       </>
                     )}
-                    <a className="btn btn-xs btn-pdf" href={`/api/kpi/pack?change=${it.changeId}&period=${periodId}`} title={`Cover, dividers and every document in one PDF: ${packName}.pdf`}>
+                    <a className="btn btn-xs btn-pdf" href={`/api/kpi/pack?change=${it.changeId}&period=${periodId}`} title={`Cover, one divider per part and the key pages of every document in one PDF: ${packName}.pdf`}>
                       <FileDown size={12} /> Create KPI PDF pack
                     </a>
                   </div>
                 </div>
                 {progress && <div className="mb-2 text-navy">Uploading {progress}…</div>}
-                <div className="mb-2 text-muted">Pack file: <span className="font-mono text-ink">{packName}.pdf</span></div>
-                {docs.length === 0 ? (
-                  <div className="text-muted">Nothing uploaded yet. Upload the {category === "closed" ? "executed DVO, the instruction (VO form and letter), the PVO and the RFC / CRF" : "instruction (VO form and letter), the PVO and the RFC / CRF"} – as files or as a folder – and each is filed under its part of the pack.</div>
-                ) : (
-                  <div className="space-y-2">
-                    {bySection.map((g) => (
-                      <div key={g.section}>
-                        <div className="font-semibold text-navy">{KPI_SECTION_LABEL[g.section]}</div>
-                        <ul className="mt-1 divide-y divide-line rounded border border-line">
-                          {g.docs.map((d) => (
-                            <li key={d.id} className="flex flex-wrap items-center gap-2 px-2 py-1">
-                              <a className="min-w-0 flex-1 truncate text-ink hover:underline" href={`/api/kpi/docs/${d.id}/download`} target="_blank" rel="noopener" title={d.rel_path}>
-                                {d.name}
-                              </a>
-                              <span className="text-muted">{(d.size / 1024 / 1024).toFixed(1)} MB</span>
-                              {canManage && (
-                                <>
-                                  <select className="input h-6 w-36 py-0 text-[11px]" value={d.section} onChange={(e) => move(d, e.target.value)}>
-                                    {KPI_SECTIONS.map((s) => (
-                                      <option key={s} value={s}>{KPI_SECTION_LABEL[s].slice(0, 6)}</option>
-                                    ))}
-                                  </select>
-                                  <button className="rounded p-1 text-muted hover:bg-red-50 hover:text-red-700" onClick={() => remove(d)} aria-label="Remove">
-                                    <Trash2 size={13} />
-                                  </button>
-                                </>
-                              )}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                <div className="mb-2 text-muted">Pack file: <span className="font-mono text-ink">{packName}.pdf</span> · only the key pages of each file go in (the pages box shows which; change it if needed)</div>
+                <ol className="space-y-2">
+                  {slots.map((sec) => {
+                    const mine = docs.filter((d) => d.section === sec);
+                    return (
+                      <li key={sec} className="rounded border border-line">
+                        <div className="flex flex-wrap items-center gap-2 bg-slate-50 px-2 py-1.5">
+                          <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-slate-700 text-[11px] font-semibold text-white">{KPI_SECTION_NO[sec]}</span>
+                          <div className="min-w-0 flex-1">
+                            <div className="font-semibold text-ink">{KPI_SECTION_LABEL[sec]}</div>
+                            <div className="text-[11px] text-muted">{KPI_SECTION_HINT[sec]}</div>
+                          </div>
+                          {mine.length === 0 && <span className="text-[11px] text-amber-700">nothing uploaded</span>}
+                          {canManage && (
+                            <>
+                              <input ref={(el) => { slotInputs.current[sec] = el; }} type="file" multiple className="hidden" accept=".pdf,.png,.jpg,.jpeg" onChange={(e) => { upload(e.target.files, sec); e.target.value = ""; }} />
+                              <button className="btn btn-xs btn-secondary" onClick={() => slotInputs.current[sec]?.click()} disabled={!!progress}>
+                                <Upload size={12} /> Upload
+                              </button>
+                            </>
+                          )}
+                        </div>
+                        {mine.length > 0 && (
+                          <ul className="divide-y divide-line">
+                            {mine.map((d) => (
+                              <li key={d.id} className="flex flex-wrap items-center gap-2 px-2 py-1">
+                                <a className="min-w-0 flex-1 truncate text-ink hover:underline" href={`/api/kpi/docs/${d.id}/download`} target="_blank" rel="noopener" title={d.rel_path}>
+                                  {d.name}
+                                </a>
+                                <span className="text-muted">{(d.size / 1024 / 1024).toFixed(1)} MB</span>
+                                {d.page_count > 0 && <PagesPicker doc={d} canManage={canManage} onSave={(pages) => patch(d, { pages })} />}
+                                {canManage && (
+                                  <>
+                                    <select className="input h-6 w-44 py-0 text-[11px]" value={d.section} onChange={(e) => patch(d, { section: e.target.value })} title="Move to another part of the pack">
+                                      {KPI_SECTIONS.map((s2) => (
+                                        <option key={s2} value={s2}>{KPI_SECTION_NO[s2]}. {KPI_SECTION_LABEL[s2]}</option>
+                                      ))}
+                                    </select>
+                                    <button className="rounded p-1 text-muted hover:bg-red-50 hover:text-red-700" onClick={() => remove(d)} aria-label="Remove">
+                                      <Trash2 size={13} />
+                                    </button>
+                                  </>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </li>
+                    );
+                  })}
+                  {docs.some((d) => !slots.includes(d.section)) && (
+                    <li className="rounded border border-dashed border-line px-2 py-1.5 text-[11px] text-muted">
+                      {docs.filter((d) => !slots.includes(d.section)).length} document(s) sit in a part this KPI does not use ({docs.filter((d) => !slots.includes(d.section)).map((d) => d.name).join(", ")}); they still go into the pack.
+                    </li>
+                  )}
+                </ol>
               </div>
             </div>
           </td>
         </tr>
       )}
     </>
+  );
+}
+
+/** "Pages 1-3, 5 of 24" – which pages of the file go into the pack, with what each page was read as. */
+function PagesPicker({ doc, canManage, onSave }: { doc: KpiDoc; canManage: boolean; onSave: (pages: string) => void }) {
+  const [value, setValue] = useState(doc.pages ?? "");
+  let kinds: PageKind[] = [];
+  try {
+    kinds = JSON.parse(doc.page_kinds || "[]") as PageKind[];
+  } catch {
+    kinds = [];
+  }
+  const legend = kinds.map((k, i) => `p.${i + 1}: ${PAGE_KIND_LABEL[k] ?? k}`).join("\n");
+  return (
+    <span className="inline-flex items-center gap-1 whitespace-nowrap text-[11px] text-muted" title={`Pages taken into the pack (blank = all). Each page was read as:\n${legend}`}>
+      pages
+      <input className="input h-6 w-24 py-0 text-[11px]" value={value} placeholder="all" disabled={!canManage} onChange={(e) => setValue(e.target.value)} onBlur={() => value !== (doc.pages ?? "") && onSave(value)} />
+      of {doc.page_count}
+    </span>
   );
 }

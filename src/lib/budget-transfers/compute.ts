@@ -67,9 +67,35 @@ export function resolveTransfers(db: Database.Database, programmeId: number): Re
   });
 }
 
-/** Column F: −amount on the From line, +amount on the To line, for every applied transfer. */
+/**
+ * Where column F of the cost report comes from for this programme. When the Level 2 sheet of the
+ * Excel cost report was imported with its "Budget transfers brought forward" column, every cost line
+ * already carries its share of column F – the figure that ties to the Schedule B grand total – and
+ * the Schedule J transfer log is kept in full as the record behind it. Feeding the log into column F
+ * as well would count each transfer twice, so in that mode the log is a record, not a feed.
+ */
+export interface ColumnFSource {
+  /** true when column F is brought forward from the Excel cost report (Schedule B) */
+  fromWorkbook: boolean;
+  /** the grand total of "Budget transfers brought forward" over the programme's cost lines */
+  broughtForward: number;
+  /** how many cost lines carry a brought-forward figure */
+  lines: number;
+}
+
+export function columnFSource(db: Database.Database, programmeId: number): ColumnFSource {
+  const r = db.prepare("SELECT COUNT(*) AS n, COALESCE(SUM(opening_transfers), 0) AS total FROM cost_lines WHERE programme_id = ? AND COALESCE(opening_transfers, 0) <> 0").get(programmeId) as { n: number; total: number };
+  return { fromWorkbook: r.n > 0, broughtForward: r2(Number(r.total ?? 0)), lines: Number(r.n ?? 0) };
+}
+
+/**
+ * Column F: −amount on the From line, +amount on the To line, for every applied transfer – only when
+ * the transfer log is what feeds column F. When column F is brought forward from the Excel cost
+ * report the log is the record behind that figure and feeds nothing (see columnFSource).
+ */
 export function transferFeeds(db: Database.Database, programmeId: number): Map<number, number> {
   const out = new Map<number, number>();
+  if (columnFSource(db, programmeId).fromWorkbook) return out;
   for (const t of resolveTransfers(db, programmeId)) {
     if (t.problem || t.from_line === null || t.to_line === null) continue;
     out.set(t.from_line, r2((out.get(t.from_line) ?? 0) - t.amount));
@@ -86,10 +112,13 @@ export interface TransferSummary {
   notApplied: { item: string; problem: string }[];
   netByPackage: { package_id: number; package: string; out: number; in: number; net: number }[];
   netsToZero: boolean;
+  /** where column F comes from: the Excel cost report (Schedule B) or this log */
+  columnF: ColumnFSource;
 }
 
 export function getTransferSummary(db: Database.Database, programmeId: number): TransferSummary {
   const resolved = resolveTransfers(db, programmeId);
+  const columnF = columnFSource(db, programmeId);
   const packages = new Map((db.prepare("SELECT id, name FROM packages").all() as { id: number; name: string }[]).map((p) => [p.id, p.name]));
   const net = new Map<number, { out: number; in: number }>();
   const bump = (pkg: number, key: "out" | "in", v: number) => {
@@ -98,7 +127,9 @@ export function getTransferSummary(db: Database.Database, programmeId: number): 
     net.set(pkg, cur);
   };
   for (const t of resolved) {
-    if (t.status !== "Approved" || t.problem) continue; // only what is actually in column F
+    if (t.status !== "Approved") continue;
+    // the log fed into column F: only what is actually there; brought forward from Excel: the whole approved log, as Schedule J records it
+    if (t.problem && !columnF.fromWorkbook) continue;
     bump(t.from_package_id, "out", t.amount);
     bump(t.to_package_id, "in", t.amount);
   }
@@ -109,10 +140,12 @@ export function getTransferSummary(db: Database.Database, programmeId: number): 
     approved: resolved.filter((t) => t.status === "Approved").length,
     approvedAmount: r2(resolved.filter((t) => t.status === "Approved").reduce((a, t) => a + t.amount, 0)),
     pendingAmount: r2(resolved.filter((t) => t.status === "Pending").reduce((a, t) => a + t.amount, 0)),
-    notApplied: resolved.filter((t) => t.status === "Approved" && t.problem).map((t) => ({ item: t.item, problem: t.problem! })),
+    // nothing is "missing" from column F when the whole of it was brought forward from the Excel cost report
+    notApplied: columnF.fromWorkbook ? [] : resolved.filter((t) => t.status === "Approved" && t.problem).map((t) => ({ item: t.item, problem: t.problem! })),
     netByPackage: [...net.entries()]
       .map(([id, v]) => ({ package_id: id, package: packages.get(id) ?? `#${id}`, out: v.out, in: v.in, net: r2(v.in - v.out) }))
       .sort((a, b) => a.package.localeCompare(b.package)),
     netsToZero: Math.abs(sum) < 0.005,
+    columnF,
   };
 }

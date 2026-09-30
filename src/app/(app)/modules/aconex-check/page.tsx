@@ -70,7 +70,7 @@ export default async function AconexCheckPage({ searchParams }: { searchParams: 
           </div>
 
           <div className="card overflow-x-auto p-0">
-            <div className="border-b border-line bg-slate-50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-muted">Totals – Aconex vs dashboard</div>
+            <div className="border-b border-line bg-slate-50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-muted">Totals – Aconex vs dashboard, over the lines both systems hold and compare for each figure</div>
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-xs text-muted">
@@ -84,7 +84,10 @@ export default async function AconexCheckPage({ searchParams }: { searchParams: 
               <tbody>
                 {ACONEX_MEASURES.map((m) => (
                   <tr key={m.key} className="border-t border-line">
-                    <td className="px-4 py-1.5 font-medium text-ink">{m.label}</td>
+                    <td className="px-4 py-1.5 font-medium text-ink">
+                      {m.label}
+                      <div className="text-[11px] font-normal text-muted">over {rec.totals.lines[m.key]} {m.key === "budget" || m.key === "eac" ? "lines" : "contracts"}</div>
+                    </td>
                     <td className="px-3 py-1.5 text-right tnum">{formatMoney(rec.totals.aconex[m.key])}</td>
                     <td className="px-3 py-1.5 text-right tnum">{formatMoney(rec.totals.dashboard[m.key])}</td>
                     <td className={`px-3 py-1.5 text-right tnum ${Math.abs(rec.totals.diff[m.key]) >= rec.counts.tolerance ? "font-semibold text-red-700" : "text-emerald-700"}`}>{formatMoney(rec.totals.diff[m.key])}</td>
@@ -92,6 +95,19 @@ export default async function AconexCheckPage({ searchParams }: { searchParams: 
                   </tr>
                 ))}
               </tbody>
+              {(rec.aconexOnly.length > 0 || rec.dashboardOnly.length > 0) && (
+                <tfoot>
+                  <tr className="border-t-2 border-line bg-slate-50 text-xs text-muted">
+                    <td className="px-4 py-1.5 font-medium text-ink">Not compared – only on one side</td>
+                    <td className="px-3 py-1.5 text-right tnum">{formatMoney(rec.unmatched.aconex.eac)}</td>
+                    <td className="px-3 py-1.5 text-right tnum">{formatMoney(rec.unmatched.dashboard.eac)}</td>
+                    <td className="px-3 py-1.5" />
+                    <td className="px-3 py-1.5">
+                      Estimate at completion of the {rec.aconexOnly.length} row(s) only in Aconex and the {rec.dashboardOnly.length} line(s) only on the dashboard (commitments {formatMoney(rec.unmatched.aconex.commitments)} vs {formatMoney(rec.unmatched.dashboard.commitments)}). Added to the totals above they give each system&apos;s grand total.
+                    </td>
+                  </tr>
+                </tfoot>
+              )}
             </table>
           </div>
 

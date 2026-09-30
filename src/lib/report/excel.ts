@@ -754,7 +754,7 @@ export function transfersReportSheet(wb: ExcelJS.Workbook, d: ReportData) {
     ["Transfers", h.total, `${h.approved} approved · ${h.pending} pending`],
     ["Approved amount moved (SAR)", h.approvedAmount, ""],
     ["Pending approval (SAR)", h.pendingAmount, ""],
-    ["Not applied to the cost report", h.notApplied, ""],
+    h.columnFFromWorkbook ? ["Cost report column F (SAR)", h.columnF, "Schedule B grand total, brought forward from the Excel cost report"] : ["Not applied to the cost report", h.notApplied, ""],
   ];
   for (const [k, v, n] of kp) {
     const row = ws.addRow([k, v, n]);
@@ -931,8 +931,8 @@ function execSheet(wb: ExcelJS.Workbook, d: ReportData) {
 /** Period Summary – the key period movements as the directors get them, on one sheet. */
 /** Cost recovery: accommodation invoices and customs duties per contractor, with the tracker rows behind them. */
 export function recoveryReportSheet(wb: ExcelJS.Workbook, d: ReportData) {
-  const acc = getAccommodationSummary(d.recovery.accommodation);
-  const cus = getCustomsSummary(d.recovery.customs, d.registers.changes?.rows ?? []);
+  const acc = getAccommodationSummary(d.recovery.accommodation, d.recovery.accommodationInvoices);
+  const cus = getCustomsSummary(d.recovery.customs, d.registers.changes?.rows ?? [], d.recovery.customsDeclarations);
   const ws = wb.addWorksheet("Cost Recovery");
   [44, 22, 18, 18, 18, 18, 18, 18, 40].forEach((w, i) => (ws.getColumn(i + 1).width = w));
   titleBlock(ws, "Cost Recovery – Accommodation & Customs Duty", sub(d), 9);
@@ -956,9 +956,9 @@ export function recoveryReportSheet(wb: ExcelJS.Workbook, d: ReportData) {
   if (!cus.totals.rows) ws.addRow(["No customs recovery tracker has been uploaded for this project yet."]);
 
   // the tracker rows themselves, one sheet each
-  for (const key of ["accommodation_recovery", "customs_recovery"] as const) {
+  for (const key of ["accommodation_recovery", "accommodation_invoices", "customs_recovery", "customs_declarations"] as const) {
     const def = getRegisterDef(key)!;
-    const rows = key === "accommodation_recovery" ? d.recovery.accommodation : d.recovery.customs;
+    const rows = key === "accommodation_recovery" ? d.recovery.accommodation : key === "accommodation_invoices" ? d.recovery.accommodationInvoices : key === "customs_recovery" ? d.recovery.customs : d.recovery.customsDeclarations;
     if (!rows.length) continue;
     const ws2 = wb.addWorksheet(def.title.slice(0, 31));
     titleBlock(ws2, def.title, sub(d), 8);
@@ -980,7 +980,10 @@ export function aconexSheet(wb: ExcelJS.Workbook, d: ReportData) {
   ws.addRow([`${rec.counts.matched} lines compared · ${rec.counts.differing} with a difference · ${rec.aconexOnly.length} only in Aconex · ${rec.dashboardOnly.length} only on the dashboard. A contract differs when its commitments, estimate at completion or incurred to date disagree; a budget hold when its budget or estimate at completion does. Approved budget, DVOs and PVOs on a contract are for information (the two systems hold them on different bases).`]).font = { italic: true, color: { argb: XL.muted } };
   ws.addRow([]);
   header(ws.addRow(["Totals", "", "", "", ...ACONEX_MEASURES.flatMap((m) => [`${m.label} – Aconex`, `${m.label} – dashboard`, `${m.label} – difference`])]));
-  const tr = ws.addRow(["Total", d.programme.name, "", "", ...ACONEX_MEASURES.flatMap((m) => [rec.totals.aconex[m.key], rec.totals.dashboard[m.key], rec.totals.diff[m.key]])]);
+  const tr = ws.addRow([`Total – matched lines (${ACONEX_MEASURES.map((m) => `${m.label}: ${rec.totals.lines[m.key]}`).join(", ")})`, d.programme.name, "", "", ...ACONEX_MEASURES.flatMap((m) => [rec.totals.aconex[m.key], rec.totals.dashboard[m.key], rec.totals.diff[m.key]])]);
+  const ur = ws.addRow([`Only on one side – not compared`, `${rec.aconexOnly.length} only in Aconex, ${rec.dashboardOnly.length} only on the dashboard`, "", "", ...ACONEX_MEASURES.flatMap((m) => [rec.unmatched.aconex[m.key], rec.unmatched.dashboard[m.key], null])]);
+  ur.font = { italic: true, color: { argb: XL.muted } };
+  for (let i = 5; i <= 4 + ACONEX_MEASURES.length * 3; i++) ur.getCell(i).numFmt = MONEY_FMT;
   for (let i = 5; i <= cols.length; i++) tr.getCell(i).numFmt = MONEY_FMT;
   totalRow(tr);
   ws.addRow([]);
@@ -1033,25 +1036,26 @@ export function uncommittedEwSheet(wb: ExcelJS.Workbook, d: ReportData) {
   // the early warnings behind column L, contract by contract
   const ws2 = wb.addWorksheet("Early Warnings by contract");
   [30, 40, 12, 60, 34, 12, 12, 18, 14].forEach((w, i) => (ws2.getColumn(i + 1).width = w));
-  titleBlock(ws2, `Early warnings behind column L – ${d.programme.name} – ${d.period.label}`, `${t.counts.ews} early warning(s) on the register, ${t.counts.openEws} open – as on the Early Warning sheet of the workbook`, 9);
-  header(ws2.addRow(["Code", "Contract", "EW No", "Description", "Contractor", "Status", "Likelihood", "Cost impact (SAR)", "Date raised"]));
+  titleBlock(ws2, `Early warnings behind column L – ${d.programme.name} – ${d.period.label}`, `${t.counts.ews} early warning(s) on the register, ${t.counts.openEws} open – as on the Early Warning sheet of the workbook; each carried in the column its wording names, the rest under early warnings`, 10);
+  ws2.getColumn(10).width = 26;
+  header(ws2.addRow(["Code", "Contract", "EW No", "Description", "Contractor", "Status", "Likelihood", "Cost impact (SAR)", "Date raised", "Counted under"]));
   for (const r of t.rows) {
     if (r.kind !== "line" || !r.ews.length) continue;
     for (const e of r.ews) {
-      const row = ws2.addRow([r.code, r.name, e.ewNo, e.description, e.contractor, e.status, e.likelihood, e.amount, e.raised ? toDate(e.raised) : null]);
+      const row = ws2.addRow([r.code, r.name, e.ewNo, e.description, e.contractor, e.status, e.likelihood, e.amount, e.raised ? toDate(e.raised) : null, e.bucketLabel]);
       row.getCell(8).numFmt = MONEY_FMT;
       row.getCell(9).numFmt = "dd-mmm-yy";
     }
-    const sum = ws2.addRow([r.code, `${r.name} – column L`, "", "", "", "", "", r.earlyWarnings, null]);
+    const sum = ws2.addRow([r.code, `${r.name} – left under early warnings`, "", "", "", "", "", r.earlyWarnings, null, ""]);
     sum.getCell(8).numFmt = MONEY_FMT;
     totalRow(sum, XL.subtotalFill);
   }
   for (const e of t.unlinkedEws) {
-    const row = ws2.addRow(["", "Not linked to a cost report line", e.ewNo, e.description, e.contractor, e.status, e.likelihood, e.amount, e.raised ? toDate(e.raised) : null]);
+    const row = ws2.addRow(["", "Not linked to a cost report line", e.ewNo, e.description, e.contractor, e.status, e.likelihood, e.amount, e.raised ? toDate(e.raised) : null, e.bucketLabel]);
     row.getCell(8).numFmt = MONEY_FMT;
     row.getCell(9).numFmt = "dd-mmm-yy";
   }
-  const tot = ws2.addRow(["", "Total – column L", "", "", "", "", "", t.total.earlyWarnings, null]);
+  const tot = ws2.addRow(["", "Total – left under early warnings", "", "", "", "", "", t.total.earlyWarnings, null, ""]);
   tot.getCell(8).numFmt = MONEY_FMT;
   totalRow(tot);
 }

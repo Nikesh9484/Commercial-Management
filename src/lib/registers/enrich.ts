@@ -2,7 +2,7 @@ import type { RecordRow, RegisterDef } from "./types";
 import { todayIso } from "../format";
 import { daysBetween } from "./enrich-utils";
 import { computeContracts, mergeComputed } from "../payments/compute";
-import { resolveTransfers } from "../budget-transfers/compute";
+import { columnFSource, resolveTransfers } from "../budget-transfers/compute";
 import { CHANGE_STAGES, CLOSED_STATUSES } from "./defs/changes";
 import { CLAIM_TYPES, NOTICE_LIMIT_DAYS, DETAIL_LIMIT_DAYS, claimCostReportAmount } from "./defs/claims";
 import { businessDaysBetween } from "../workdays";
@@ -61,10 +61,20 @@ export function enrichRows(def: RegisterDef, rows: RecordRow[]) {
     }
   }
   if (def.key === "budget_transfers" && rows.length) {
-    const resolved = new Map(resolveTransfers(getDb(), Number(rows[0].programme_id)).map((t) => [t.id, t]));
+    const programmeId = Number(rows[0].programme_id);
+    const resolved = new Map(resolveTransfers(getDb(), programmeId).map((t) => [t.id, t]));
+    // Column F brought forward from the Excel cost report: the log is the Schedule J record behind
+    // that figure, so every approved transfer is in the cost report by definition – nothing is flagged
+    // as missing. Otherwise a transfer is in column F only when both its lines resolve.
+    const fromWorkbook = columnFSource(getDb(), programmeId).fromWorkbook;
     for (const r of rows) {
       const t = resolved.get(r.id);
       if (!t) continue;
+      if (fromWorkbook) {
+        r.applied = r.status === "Approved" ? "Yes – Schedule B column F" : `No – ${String(r.status ?? "").toLowerCase() || "not approved"}`;
+        r.applied__tone = r.status === "Approved" ? "green" : null;
+        continue;
+      }
       r.applied = t.problem ? (r.status === "Approved" ? `No – ${t.problem}` : "No") : "Yes";
       r.applied__tone = t.problem ? (r.status === "Approved" ? "red" : null) : "green";
     }

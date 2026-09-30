@@ -21,7 +21,7 @@ export async function POST(req: Request, ctx: unknown) {
     if ((body.index ?? 0) < (body.count ?? 1) - 1) return NextResponse.json({ uploadId });
     const bytes = finishUploadParts(uploadId);
     if (typeof body.size === "number" && bytes.length !== body.size) return NextResponse.json({ error: `The upload of ${body.name ?? "the file"} arrived incomplete (${bytes.length.toLocaleString()} of ${body.size.toLocaleString()} bytes). Please try again.` }, { status: 400 });
-    const doc = addKpiDoc(changeId, { name: String(body.name ?? "file"), relPath: body.relPath, bytes, mime: String(body.mime ?? ""), section: body.section }, user);
+    const doc = await addKpiDoc(changeId, { name: String(body.name ?? "file"), relPath: body.relPath, bytes, mime: String(body.mime ?? ""), section: body.section }, user);
     return NextResponse.json({ doc }, { status: 201 });
   })(req, ctx);
 }

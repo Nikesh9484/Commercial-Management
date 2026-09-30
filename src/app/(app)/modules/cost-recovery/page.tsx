@@ -6,7 +6,7 @@ import { getModule } from "@/lib/modules";
 import { getRegisterDef } from "@/lib/registers";
 import { listRecords } from "@/lib/registers/engine";
 import { getAccommodationSummary, getCustomsSummary } from "@/lib/recovery/summary";
-import { formatDate, formatMoney } from "@/lib/format";
+import { formatDate, formatMoney, formatMonthYear } from "@/lib/format";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { RegisterPage } from "@/components/register/RegisterPage";
 import { ExportButtons } from "@/components/ui/ExportButtons";
@@ -36,8 +36,8 @@ export default async function CostRecoveryPage({ searchParams }: { searchParams:
       </div>
     );
   }
-  const acc = getAccommodationSummary(listRecords(getRegisterDef("accommodation_recovery")!));
-  const cus = getCustomsSummary(listRecords(getRegisterDef("customs_recovery")!), listRecords(getRegisterDef("changes")!));
+  const acc = getAccommodationSummary(listRecords(getRegisterDef("accommodation_recovery")!), listRecords(getRegisterDef("accommodation_invoices")!));
+  const cus = getCustomsSummary(listRecords(getRegisterDef("customs_recovery")!), listRecords(getRegisterDef("changes")!), listRecords(getRegisterDef("customs_declarations")!));
   const tabs: { key: Tab; label: string; count: string }[] = [
     { key: "accommodation", label: "Accommodation cost recovery", count: `${acc.totals.rows}` },
     { key: "customs", label: "Customs duty recovery", count: `${cus.totals.rows}` },
@@ -142,6 +142,63 @@ export default async function CostRecoveryPage({ searchParams }: { searchParams:
                   </tfoot>
                 </table>
               </div>
+              <div className="card p-0">
+                <div className="border-b border-line bg-slate-50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-muted">Invoices behind each contractor – as on the tracker&apos;s invoice sets</div>
+                {acc.byContractor.every((c) => !c.detail.invoices.length) ? (
+                  <p className="px-4 py-3 text-sm text-muted">No invoice-level detail is held yet: upload the accommodation invoice tracker again and each lease agreement&apos;s invoices are read from its Invoice Set columns.</p>
+                ) : (
+                  acc.byContractor.map((c) => (
+                    <details key={c.contractor} className="border-b border-line last:border-b-0" open={c.detail.unpaid.length > 0}>
+                      <summary className="cursor-pointer px-4 py-2 text-sm">
+                        <span className="font-medium text-ink">{c.contractor}</span>
+                        <span className="ml-2 text-xs text-muted">
+                          {c.detail.invoices.length} invoice(s) · {c.detail.unpaid.length} unpaid or part-paid ({money(c.detail.unpaid.reduce((t, i) => t + Number(i.balance_due ?? 0), 0))})
+                          {c.detail.notYetInvoiced > 0.5 ? ` · ${money(c.detail.notYetInvoiced)} assessed, not yet invoiced` : ""}
+                          {c.detail.lateHistory.count ? ` · earlier invoices settled ${c.detail.lateHistory.min === c.detail.lateHistory.max ? `${c.detail.lateHistory.max}` : `${c.detail.lateHistory.min}–${c.detail.lateHistory.max}`} days late` : ""}
+                        </span>
+                      </summary>
+                      {c.detail.invoices.length > 0 && (
+                        <div className="overflow-x-auto px-2 pb-2">
+                          <table className="w-full text-xs">
+                            <thead>
+                              <tr className="text-left text-[11px] text-muted">
+                                <th className="px-2 py-1">Lease agreement</th>
+                                <th className="px-2 py-1">Invoice no</th>
+                                <th className="px-2 py-1">Occupancy period</th>
+                                <th className="px-2 py-1">Invoice date</th>
+                                <th className="px-2 py-1">Issued on</th>
+                                <th className="px-2 py-1">Due date</th>
+                                <th className="px-2 py-1 text-right">Amount incl. VAT</th>
+                                <th className="px-2 py-1 text-right">Received</th>
+                                <th className="px-2 py-1 text-right">Unpaid</th>
+                                <th className="px-2 py-1 text-right">Days overdue</th>
+                                <th className="px-2 py-1">Status</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {c.detail.invoices.map((i) => (
+                                <tr key={String(i.id)} className={`border-t border-line ${i.status === "Unpaid" || i.status === "Part-paid" ? "" : "text-muted"}`}>
+                                  <td className="max-w-[14rem] truncate px-2 py-1" title={String(i.tracker_name ?? "")}>{String(i.tracker_name ?? "")}</td>
+                                  <td className="whitespace-nowrap px-2 py-1">{String(i.invoice_no ?? "")}</td>
+                                  <td className="whitespace-nowrap px-2 py-1">{formatMonthYear(i.invoice_period as string)}</td>
+                                  <td className="whitespace-nowrap px-2 py-1">{formatDate(i.invoice_date as string)}</td>
+                                  <td className="whitespace-nowrap px-2 py-1">{formatDate(i.issued_date as string)}</td>
+                                  <td className="whitespace-nowrap px-2 py-1">{formatDate(i.due_date as string)}</td>
+                                  <td className="whitespace-nowrap px-2 py-1 text-right tnum">{money(Number(i.amount_gross ?? 0))}</td>
+                                  <td className="whitespace-nowrap px-2 py-1 text-right tnum">{money(Number(i.received ?? 0))}</td>
+                                  <td className={`whitespace-nowrap px-2 py-1 text-right tnum ${Number(i.balance_due ?? 0) > 0.5 ? "font-semibold text-red-700" : ""}`}>{money(Number(i.balance_due ?? 0))}</td>
+                                  <td className={`whitespace-nowrap px-2 py-1 text-right tnum ${Number(i.days_overdue ?? 0) > 0 && (i.status === "Unpaid" || i.status === "Part-paid") ? "font-semibold text-red-700" : ""}`}>{i.days_overdue === null || i.days_overdue === undefined ? "–" : String(i.days_overdue)}</td>
+                                  <td className="whitespace-nowrap px-2 py-1">{String(i.status ?? "")}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </details>
+                  ))
+                )}
+              </div>
               <RegisterPage registerKey="accommodation_recovery" isAdmin={user.role === "admin"} />
             </>
           )}
@@ -174,6 +231,7 @@ export default async function CostRecoveryPage({ searchParams }: { searchParams:
                       <th className="px-3 py-2 text-right">EWN</th>
                       <th className="px-3 py-2 text-right">Remaining to pay</th>
                       <th className="px-3 py-2">DVO</th>
+                      <th className="px-3 py-2">Email</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -188,6 +246,13 @@ export default async function CostRecoveryPage({ searchParams }: { searchParams:
                         <td className="px-3 py-1.5 text-right tnum">{money(c.totals.ewn)}</td>
                         <td className="px-3 py-1.5 text-right tnum">{money(c.totals.remainingToPay)}</td>
                         <td className="max-w-[16rem] truncate px-3 py-1.5 text-xs text-muted" title={c.dvoNote}>{c.dvoNote}</td>
+                        <td className="px-3 py-1.5">
+                          {c.totals.stillToRecover > 0.5 && ctx.period && (
+                            <a className="btn btn-xs btn-secondary" href={`/api/email-report?format=eml&kind=customs&period=${ctx.period.id}&contractor=${encodeURIComponent(c.contractor)}`} title="Download a ready-to-send email draft (.eml) with the customs declarations RSG paid on this contractor's imports and the balance to recover – opens in Outlook">
+                              <Mail size={12} /> Email draft
+                            </a>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -202,9 +267,67 @@ export default async function CostRecoveryPage({ searchParams }: { searchParams:
                       <td className="px-3 py-1.5 text-right tnum">{money(cus.totals.ewn)}</td>
                       <td className="px-3 py-1.5 text-right tnum">{money(cus.totals.remainingToPay)}</td>
                       <td />
+                      <td className="px-3 py-1.5">
+                        {cus.totals.stillToRecover > 0.5 && ctx.period && (
+                          <a className="btn btn-xs btn-secondary" href={`/api/email-report?format=eml&kind=customs&period=${ctx.period.id}`} title="One email draft covering every contractor with customs duties still to recover">
+                            <Mail size={12} /> All in one
+                          </a>
+                        )}
+                      </td>
                     </tr>
                   </tfoot>
                 </table>
+              </div>
+              <div className="card p-0">
+                <div className="border-b border-line bg-slate-50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-muted">Customs declarations paid by RSG – per contractor, from the tracker&apos;s Breakdown sheet</div>
+                {cus.byContractor.every((c) => !c.declarations.length) ? (
+                  <p className="px-4 py-3 text-sm text-muted">No declaration-level detail is held yet: upload the customs recovery tracker again and each contractor&apos;s customs declarations are read from its Breakdown sheet.</p>
+                ) : (
+                  cus.byContractor.map((c) => (
+                    <details key={c.contractor} className="border-b border-line last:border-b-0" open={c.rsgPaidList.length > 0 && c.totals.stillToRecover > 0.5}>
+                      <summary className="cursor-pointer px-4 py-2 text-sm">
+                        <span className="font-medium text-ink">{c.contractor}</span>
+                        <span className="ml-2 text-xs text-muted">{c.rsgPaidList.length} declaration(s) paid by RSG · {money(c.rsgPaidListed)} · {c.declarations.length - c.rsgPaidList.length} paid by the contractor or unknown</span>
+                      </summary>
+                      {c.declarations.length > 0 && (
+                        <div className="overflow-x-auto px-2 pb-2">
+                          <table className="w-full text-xs">
+                            <thead>
+                              <tr className="text-left text-[11px] text-muted">
+                                <th className="px-2 py-1">Payment date</th>
+                                <th className="px-2 py-1">Bayan no</th>
+                                <th className="px-2 py-1">Port</th>
+                                <th className="px-2 py-1">Supplier</th>
+                                <th className="px-2 py-1">Invoice no</th>
+                                <th className="px-2 py-1 text-right">Goods value</th>
+                                <th className="px-2 py-1 text-right">Customs duty</th>
+                                <th className="px-2 py-1">Who paid</th>
+                                <th className="px-2 py-1 text-right">Paid by RSG</th>
+                                <th className="px-2 py-1">SNB status</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {c.declarations.map((d) => (
+                                <tr key={String(d.id)} className={`border-t border-line ${d.paid_by === "RSG" ? "" : "text-muted"}`}>
+                                  <td className="whitespace-nowrap px-2 py-1">{formatDate((d.payment_date ?? d.statement_date) as string)}</td>
+                                  <td className="whitespace-nowrap px-2 py-1">{String(d.bayan_no ?? "")}</td>
+                                  <td className="max-w-[10rem] truncate px-2 py-1" title={String(d.port ?? "")}>{String(d.port ?? "")}</td>
+                                  <td className="max-w-[14rem] truncate px-2 py-1" title={String(d.supplier ?? "")}>{String(d.supplier ?? "")}</td>
+                                  <td className="whitespace-nowrap px-2 py-1">{String(d.invoice_no ?? "")}</td>
+                                  <td className="whitespace-nowrap px-2 py-1 text-right tnum">{money(Number(d.goods_value ?? 0))}</td>
+                                  <td className="whitespace-nowrap px-2 py-1 text-right tnum">{money(Number(d.customs_duty ?? 0))}</td>
+                                  <td className="whitespace-nowrap px-2 py-1">{String(d.paid_by ?? "")}</td>
+                                  <td className={`whitespace-nowrap px-2 py-1 text-right tnum ${Number(d.rsg_paid ?? 0) > 0.5 ? "font-semibold text-red-700" : ""}`}>{money(Number(d.rsg_paid ?? 0))}</td>
+                                  <td className="whitespace-nowrap px-2 py-1">{String(d.snb_status ?? "")}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </details>
+                  ))
+                )}
               </div>
               <p className="text-xs text-muted">
                 A determined variation order recorded in the Change Management Tracker for a contractor&apos;s customs recovery (its description mentions customs) is deducted from that contractor&apos;s amount to recover as soon as it is entered; where no DVO is in the tracker yet, the PVO / DVO approved on the customs tracker itself counts.

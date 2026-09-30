@@ -21,6 +21,8 @@ export const IMPORTABLE: { key: string; label: string }[] = [
   { key: "project_team", label: "Distribution & Project Team" },
   { key: "actions", label: "Meeting items & actions" },
   { key: "accommodation_recovery", label: "Accommodation Cost Recovery (invoice tracker)" },
+  { key: "accommodation_invoices", label: "Accommodation Invoices (invoice tracker – invoice sets)" },
+  { key: "customs_declarations", label: "Customs Declarations (customs tracker – Breakdown sheet)" },
   { key: "customs_recovery", label: "Customs Duty Recovery (customs tracker)" },
   { key: "aconex_control_accounts", label: "Aconex Control Accounts (control-account export)" },
 ];

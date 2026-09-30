@@ -164,4 +164,94 @@ export const aconexControlAccounts: RegisterDef = {
   ],
 };
 
-export const recoveryRegisters = [accommodationRecovery, customsRecovery, aconexControlAccounts];
+const INVOICE = "Invoice";
+const SETTLEMENT = "Settlement";
+
+/** One invoice of a lease agreement – the tracker's "Invoice Set" columns, one row per set. */
+export const accommodationInvoices: RegisterDef = {
+  key: "accommodation_invoices",
+  table: "accommodation_invoices",
+  title: "Accommodation Invoices",
+  singular: "Accommodation invoice",
+  description: "Every accommodation invoice issued under a lease agreement, with its due date, what was received or recovered and what is still unpaid – from the Invoice Set columns of the accommodation invoice tracker.",
+  group: "Recovery",
+  scope: "programme",
+  snapshot: false,
+  displayField: "invoice_no",
+  displayFields: ["invoice_no", "tracker_name"],
+  defaultSort: { field: "due_date", dir: "asc" },
+  totals: ["amount_gross", "received", "balance_due", "withheld_in_ipc"],
+  fields: [
+    { key: "programme_id", label: "Programme", type: "lookup", lookup: { register: "programmes" }, required: true, hideInTable: true, hideInForm: true },
+    { key: "tracker_key", label: "Tracker key", type: "text", required: true, unique: true, hideInTable: true, hideInForm: true },
+    { key: "lease_key", label: "Lease agreement key", type: "text", hideInTable: true, hideInForm: true, help: "The tracker key of the lease agreement row this invoice belongs to." },
+    { key: "tracker_name", label: "Lease agreement (name on the tracker)", type: "text", required: true, section: INVOICE, width: "16rem" },
+    { key: "contractor_id", label: "Contractor / Consultant", type: "lookup", lookup: { register: "contractors" }, section: INVOICE, filter: true },
+    { key: "set_no", label: "Invoice set", type: "number", section: INVOICE, hideInTable: true },
+    { key: "invoice_period", label: "Occupancy period", type: "date", section: INVOICE, help: "The month the invoice covers." },
+    { key: "invoice_no", label: "Invoice no", type: "text", section: INVOICE, width: "8rem" },
+    { key: "invoice_date", label: "Invoice date", type: "date", section: INVOICE },
+    { key: "issued_date", label: "Issued on", type: "date", section: INVOICE, help: "When the invoice was issued to the contractor." },
+    { key: "due_date", label: "Due date", type: "date", section: INVOICE, help: "The settlement date on the tracker (14 days from issue)." },
+    { key: "amount_net", label: "Amount (excl. VAT)", type: "money", section: INVOICE, hideInTable: true },
+    { key: "amount_gross", label: "Amount (incl. VAT)", type: "money", section: INVOICE },
+    { key: "status", label: "Status", type: "select", options: ["Unpaid", "Part-paid", "Paid", "Not issued"], required: true, defaultValue: "Unpaid", chip: true, filter: true, section: SETTLEMENT },
+    { key: "received", label: "Received (incl. VAT)", type: "money", section: SETTLEMENT },
+    { key: "confirmed_by_finance", label: "Confirmed by Finance", type: "text", section: SETTLEMENT, hideInTable: true },
+    { key: "offset_via_ipc", label: "Offset via IPC", type: "money", section: SETTLEMENT, hideInTable: true },
+    { key: "withheld_in_ipc", label: "Withheld under IPC", type: "money", section: SETTLEMENT, hideInTable: true },
+    { key: "balance_due", label: "Unpaid", type: "money", section: SETTLEMENT },
+    { key: "actual_settlement_date", label: "Settled on", type: "date", section: SETTLEMENT, hideInTable: true },
+    { key: "days_overdue", label: "Days overdue", type: "number", section: SETTLEMENT, help: "Unpaid: days past the due date at the tracker date. Paid: how many days late it was settled." },
+    { key: "remark", label: "Remark", type: "textarea", section: SETTLEMENT, hideInTable: true },
+    { key: "tracker_date", label: "Tracker as of", type: "date", section: SETTLEMENT, hideInTable: true },
+  ],
+};
+
+const DECLARATION = "Customs declaration";
+const PAYMENT = "Payment";
+
+/** One customs declaration (Bayan) on a contractor's imports – the tracker's Breakdown sheet. */
+export const customsDeclarations: RegisterDef = {
+  key: "customs_declarations",
+  table: "customs_declarations",
+  title: "Customs Declarations",
+  singular: "Customs declaration",
+  description: "Each customs declaration on a contractor's imports – port, Bayan number, supplier, customs duty and who paid it – from the Breakdown sheet of the customs recovery tracker; the RSG-paid ones are what the contractor owes back.",
+  group: "Recovery",
+  scope: "programme",
+  snapshot: false,
+  displayField: "bayan_no",
+  displayFields: ["bayan_no", "supplier"],
+  defaultSort: { field: "payment_date", dir: "desc" },
+  totals: ["customs_duty", "rsg_paid", "contractor_paid"],
+  fields: [
+    { key: "programme_id", label: "Programme", type: "lookup", lookup: { register: "programmes" }, required: true, hideInTable: true, hideInForm: true },
+    { key: "tracker_key", label: "Tracker key", type: "text", required: true, unique: true, hideInTable: true, hideInForm: true },
+    { key: "contractor_id", label: "Contractor / Consultant", type: "lookup", lookup: { register: "contractors" }, section: DECLARATION, filter: true },
+    { key: "vendor", label: "Vendor on the tracker", type: "text", section: DECLARATION, hideInTable: true },
+    { key: "contract_code", label: "Contract code", type: "text", section: DECLARATION, width: "7rem" },
+    { key: "cost_line_id", label: "Cost report line", type: "lookup", lookup: { register: "cost_lines" }, section: DECLARATION, hideInTable: true },
+    { key: "payment_date", label: "Payment date", type: "date", section: DECLARATION },
+    { key: "statement_date", label: "Statement date", type: "date", section: DECLARATION, hideInTable: true },
+    { key: "port", label: "Port", type: "text", section: DECLARATION },
+    { key: "statement_type", label: "Type of statement", type: "text", section: DECLARATION, hideInTable: true },
+    { key: "bayan_no", label: "Bayan no", type: "text", section: DECLARATION, width: "8rem" },
+    { key: "broker", label: "Customs broker", type: "text", section: DECLARATION, hideInTable: true },
+    { key: "supplier", label: "Manufacturer / supplier", type: "text", section: DECLARATION, width: "14rem" },
+    { key: "goods_value", label: "Goods value (SAR)", type: "money", section: DECLARATION, hideInTable: true },
+    { key: "vat_amount", label: "VAT", type: "money", section: DECLARATION, hideInTable: true },
+    { key: "customs_duty", label: "Customs duty", type: "money", section: DECLARATION },
+    { key: "paid_by", label: "Who paid", type: "select", options: ["RSG", "Contractor", "Unknown"], chip: true, filter: true, section: PAYMENT },
+    { key: "invoice_no", label: "Invoice no", type: "text", section: PAYMENT, hideInTable: true },
+    { key: "snb_status", label: "RSG SNB status", type: "text", section: PAYMENT, hideInTable: true },
+    { key: "rsg_paid", label: "Paid by RSG", type: "money", section: PAYMENT },
+    { key: "contractor_paid", label: "Paid by contractor", type: "money", section: PAYMENT, hideInTable: true },
+    { key: "pvo_dvo_ref", label: "PVO / DVO reference", type: "text", section: PAYMENT, hideInTable: true },
+    { key: "pvo_dvo_amount", label: "PVO / DVO amount", type: "money", section: PAYMENT, hideInTable: true },
+    { key: "remarks", label: "Remarks", type: "textarea", section: PAYMENT, hideInTable: true },
+    { key: "tracker_date", label: "Tracker as of", type: "date", section: PAYMENT, hideInTable: true },
+  ],
+};
+
+export const recoveryRegisters = [accommodationRecovery, accommodationInvoices, customsRecovery, customsDeclarations, aconexControlAccounts];

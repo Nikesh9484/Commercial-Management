@@ -25,11 +25,25 @@ export interface AccommodationTotals {
   exposed: number;
 }
 
+/** What the invoices of one contractor say, beyond the lease totals. */
+export interface AccommodationInvoiceDetail {
+  /** every invoice of the contractor's lease agreements, oldest due first */
+  invoices: RecordRow[];
+  /** the ones still unpaid or part-paid, oldest due first */
+  unpaid: RecordRow[];
+  /** assessed but not yet invoiced (net of VAT), from the lease rows */
+  notYetInvoiced: number;
+  /** how late the settled invoices were paid */
+  lateHistory: { count: number; min: number; max: number };
+  /** invoices paid more than their amount (a credit the contractor holds) */
+  overpaid: number;
+}
+
 export interface AccommodationSummary {
   asOf: string | null;
   totals: AccommodationTotals;
   /** one line per contractor, largest outstanding first */
-  byContractor: { contractor: string; rows: RecordRow[]; totals: AccommodationTotals; note: string }[];
+  byContractor: { contractor: string; rows: RecordRow[]; totals: AccommodationTotals; note: string; detail: AccommodationInvoiceDetail }[];
   /** the rows still owing, largest first */
   outstanding: RecordRow[];
 }
@@ -51,15 +65,34 @@ function accTotals(rows: RecordRow[]): AccommodationTotals {
   return t;
 }
 
-export function getAccommodationSummary(rows: RecordRow[]): AccommodationSummary {
+function invoiceDetail(leases: RecordRow[], invoices: RecordRow[]): AccommodationInvoiceDetail {
+  const byDue = (a: RecordRow, b: RecordRow) => String(a.due_date ?? "").localeCompare(String(b.due_date ?? "")) || String(a.invoice_no ?? "").localeCompare(String(b.invoice_no ?? ""));
+  const list = [...invoices].sort(byDue);
+  const unpaid = list.filter((i) => i.status === "Unpaid" || i.status === "Part-paid");
+  const late = list.filter((i) => i.status === "Paid" && n(i.days_overdue) > 0).map((i) => n(i.days_overdue));
+  return {
+    invoices: list,
+    unpaid,
+    notYetInvoiced: r2(leases.reduce((t, r) => t + n(r.not_yet_invoiced), 0)),
+    lateHistory: { count: late.length, min: late.length ? Math.min(...late) : 0, max: late.length ? Math.max(...late) : 0 },
+    overpaid: r2(list.reduce((t, i) => t + (n(i.balance_due) < -0.5 ? -n(i.balance_due) : 0), 0)),
+  };
+}
+
+export function getAccommodationSummary(rows: RecordRow[], invoices: RecordRow[] = []): AccommodationSummary {
   const asOf = rows.map((r) => String(r.tracker_date ?? "")).filter(Boolean).sort().pop() ?? null;
   const groups = new Map<string, RecordRow[]>();
   for (const r of rows) {
     const name = String(r.contractor_id__label ?? r.tracker_name ?? "");
     groups.set(name, [...(groups.get(name) ?? []), r]);
   }
+  const invoicesOf = new Map<string, RecordRow[]>();
+  for (const i of invoices) {
+    const name = String(i.contractor_id__label ?? i.tracker_name ?? "");
+    invoicesOf.set(name, [...(invoicesOf.get(name) ?? []), i]);
+  }
   const byContractor = [...groups]
-    .map(([contractor, list]) => ({ contractor, rows: list, totals: accTotals(list), note: [...new Set(list.map((r) => String(r.note ?? "").trim()).filter(Boolean))].join(" · ") }))
+    .map(([contractor, list]) => ({ contractor, rows: list, totals: accTotals(list), note: [...new Set(list.map((r) => String(r.note ?? "").trim()).filter(Boolean))].join(" · "), detail: invoiceDetail(list, invoicesOf.get(contractor) ?? []) }))
     .sort((a, b) => b.totals.outstanding - a.totals.outstanding);
   const outstanding = rows.filter((r) => Math.abs(n(r.outstanding)) >= 0.5).sort((a, b) => n(b.outstanding) - n(a.outstanding));
   return { asOf, totals: accTotals(rows), byContractor, outstanding };
@@ -85,7 +118,7 @@ export interface CustomsTotals {
 export interface CustomsSummary {
   asOf: string | null;
   totals: CustomsTotals;
-  byContractor: { contractor: string; rows: RecordRow[]; totals: CustomsTotals; payer: string; dvoNote: string }[];
+  byContractor: { contractor: string; rows: RecordRow[]; totals: CustomsTotals; payer: string; dvoNote: string; declarations: RecordRow[]; rsgPaidList: RecordRow[]; rsgPaidListed: number }[];
   /** rows with customs paid by RSG still to recover, largest first */
   toRecover: RecordRow[];
   /** contracts the tracker annotates but with no customs figures yet */
@@ -176,7 +209,7 @@ function custTotals(rows: ReturnType<typeof customsWithDvo>): CustomsTotals {
   return t;
 }
 
-export function getCustomsSummary(rawRows: RecordRow[], changes: RecordRow[] = []): CustomsSummary {
+export function getCustomsSummary(rawRows: RecordRow[], changes: RecordRow[] = [], declarations: RecordRow[] = []): CustomsSummary {
   const rows = customsWithDvo(rawRows, changes);
   const asOf = rows.map((r) => String(r.tracker_date ?? "")).filter(Boolean).sort().pop() ?? null;
   const groups = new Map<string, typeof rows>();
@@ -184,14 +217,27 @@ export function getCustomsSummary(rawRows: RecordRow[], changes: RecordRow[] = [
     const name = String(r.contractor_id__label ?? r.vendor ?? "");
     groups.set(name, [...(groups.get(name) ?? []), r]);
   }
+  const declOf = new Map<string, RecordRow[]>();
+  for (const d of declarations) {
+    const name = String(d.contractor_id__label ?? d.vendor ?? "");
+    declOf.set(name, [...(declOf.get(name) ?? []), d]);
+  }
+  const byDate = (a: RecordRow, b: RecordRow) => String(a.payment_date ?? a.statement_date ?? "").localeCompare(String(b.payment_date ?? b.statement_date ?? ""));
   const byContractor = [...groups]
-    .map(([contractor, list]) => ({
-      contractor,
-      rows: list as RecordRow[],
-      totals: custTotals(list),
-      payer: [...new Set(list.map((r) => String(r.customs_payer ?? "").trim()).filter(Boolean))].join(" · "),
-      dvoNote: [...new Set(list.map((r) => r.dvo_source).filter(Boolean))].join("; "),
-    }))
+    .map(([contractor, list]) => {
+      const decl = [...(declOf.get(contractor) ?? [])].sort(byDate);
+      const rsgPaidList = decl.filter((d) => d.paid_by === "RSG" || n(d.rsg_paid) > 0);
+      return {
+        contractor,
+        rows: list as RecordRow[],
+        totals: custTotals(list),
+        payer: [...new Set(list.map((r) => String(r.customs_payer ?? "").trim()).filter(Boolean))].join(" · "),
+        dvoNote: [...new Set(list.map((r) => r.dvo_source).filter(Boolean))].join("; "),
+        declarations: decl,
+        rsgPaidList,
+        rsgPaidListed: r2(rsgPaidList.reduce((t, d) => t + (n(d.rsg_paid) || n(d.customs_duty)), 0)),
+      };
+    })
     .sort((a, b) => b.totals.stillToRecover - a.totals.stillToRecover || b.totals.toRecover - a.totals.toRecover);
   const toRecover = rows.filter((r) => r.still_to_recover > 0.5).sort((a, b) => b.still_to_recover - a.still_to_recover);
   const noFigures = rows.filter((r) => (r.customs_rsg_paid === null || r.customs_rsg_paid === undefined) && (r.to_recover === null || r.to_recover === undefined));

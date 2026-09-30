@@ -7,8 +7,10 @@ import { claimCostReportAmount } from "../registers/defs/claims";
  * budget, commitments, the uncommitted amounts by kind (VOs under process, EOT and other claims,
  * identified uncommitted scope, plant supply, FF&E), what is uncommitted / not required, the early
  * warnings and the estimate at completion – all read from that report's own registers, so a locked
- * report gives the figures it was issued with. The early warnings behind column L are listed
- * underneath, contract by contract, as they came in on the Early Warning sheet of the workbook.
+ * report gives the figures it was issued with. Each early warning behind column L is carried in the
+ * column its wording names (EOT claims, other claims, identified uncommitted scope, plant supply,
+ * FF&E) and only the rest stays under early warnings; they are listed underneath, contract by
+ * contract, as they came in on the Early Warning sheet of the workbook.
  */
 const n = (v: unknown) => (v === null || v === undefined || v === "" ? 0 : Number(v) || 0);
 const r2 = (x: number) => Math.round(x * 100) / 100;
@@ -36,8 +38,38 @@ export interface UncommittedRow {
   ews: EwDetail[];
 }
 
+/** Where an early warning's amount is carried in the table, read from its wording. */
+export type EwBucket = "eotClaims" | "otherClaims" | "uncommittedScope" | "plantSupply" | "ffe" | "earlyWarnings";
+export const EW_BUCKET_LABEL: Record<EwBucket, string> = {
+  eotClaims: "EOT claims",
+  otherClaims: "Other claims",
+  uncommittedScope: "Identified uncommitted scope",
+  plantSupply: "Plant supply",
+  ffe: "FF&E",
+  earlyWarnings: "Early warnings (other)",
+};
+
+/**
+ * "EOT-02 COST – MME – Extension of time" → EOT claims; "Elmar EOT-01 Cost Claim" → EOT claims;
+ * "Additional scope of Topographic Survey" / "Additional Slipway" / "MEP works … Survey" → identified
+ * uncommitted scope; plant or equipment supply → plant supply; furniture, FF&E, OS&E → FF&E; any other
+ * claim → other claims; the rest stays under early warnings.
+ */
+export function ewBucket(description: string, lineCategory = ""): EwBucket {
+  const t = ` ${description} `.toLowerCase();
+  if (/\beot\b|extension of time|prolongation|time[- ]related|acceleration|delay (cost|claim|damages)/.test(t)) return "eotClaims";
+  if (/\bclaims?\b|dispute|back[- ]?charge|disruption|loss and expense/.test(t)) return "otherClaims";
+  if (/ff&e|ff & e|\bffe\b|os&e|\bose\b|furniture|fixtures|loose equipment/.test(t) || /ff&e|os&e/i.test(lineCategory)) return "ffe";
+  if (/\bplants?\b(?! ?ing)|machinery|equipment supply|plant supply|free[- ]issue/.test(t) || /plant/i.test(lineCategory)) return "plantSupply";
+  if (/additional|add(ition)?\b|extra work|new scope|scope gap|missed|omission|not included|instruct|variation|provisional sum|survey|installation|works\b|upgrade|supply/.test(t)) return "uncommittedScope";
+  return "earlyWarnings";
+}
+
 export interface EwDetail {
   ewNo: string;
+  /** which column of the table carries its amount */
+  bucket: EwBucket;
+  bucketLabel: string;
   description: string;
   contractor: string;
   status: string;
@@ -93,10 +125,17 @@ export function buildUncommittedTable(data: ReportData): UncommittedTable {
   for (const e of ews) {
     const live = e.status === "Open" && !!e.cost_line_id;
     if (e.status === "Open") openEws++;
-    const d: EwDetail = { ewNo: String(e.ew_no ?? ""), description: String(e.description ?? ""), contractor: String(e.contractor_id__label ?? ""), status: String(e.status ?? ""), likelihood: String(e.likelihood ?? ""), amount: live ? r2(n(e.cost_impact)) : 0, raised: String(e.date_raised ?? "") };
     const row = byLine.get(Number(e.cost_line_id));
-    if (row) row.ews.push(d);
-    else unlinkedEws.push(d);
+    const bucket = ewBucket(String(e.description ?? ""), row?.category ?? "");
+    const d: EwDetail = { ewNo: String(e.ew_no ?? ""), bucket, bucketLabel: EW_BUCKET_LABEL[bucket], description: String(e.description ?? ""), contractor: String(e.contractor_id__label ?? ""), status: String(e.status ?? ""), likelihood: String(e.likelihood ?? ""), amount: live ? r2(n(e.cost_impact)) : 0, raised: String(e.date_raised ?? "") };
+    if (row) {
+      row.ews.push(d);
+      // the amount moves from column L to the column its wording names; what is left stays under early warnings
+      if (bucket !== "earlyWarnings" && d.amount) {
+        row[bucket] += d.amount;
+        row.earlyWarnings -= d.amount;
+      }
+    } else unlinkedEws.push(d);
   }
   const finish = (row: UncommittedRow) => {
     row.totalUncommitted = row.voUnderProcess + row.eotClaims + row.otherClaims + row.uncommittedScope + row.plantSupply + row.ffe + row.earlyWarnings;

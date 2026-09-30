@@ -3,7 +3,7 @@ import { executiveTotals } from "../cost-report/executive";
 import type { ReportData } from "./data";
 import { REPORT_SCHEDULES } from "./schedules";
 import { MONEY_COLUMNS, type Money } from "../cost-report/columns";
-import { formatMoney, formatDate, formatNumber, formatPercent, formatDateTime } from "../format";
+import { formatMoney, formatDate, formatNumber, formatPercent, formatDateTime, formatMonthYear } from "../format";
 import type { FieldDef } from "../registers/types";
 import { APP_NAME } from "../brand";
 import { buildClaimsReport, STALE_UPDATE_DAYS, type ClaimLine } from "./claims-report";
@@ -1239,8 +1239,8 @@ function recoveryReport(ctx: Ctx) {
   const { doc, data } = ctx;
   const width = PAGE.width - PAGE.margin * 2;
   const money = (v: unknown) => (v === null || v === undefined || v === "" ? "" : formatMoney(v as number));
-  const acc = getAccommodationSummary(data.recovery.accommodation);
-  const cus = getCustomsSummary(data.recovery.customs, data.registers.changes?.rows ?? []);
+  const acc = getAccommodationSummary(data.recovery.accommodation, data.recovery.accommodationInvoices);
+  const cus = getCustomsSummary(data.recovery.customs, data.registers.changes?.rows ?? [], data.recovery.customsDeclarations);
   const red = (n: number) => (n > 0.5 ? "#b91c1c" : null);
 
   subheading(ctx, "Accommodation cost recovery", `Construction village lease-agreement invoices per contractor${acc.asOf ? ` – tracker as of ${formatDate(acc.asOf)}` : ""}.`);
@@ -1273,6 +1273,35 @@ function recoveryReport(ctx: Ctx) {
       { zebra: true, totalRow: { contractor: "Total", ...acc.totals, note: "" }, rowStyle: (r) => (Number(r.outstanding) > 0.5 ? { color: "#b91c1c" } : undefined) },
     );
     doc.moveDown(0.5);
+    // the unpaid invoices behind each balance, as on the tracker's invoice sets
+    const withUnpaid = acc.byContractor.filter((c) => c.detail.unpaid.length);
+    if (withUnpaid.length) {
+      subheading(ctx, "Unpaid accommodation invoices by contractor", "From the tracker's invoice sets: what each contractor has been invoiced and has not settled, with the due date and the days overdue at the tracker date.");
+      const rows: Record<string, unknown>[] = [];
+      for (const c of withUnpaid) {
+        const sum = c.detail.unpaid.reduce((t, i) => t + Number(i.balance_due ?? 0), 0);
+        rows.push({ __span: true, invoice: `${c.contractor} – ${c.detail.unpaid.length} unpaid invoice(s), SAR ${formatMoney(sum)}${c.detail.notYetInvoiced > 0.5 ? ` · ${formatMoney(c.detail.notYetInvoiced)} assessed, not yet invoiced` : ""}${c.detail.lateHistory.count ? ` · earlier invoices settled ${c.detail.lateHistory.min}–${c.detail.lateHistory.max} days late` : ""}` });
+        for (const i of c.detail.unpaid) rows.push({ invoice: String(i.invoice_no ?? ""), lease: String(i.tracker_name ?? ""), period: formatMonthYear(i.invoice_period as string), invoiceDate: formatDate(i.invoice_date as string), issued: formatDate(i.issued_date as string), due: formatDate(i.due_date as string), amount: Number(i.amount_gross ?? 0), unpaid: Number(i.balance_due ?? 0), days: Number(i.days_overdue ?? 0) > 0 ? String(i.days_overdue) : "due", status: String(i.status ?? "") });
+      }
+      table(
+        ctx,
+        [
+          { key: "invoice", label: "Invoice no", width: 1 },
+          { key: "lease", label: "Lease agreement", width: 2 },
+          { key: "period", label: "Occupancy", width: 0.9 },
+          { key: "invoiceDate", label: "Invoice date", width: 0.9 },
+          { key: "issued", label: "Issued on", width: 0.9 },
+          { key: "due", label: "Due date", width: 0.9 },
+          { key: "amount", label: "Amount incl. VAT", width: 1.1, align: "right", format: money },
+          { key: "unpaid", label: "Unpaid", width: 1, align: "right", format: money },
+          { key: "days", label: "Days overdue", width: 0.8, align: "right" },
+          { key: "status", label: "Status", width: 0.8 },
+        ],
+        rows,
+        { zebra: true, rowStyle: (r) => (r.__span ? { span: true } : Number(r.unpaid) > 0.5 ? { color: "#b91c1c" } : undefined) },
+      );
+      doc.moveDown(0.5);
+    }
   }
 
   subheading(ctx, "Customs duty recovery", `Customs duties RSG paid on contractors' imports and their recovery under each contract${cus.asOf ? ` – tracker as of ${formatDate(cus.asOf)}` : ""}.`);
@@ -1310,6 +1339,31 @@ function recoveryReport(ctx: Ctx) {
       doc.moveDown(0.3);
       doc.fillColor(MUTED).font("Helvetica-Oblique").fontSize(8).text(`${cus.noFigures.length} contract(s) are annotated on the tracker without customs figures yet: ${cus.noFigures.map((r) => `${String(r.contract_code ?? r.vendor ?? "")}`).join(", ")}.`, { width });
     }
+    // the customs declarations RSG paid, contractor by contractor
+    const withDecl = cus.byContractor.filter((c) => c.rsgPaidList.length);
+    if (withDecl.length) {
+      doc.moveDown(0.5);
+      subheading(ctx, "Customs declarations paid by RSG, by contractor", "From the tracker's Breakdown sheet: every customs declaration on the contractor's imports whose duty RSG paid.");
+      const rows: Record<string, unknown>[] = [];
+      for (const c of withDecl) {
+        rows.push({ __span: true, date: `${c.contractor} – ${c.rsgPaidList.length} declaration(s), SAR ${formatMoney(c.rsgPaidListed)} paid by RSG · still to recover SAR ${formatMoney(c.totals.stillToRecover)}` });
+        for (const d of c.rsgPaidList) rows.push({ date: formatDate((d.payment_date ?? d.statement_date) as string), bayan: String(d.bayan_no ?? ""), port: String(d.port ?? ""), supplier: String(d.supplier ?? ""), invoice: String(d.invoice_no ?? ""), duty: Number(d.customs_duty ?? 0), rsg: Number(d.rsg_paid ?? 0) || Number(d.customs_duty ?? 0) });
+      }
+      table(
+        ctx,
+        [
+          { key: "date", label: "Payment date", width: 0.9 },
+          { key: "bayan", label: "Bayan no", width: 0.9 },
+          { key: "port", label: "Port", width: 1.6 },
+          { key: "supplier", label: "Supplier", width: 2 },
+          { key: "invoice", label: "Invoice no", width: 1 },
+          { key: "duty", label: "Customs duty", width: 1, align: "right", format: money },
+          { key: "rsg", label: "Paid by RSG", width: 1, align: "right", format: money },
+        ],
+        rows,
+        { zebra: true, rowStyle: (r) => (r.__span ? { span: true } : undefined) },
+      );
+    }
   }
 }
 
@@ -1335,7 +1389,7 @@ function aconexReport(ctx: Ctx) {
     ],
     (k) => (k[0].startsWith("Lines with") && rec.counts.differing ? "#b91c1c" : null),
   );
-  subheading(ctx, "Totals – Aconex vs dashboard");
+  subheading(ctx, "Totals – Aconex vs dashboard", `Over the ${rec.counts.matched} lines both systems hold; the ${rec.aconexOnly.length} row(s) only in Aconex (EAC ${formatMoney(rec.unmatched.aconex.eac)}) and the ${rec.dashboardOnly.length} line(s) only on the dashboard (EAC ${formatMoney(rec.unmatched.dashboard.eac)}) are listed apart and not compared.`);
   table(
     ctx,
     [
@@ -1345,7 +1399,7 @@ function aconexReport(ctx: Ctx) {
       { key: "diff", label: "Difference", width: 1.1, align: "right", format: money },
       { key: "note", label: "What is compared", width: 3.2 },
     ],
-    ACONEX_MEASURES.map((m) => ({ label: m.label, aconex: rec.totals.aconex[m.key], dashboard: rec.totals.dashboard[m.key], diff: rec.totals.diff[m.key], note: m.note })),
+    ACONEX_MEASURES.map((m) => ({ label: `${m.label} (${rec.totals.lines[m.key]} ${m.key === "budget" || m.key === "eac" ? "lines" : "contracts"})`, aconex: rec.totals.aconex[m.key], dashboard: rec.totals.dashboard[m.key], diff: rec.totals.diff[m.key], note: m.note })),
     { zebra: true, rowStyle: (r) => (Math.abs(Number(r.diff)) >= rec.counts.tolerance ? { color: "#b91c1c" } : undefined) },
   );
   const listed = [...rec.discrepancies, ...rec.aconexOnly, ...rec.dashboardOnly];
@@ -1411,15 +1465,15 @@ function uncommittedEwReport(ctx: Ctx) {
   );
   const withEws = t.rows.filter((r) => r.kind === "line" && r.ews.length);
   if (withEws.length || t.unlinkedEws.length) {
-    subheading(ctx, "Early warnings behind column L", `${t.counts.ews} early warning(s) on the register, ${t.counts.openEws} open – as on the Early Warning sheet of the workbook, contract by contract.`);
+    subheading(ctx, "Early warnings behind column L", `${t.counts.ews} early warning(s) on the register, ${t.counts.openEws} open – as on the Early Warning sheet of the workbook, contract by contract; each is carried in the column its wording names (EOT claims, other claims, identified uncommitted scope, plant supply, FF&E) and the rest stays under early warnings.`);
     const rows: Record<string, unknown>[] = [];
     for (const r of withEws) {
       rows.push({ __span: true, ewNo: `${r.code} – ${r.name}${r.contractor ? ` (${r.contractor})` : ""} – column L ${formatMoney(r.earlyWarnings)}` });
-      for (const e of r.ews) rows.push({ ewNo: e.ewNo, description: e.description, contractor: e.contractor, status: e.status, likelihood: e.likelihood, amount: e.amount });
+      for (const e of r.ews) rows.push({ ewNo: e.ewNo, description: e.description, contractor: e.contractor, status: e.status, bucket: e.bucketLabel, amount: e.amount });
     }
     if (t.unlinkedEws.length) {
       rows.push({ __span: true, ewNo: "Not linked to a cost report line (not in column L)" });
-      for (const e of t.unlinkedEws) rows.push({ ewNo: e.ewNo, description: e.description, contractor: e.contractor, status: e.status, likelihood: e.likelihood, amount: e.amount });
+      for (const e of t.unlinkedEws) rows.push({ ewNo: e.ewNo, description: e.description, contractor: e.contractor, status: e.status, bucket: e.bucketLabel, amount: e.amount });
     }
     table(
       ctx,
@@ -1428,7 +1482,7 @@ function uncommittedEwReport(ctx: Ctx) {
         { key: "description", label: "Description", width: 3.4 },
         { key: "contractor", label: "Contractor", width: 1.6 },
         { key: "status", label: "Status", width: 0.7 },
-        { key: "likelihood", label: "Likelihood", width: 0.7 },
+        { key: "bucket", label: "Counted under", width: 1.2 },
         { key: "amount", label: "Cost impact (SAR)", width: 1, align: "right", format: money },
       ],
       rows,
@@ -1902,7 +1956,7 @@ function transfersStatusReport(ctx: Ctx) {
     ["Transfers", String(h.total), `${h.approved} approved · ${h.pending} pending`],
     ["Approved amount moved", sar(h.approvedAmount), "leaves the From package, arrives in the To package"],
     ["Pending approval", sar(h.pendingAmount), "not yet in the cost report"],
-    ["Not applied", String(h.notApplied), h.notApplied ? "approved transfers missing a cost line" : "all approved transfers applied"],
+    h.columnFFromWorkbook ? ["Cost report column F", sar(h.columnF), "Schedule B grand total, brought forward from the Excel cost report"] : ["Not applied", String(h.notApplied), h.notApplied ? "approved transfers missing a cost line" : "all approved transfers applied"],
   ];
   kpiCards(ctx, kpis);
 

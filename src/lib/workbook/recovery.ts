@@ -204,7 +204,107 @@ export function convertAccommodationTracker(sheets: SheetValues[], ctx: Recovery
       ]);
     }
   }
-  notes.push(`Accommodation invoice tracker${asOf ? ` as of ${asOf}` : ""}: ${kept} of ${total} lease agreements belong to ${ctx.programmeName} (matched by asset code ${ctx.programmeCode} or program name).`);
+  // The invoice sets: 18 columns per set to the right of the lease row ("Invoice Set No. 3 - January
+  // 2025"), holding one invoice each – period, number, dates, amount, what came in and what is due.
+  // The columns inside a set are not always in the same order, so each set is read by its labels.
+  const invoices: unknown[][] = [];
+  if (s) {
+    const hdr = findHeaderRow(s, "lease agreement sum", "name of consultant") ?? 6;
+    const titleRow = s.rows.get(hdr - 1) ?? [];
+    const labelRow = s.rows.get(hdr) ?? [];
+    const subRow = s.rows.get(hdr + 1) ?? [];
+    const sets: { no: number; base: number; title: string }[] = [];
+    titleRow.forEach((v, c) => {
+      const m = /invoice set no\.?\s*(\d+)/i.exec(cellText(v));
+      if (m) sets.push({ no: Number(m[1]), base: c - 2, title: cellText(v).trim() });
+    });
+    const find = (row: unknown[], base: number, re: RegExp) => {
+      for (let c = Math.max(0, base); c < base + 18; c++) if (re.test(cellText(row[c]).toLowerCase())) return c;
+      return -1;
+    };
+    const setCols = sets.map((st) => ({
+      ...st,
+      period: find(labelRow, st.base, /invoice period/),
+      no: st.no,
+      invNo: find(labelRow, st.base, /invoice no/),
+      invDate: find(labelRow, st.base, /invoice date/),
+      issuedFlag: find(labelRow, st.base, /inv\.? ?iss/),
+      net: find(labelRow, st.base, /excl/),
+      gross: find(labelRow, st.base, /incl/),
+      issued: find(subRow, st.base, /issued date/),
+      due: find(subRow, st.base, /^settlement date/),
+      settled: find(subRow, st.base, /actual settlement/),
+      overdue: find(subRow, st.base, /overdue/),
+      received: find(subRow, st.base, /amount received/),
+      confirmed: find(subRow, st.base, /confirmation/),
+      balance: find(subRow, st.base, /balance of invoice/),
+      offset: find(subRow, st.base, /offset/),
+      withheld: find(subRow, st.base, /withheld/),
+      remark: find(subRow, st.base, /remark/),
+    }));
+    for (const [r, v] of rows(s)) {
+      if (r <= hdr + 3) continue;
+      const name = txt(v, 3);
+      const sr = txt(v, 2);
+      if (!name || !sr || !/\d/.test(sr)) continue;
+      const programName = txt(v, 4);
+      const assetRef = txt(v, 6);
+      if (!isOurProgramme(programName, assetRef, name)) continue;
+      const leaseKey = `${name}|${assetRef}`.toLowerCase();
+      const contractor = matchContractor(name, ctx.contractors);
+      for (const sc of setCols) {
+        const invNo = sc.invNo >= 0 ? txt(v, sc.invNo) : "";
+        const gross = sc.gross >= 0 ? money(v, sc.gross) : null;
+        const net = sc.net >= 0 ? money(v, sc.net) : null;
+        if (!invNo && !gross && !net) continue;
+        const issuedFlag = sc.issuedFlag >= 0 ? txt(v, sc.issuedFlag) : "";
+        const issued = /^(1|y|yes|true)$/i.test(issuedFlag) || !!invNo;
+        const received = (sc.received >= 0 ? money(v, sc.received) : null) ?? 0;
+        const offset = (sc.offset >= 0 ? money(v, sc.offset) : null) ?? 0;
+        const withheld = (sc.withheld >= 0 ? money(v, sc.withheld) : null) ?? 0;
+        // the tracker's "Balance of invoice due" is received less invoiced: negative while money is owed,
+        // positive when the contractor has overpaid – the register keeps what is still to pay
+        const balanceCell = sc.balance >= 0 ? money(v, sc.balance) : null;
+        const balance = Math.round(((balanceCell !== null ? -balanceCell : (gross ?? 0) - received - offset - withheld) as number) * 100) / 100;
+        const due = sc.due >= 0 ? date(v, sc.due) : null;
+        const settled = sc.settled >= 0 ? date(v, sc.settled) : null;
+        const overdueCell = sc.overdue >= 0 ? money(v, sc.overdue) : null;
+        const status = !issued ? "Not issued" : balance <= 0.5 ? "Paid" : received + offset + withheld > 0.5 ? "Part-paid" : "Unpaid";
+        // the tracker's own overdue count when it has one (settled: how late; unpaid: at the tracker date),
+        // else counted from the due date to the settlement or the tracker date
+        let daysOverdue: number | null = overdueCell !== null ? Math.round(overdueCell) : null;
+        if (daysOverdue === null) {
+          if (status === "Paid") daysOverdue = due && settled ? daysApart(due, settled) : null;
+          else if (status !== "Not issued" && due && asOf) daysOverdue = Math.max(0, daysApart(due, asOf));
+        }
+        invoices.push([
+          `${leaseKey}|set${sc.no}|${invNo.toLowerCase()}`,
+          leaseKey,
+          name,
+          contractor?.name ?? name,
+          sc.no,
+          sc.period >= 0 ? date(v, sc.period) : null,
+          invNo,
+          sc.invDate >= 0 ? date(v, sc.invDate) : null,
+          sc.issued >= 0 ? date(v, sc.issued) : null,
+          due,
+          net,
+          gross,
+          status,
+          received,
+          sc.confirmed >= 0 ? txt(v, sc.confirmed) : "",
+          offset,
+          withheld,
+          balance,
+          settled,
+          daysOverdue,
+          sc.remark >= 0 ? txt(v, sc.remark) : "",
+          asOf,
+        ]);
+      }
+    }
+  }
+  notes.push(`Accommodation invoice tracker${asOf ? ` as of ${asOf}` : ""}: ${kept} of ${total} lease agreements belong to ${ctx.programmeName} (matched by asset code ${ctx.programmeCode} or program name), with ${invoices.length} invoice(s) from the invoice sets.`);
   if (unmatchedOurs) notes.push(`${unmatchedOurs} row(s) name a company that is not yet in our contractor list – they are added under the tracker's name; merge or rename them under Settings → Contractors if needed.`);
   return {
     sheets: [
@@ -241,6 +341,35 @@ export function convertAccommodationTracker(sheets: SheetValues[], ctx: Recovery
         ]),
         rows: out,
       },
+      {
+        name: "Accommodation Invoices",
+        register: "accommodation_invoices",
+        columns: cols([
+          ["Tracker key", "tracker_key"],
+          ["Lease agreement key", "lease_key"],
+          ["Lease agreement (name on the tracker)", "tracker_name"],
+          ["Contractor / Consultant", "contractor_id"],
+          ["Invoice set", "set_no"],
+          ["Occupancy period", "invoice_period"],
+          ["Invoice no", "invoice_no"],
+          ["Invoice date", "invoice_date"],
+          ["Issued on", "issued_date"],
+          ["Due date", "due_date"],
+          ["Amount (excl. VAT)", "amount_net"],
+          ["Amount (incl. VAT)", "amount_gross"],
+          ["Status", "status"],
+          ["Received (incl. VAT)", "received"],
+          ["Confirmed by Finance", "confirmed_by_finance"],
+          ["Offset via IPC", "offset_via_ipc"],
+          ["Withheld under IPC", "withheld_in_ipc"],
+          ["Unpaid", "balance_due"],
+          ["Settled on", "actual_settlement_date"],
+          ["Days overdue", "days_overdue"],
+          ["Remark", "remark"],
+          ["Tracker as of", "tracker_date"],
+        ]),
+        rows: invoices,
+      },
     ],
     notes,
     total,
@@ -248,7 +377,47 @@ export function convertAccommodationTracker(sheets: SheetValues[], ctx: Recovery
   };
 }
 
+/** Calendar days from a to b (ISO dates). */
+function daysApart(a: string, b: string): number {
+  return Math.round((Date.parse(b + "T00:00:00Z") - Date.parse(a + "T00:00:00Z")) / 86400000);
+}
+
 /* ------------------------------------------------------------------ customs */
+
+/** "Supreme Rubber LLC" yes; "green", "2Modern", "STUDIO" no – a name with at least two real words, or one long distinctive word. */
+export function looksLikeCompanyName(name: string): boolean {
+  const words = name
+    .replace(/[^A-Za-z0-9&]+/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length >= 3 && !/^(llc|ltd|limited|co|company|inc|corp|for|and|the|of|saudi|arabia|contracting|trading|general|branch|group|international|industries|industrial|services|l\.l\.c)$/i.test(w));
+  return words.length >= 2 || words.some((w) => w.length >= 8);
+}
+
+/**
+ * A supplier on a customs declaration is tied to a company only on a firm match: the same squashed
+ * name, or every distinctive word of the company (at least two) present in the supplier's name.
+ * "FOSTER GAMKO" is not Foster + Partners, and "Green Light Energy" is not "green".
+ */
+function matchSupplier(supplier: string, companies: KnownContractor[]): KnownContractor | null {
+  const key = contractorKey(supplier);
+  const exact = companies.find((c) => contractorKey(c.name) === key);
+  if (exact) return exact;
+  const sw = new Set(coreWords(supplier));
+  let best: { c: KnownContractor; n: number } | null = null;
+  for (const c of companies) {
+    const cw = coreWords(c.name);
+    if (cw.length < 2 || !cw.every((w) => sw.has(w))) continue;
+    if (!best || cw.length > best.n) best = { c, n: cw.length };
+  }
+  return best?.c ?? null;
+}
+
+/** The tracker's vendor cell is free text: a real company name is matched loosely, a stray word only when it is a contractor's exact name. */
+function matchVendor(name: string, contractors: KnownContractor[]): KnownContractor | null {
+  if (looksLikeCompanyName(name)) return matchContractor(name, contractors);
+  const key = contractorKey(name);
+  return (key && contractors.find((c) => contractorKey(c.name) === key)) || null;
+}
 
 export function looksLikeCustomsTracker(sheets: SheetValues[]): boolean {
   const s = findSheet(sheets, "Summary-Site Team to Enter", "Summary") ?? sheets.find((x) => /summary/i.test(x.name) && findHeaderRow(x, "customs", "vendor") !== null);
@@ -316,7 +485,7 @@ export function convertCustomsTracker(sheets: SheetValues[], ctx: RecoveryContex
       if (!vendor || !(isNum(cell(v, 6)) || isNum(cell(v, 8)) || isNum(cell(v, 4)))) continue;
       const ours = programmeCodeOf(txt(v, 13)) === ctx.programmeCode.toUpperCase();
       const frag = ours && txt(v, 14) ? fragOf(txt(v, 14)) : "";
-      const contractor = matchContractor(vendor, ctx.contractors);
+      const contractor = matchVendor(vendor, ctx.contractors);
       if (!contractor && !ours) continue;
       vendorRows++;
       const owned = contractor ? [...byKey.values()].filter((x) => x.contractor_id === contractor.name) : [];
@@ -370,7 +539,69 @@ export function convertCustomsTracker(sheets: SheetValues[], ctx: RecoveryContex
     r.ewn_value,
     r.comments,
   ]);
-  notes.push(`Customs recovery tracker${asOf ? ` as of ${asOf}` : ""}: ${kept} contract annotation(s) for ${ctx.programmeName} (asset codes ${ctx.programmeCode}) and ${vendorRows} vendor row(s) with customs figures for our contractors, ${out.length} row(s) in all.`);
+  // The Breakdown sheet lists every customs declaration (Bayan) with its supplier and who paid the
+  // duty; the ones whose supplier is one of our tracker vendors – or one of our contractors – are the
+  // declarations behind each contractor's recovery.
+  const declarations: unknown[][] = [];
+  const breakdown = findSheet(sheets, "Breakdown") ?? findSheet(sheets, "Detail1");
+  const bh = breakdown ? findHeaderRow(breakdown, "bayan no", "who paid") : null;
+  if (breakdown && bh !== null) {
+    const head = breakdown.rows.get(bh) ?? [];
+    const col = (re: RegExp) => head.findIndex((v) => re.test(cellText(v).toLowerCase().replace(/\s+/g, " ").trim()));
+    const c = {
+      payDate: col(/^payment date/), stmtDate: col(/^statement date/), port: col(/^port/), type: col(/^type of statement/), duty: col(/^custom duties$/), bayan: col(/^bayan no/), broker: col(/^customs broker name/), supplier: col(/^manufacturer/), goods: col(/^sar value/), vat: col(/^value added tax/), who: col(/^who paid/), invoice: col(/^invoice no/), snb: col(/^rsg snb status/), rsgPaid: col(/^paid amount by rsg/), remarks: col(/^remarks/), contractorPaid: col(/^paid amount by contractor/), pvoAmt: col(/^pvo ?\/ ?dvo amount/), pvoRef: col(/^pvo ?\/ ?dvo reference/),
+    };
+    const vendorList: KnownContractor[] = [...byKey.values()].map((r, i) => ({ id: i + 1, name: String(r.vendor ?? "") })).filter((v) => looksLikeCompanyName(v.name));
+    const recOfVendor = (v: KnownContractor) => [...byKey.values()][v.id - 1];
+    const seen = new Set<string>();
+    for (const [, v] of rows(breakdown)) {
+      const supplier = c.supplier >= 0 ? txt(v, c.supplier) : "";
+      if (!supplier) continue;
+      if (!looksLikeCompanyName(supplier)) continue;
+      const hit = matchSupplier(supplier, vendorList);
+      let rec: Rec | undefined = hit ? recOfVendor(hit) : undefined;
+      if (!rec) {
+        // a supplier that is one of our contractors under its own name (the tracker's vendor row may be blank or garbled)
+        const contractor = matchSupplier(supplier, ctx.contractors);
+        if (contractor) rec = [...byKey.values()].find((r) => r.contractor_id === contractor.name);
+      }
+      if (!rec) continue;
+      const bayan = c.bayan >= 0 ? txt(v, c.bayan) : "";
+      const invoice = c.invoice >= 0 ? txt(v, c.invoice) : "";
+      const payDate = c.payDate >= 0 ? date(v, c.payDate) : null;
+      const key = `decl:${String(rec.tracker_key)}|${bayan}|${invoice}|${payDate ?? ""}`.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const who = c.who >= 0 ? txt(v, c.who) : "";
+      declarations.push([
+        key,
+        rec.contractor_id ?? null,
+        rec.vendor ?? supplier,
+        rec.contract_code ?? null,
+        rec.cost_line_id ?? null,
+        payDate,
+        c.stmtDate >= 0 ? date(v, c.stmtDate) : null,
+        c.port >= 0 ? txt(v, c.port) : "",
+        c.type >= 0 ? txt(v, c.type) : "",
+        bayan,
+        c.broker >= 0 ? txt(v, c.broker) : "",
+        supplier,
+        c.goods >= 0 ? money(v, c.goods) : null,
+        c.vat >= 0 ? money(v, c.vat) : null,
+        c.duty >= 0 ? money(v, c.duty) : null,
+        /rsg/i.test(who) ? "RSG" : /contractor/i.test(who) ? "Contractor" : "Unknown",
+        invoice,
+        c.snb >= 0 ? txt(v, c.snb) : "",
+        c.rsgPaid >= 0 ? money(v, c.rsgPaid) : null,
+        c.contractorPaid >= 0 ? money(v, c.contractorPaid) : null,
+        c.pvoRef >= 0 ? txt(v, c.pvoRef) : "",
+        c.pvoAmt >= 0 ? money(v, c.pvoAmt) : null,
+        c.remarks >= 0 ? txt(v, c.remarks) : "",
+        asOf,
+      ]);
+    }
+  }
+  notes.push(`Customs recovery tracker${asOf ? ` as of ${asOf}` : ""}: ${kept} contract annotation(s) for ${ctx.programmeName} (asset codes ${ctx.programmeCode}) and ${vendorRows} vendor row(s) with customs figures for our contractors, ${out.length} row(s) in all; ${declarations.length} customs declaration(s) of theirs on the Breakdown sheet.`);
   const noFigures = out.filter((r) => r[18] === null && r[20] === null).length;
   if (noFigures) notes.push(`${noFigures} contract(s) carry no customs figures yet on the tracker (the vendor's figures could not be tied to them): only the contract details are recorded.`);
   return {
@@ -414,6 +645,37 @@ export function convertCustomsTracker(sheets: SheetValues[], ctx: RecoveryContex
         ]),
         rows: out,
       },
+      {
+        name: "Customs Declarations",
+        register: "customs_declarations",
+        columns: cols([
+          ["Tracker key", "tracker_key"],
+          ["Contractor / Consultant", "contractor_id"],
+          ["Vendor on the tracker", "vendor"],
+          ["Contract code", "contract_code"],
+          ["Cost report line", "cost_line_id"],
+          ["Payment date", "payment_date"],
+          ["Statement date", "statement_date"],
+          ["Port", "port"],
+          ["Type of statement", "statement_type"],
+          ["Bayan no", "bayan_no"],
+          ["Customs broker", "broker"],
+          ["Manufacturer / supplier", "supplier"],
+          ["Goods value (SAR)", "goods_value"],
+          ["VAT", "vat_amount"],
+          ["Customs duty", "customs_duty"],
+          ["Who paid", "paid_by"],
+          ["Invoice no", "invoice_no"],
+          ["RSG SNB status", "snb_status"],
+          ["Paid by RSG", "rsg_paid"],
+          ["Paid by contractor", "contractor_paid"],
+          ["PVO / DVO reference", "pvo_dvo_ref"],
+          ["PVO / DVO amount", "pvo_dvo_amount"],
+          ["Remarks", "remarks"],
+          ["Tracker as of", "tracker_date"],
+        ]),
+        rows: declarations,
+      },
     ],
     notes,
     total,
@@ -433,23 +695,23 @@ export { cellText };
  */
 export function convertRecoveryTrackers(sheets: SheetValues[], ctxs: RecoveryContext[], kind: "accommodation" | "customs"): RecoveryResult {
   const parts = ctxs.map((ctx) => ({ ctx, res: kind === "accommodation" ? convertAccommodationTracker(sheets, ctx) : convertCustomsTracker(sheets, ctx) }));
-  const first = parts[0]?.res.sheets[0];
-  if (!first) return { sheets: [], notes: ["No project has been set up yet."], total: 0, kept: 0 };
-  const rows: unknown[][] = [];
+  if (!parts.length) return { sheets: [], notes: ["No project has been set up yet."], total: 0, kept: 0 };
+  const merged = new Map<string, ConvertedSheet>();
   const notes: string[] = [];
   let total = 0;
   let kept = 0;
   for (const { ctx, res } of parts) {
-    const sheet = res.sheets[0];
-    for (const r of sheet?.rows ?? []) rows.push([`${ctx.programmeCode.toUpperCase()}|${String(r[0] ?? "")}`, ...r.slice(1), ctx.programmeCode]);
+    for (const sheet of res.sheets) {
+      let target = merged.get(sheet.register);
+      if (!target) {
+        target = { name: sheet.name, register: sheet.register, columns: [...sheet.columns, { label: "Project", key: "programme_id" }], rows: [] };
+        merged.set(sheet.register, target);
+      }
+      for (const r of sheet.rows) target.rows.push([`${ctx.programmeCode.toUpperCase()}|${String(r[0] ?? "")}`, ...r.slice(1), ctx.programmeCode]);
+    }
     notes.push(...res.notes.map((n) => `${ctx.programmeName}: ${n}`));
     total = Math.max(total, res.total);
     kept += res.kept;
   }
-  return {
-    sheets: [{ name: first.name, register: first.register, columns: [...first.columns, { label: "Project", key: "programme_id" }], rows }],
-    notes,
-    total,
-    kept,
-  };
+  return { sheets: [...merged.values()], notes, total, kept };
 }

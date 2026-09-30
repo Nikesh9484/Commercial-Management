@@ -59,7 +59,10 @@ export interface AconexReconciliation {
   discrepancies: AconexLine[];
   aconexOnly: AconexLine[];
   dashboardOnly: AconexLine[];
-  totals: { aconex: Record<AconexMeasureKey, number>; dashboard: Record<AconexMeasureKey, number>; diff: Record<AconexMeasureKey, number> };
+  /** over the matched lines only – the same contracts and holds on both sides, each cost report line counted once */
+  totals: { aconex: Record<AconexMeasureKey, number>; dashboard: Record<AconexMeasureKey, number>; diff: Record<AconexMeasureKey, number>; lines: Record<AconexMeasureKey, number> };
+  /** what sits on one side only, so the matched totals can be tied back to each system's grand total */
+  unmatched: { aconex: Record<AconexMeasureKey, number>; dashboard: Record<AconexMeasureKey, number> };
   counts: { aconex: number; dashboard: number; matched: number; differing: number; tolerance: number };
 }
 
@@ -122,16 +125,38 @@ export function buildAconexReconciliation(data: ReportData): AconexReconciliatio
     lines.push(finish({ status: "dashboard_only", code: l.code, aconexCode: "", name: l.name, contractor: l.contractor, category: l.category, rowType: l.is_budget_hold ? "Budget hold" : "Contract", aconex: blankMeasures(), dashboard: dashOf(l), diff: blankMeasures(), worst: 0, differs: [] }));
   }
   const zero = () => ({ budget: 0, commitments: 0, dvo: 0, pvo: 0, eac: 0, incurred: 0 });
-  const totals = { aconex: zero(), dashboard: zero(), diff: zero() };
-  for (const line of lines)
+  // The comparison is only meaningful over the lines both systems hold: an Aconex row with no
+  // cost report line, or a cost report line Aconex does not carry, would otherwise be read as a
+  // difference – and a cost report line that several Aconex rows point at must be counted once.
+  // Each figure is totalled over the lines it is compared on: commitments and incurred over the
+  // contracts (a budget hold has no commitment), budget over the holds and the contracts alike for
+  // information, estimate at completion over every line. A budget hold's "commitments" on the
+  // dashboard is the hold's own arithmetic and would only muddy the contract comparison.
+  const totals = { aconex: zero(), dashboard: zero(), diff: zero(), lines: zero() };
+  const unmatched = { aconex: zero(), dashboard: zero() };
+  const countedLines = new Set<string>();
+  // budget and estimate at completion over every line; commitments, changes and incurred over the contracts only
+  const counts = (m: (typeof ACONEX_MEASURES)[number], rowType: string) => m.key === "budget" || m.key === "eac" || rowType !== "Budget hold";
+  for (const line of lines) {
     for (const m of ACONEX_MEASURES) {
-      totals.aconex[m.key] += line.aconex[m.key] ?? 0;
-      totals.dashboard[m.key] += line.dashboard[m.key] ?? 0;
+      if (!counts(m, line.rowType)) continue;
+      if (line.status === "matched") {
+        totals.aconex[m.key] += line.aconex[m.key] ?? 0;
+        if (!countedLines.has(`${m.key}|${line.code}`)) {
+          totals.dashboard[m.key] += line.dashboard[m.key] ?? 0;
+          totals.lines[m.key]++;
+        }
+      } else if (line.status === "aconex_only") unmatched.aconex[m.key] += line.aconex[m.key] ?? 0;
+      else unmatched.dashboard[m.key] += line.dashboard[m.key] ?? 0;
     }
+    if (line.status === "matched") for (const m of ACONEX_MEASURES) countedLines.add(`${m.key}|${line.code}`);
+  }
   for (const m of ACONEX_MEASURES) {
     totals.aconex[m.key] = r2(totals.aconex[m.key]);
     totals.dashboard[m.key] = r2(totals.dashboard[m.key]);
     totals.diff[m.key] = r2(totals.aconex[m.key] - totals.dashboard[m.key]);
+    unmatched.aconex[m.key] = r2(unmatched.aconex[m.key]);
+    unmatched.dashboard[m.key] = r2(unmatched.dashboard[m.key]);
   }
   const matched = lines.filter((l) => l.status === "matched");
   const discrepancies = matched.filter((l) => l.differs.length).sort((a, b) => b.worst - a.worst);
@@ -142,6 +167,7 @@ export function buildAconexReconciliation(data: ReportData): AconexReconciliatio
     aconexOnly: lines.filter((l) => l.status === "aconex_only"),
     dashboardOnly: lines.filter((l) => l.status === "dashboard_only"),
     totals,
+    unmatched,
     counts: { aconex: rows.length, dashboard: data.costReport.lines.length, matched: matched.length, differing: discrepancies.length, tolerance: TOLERANCE },
   };
 }

@@ -41,14 +41,13 @@ export default async function KpiPage({ searchParams }: { searchParams: Promise<
     return { item: it, sn: det?.sn ?? "", fileName: det?.file_name ?? "", rootCause: det?.root_cause ?? "", remarks: det?.remarks ?? "", defaultFileName: defaultPackName(it, det?.sn ?? ""), docs: docs.filter((d) => d.change_id === it.changeId) };
   };
   const rows = (tab === "closed" ? kpi.closed : kpi.open).map(toRow);
-  const earlier = tab === "closed" ? kpi.closedEarlier.map(toRow) : [];
   const excelHref = `/api/export?section=kpi_register&format=xlsx&period=${period.id}`;
   return (
     <div className="space-y-5">
       <PageHeader
         eyebrow={`${ctx.programme.code} · ${period.label}`}
         title="KPI Report – F1 Variation Orders"
-        subtitle="The head office's monthly KPI on variation orders: a Closed KPI is a change whose DVO is recorded as Approved on this report; an Open KPI is one with a PVO or VO recorded and the DVO still pending. Each entry shows its movement since the previous report, holds its supporting documents and makes its PDF pack in one click."
+        subtitle="The head office's monthly KPI on variation orders – only what moved in this report: a Closed KPI is a change whose DVO was recorded as Approved this report; an Open KPI is one whose PVO or VO was recorded or changed this report with the DVO still pending. Each entry holds its supporting documents and makes its PDF pack in one click."
         actions={
           <a className="btn btn-sm btn-excel" href={excelHref} title="The F1 Open VO Register rows for this report, in the head office layout, with a sheet of what moved">
             <FileSpreadsheet size={14} /> KPI Excel (Open VO Register)
@@ -72,10 +71,10 @@ export default async function KpiPage({ searchParams }: { searchParams: Promise<
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Tile label="Closed KPI – DVO approved this report" value={String(kpi.counts.closed)} note={`AVV ${formatMoney(kpi.totals.closedAvv)} · PVO ${formatMoney(kpi.totals.closedPvo)}`} tone="green" />
-        <Tile label="Open KPI – DVO pending" value={String(kpi.counts.open)} note={`PVO value ${formatMoney(kpi.totals.openPvo)}`} tone="amber" />
-        <Tile label="Open over the 90-day norm" value={String(kpi.counts.open90)} note="root cause required by the head office" tone={kpi.counts.open90 ? "red" : "grey"} />
-        <Tile label="Entries that moved this report" value={String(kpi.counts.moved)} note={kpi.previousLabel ? `since ${kpi.previousLabel}` : "first report"} tone="blue" />
+        <Tile label="Closed KPI – DVOs approved this report" value={String(kpi.counts.closed)} note={`AVV ${formatMoney(kpi.totals.closedAvv)} · PVO ${formatMoney(kpi.totals.closedPvo)}`} tone="green" />
+        <Tile label="Open KPI – PVOs / VOs recorded this report" value={String(kpi.counts.open)} note={`PVO value ${formatMoney(kpi.totals.openPvo)}`} tone="amber" />
+        <Tile label="Of those, over the 90-day norm" value={String(kpi.counts.open90)} note="root cause required by the head office" tone={kpi.counts.open90 ? "red" : "grey"} />
+        <Tile label="All VOs still pending a DVO" value={String(kpi.counts.openPending)} note={`${kpi.counts.closedAll} DVOs approved to date · reported in their own months`} tone="blue" />
       </div>
 
       <div className="flex flex-wrap gap-2">
@@ -87,7 +86,7 @@ export default async function KpiPage({ searchParams }: { searchParams: Promise<
         </Link>
       </div>
 
-      <KpiWorkspace key={`${period.id}-${tab}`} periodId={period.id} category={tab} rows={rows} earlier={earlier} canManage={canManageKpi(user)} previousLabel={kpi.previousLabel} />
+      <KpiWorkspace key={`${period.id}-${tab}`} periodId={period.id} category={tab} rows={rows} canManage={canManageKpi(user)} previousLabel={kpi.previousLabel} />
     </div>
   );
 }

@@ -42,17 +42,30 @@ export default async function BudgetTransfersPage() {
             <Stat label="Transfers" value={String(summary.total)} sub={`${summary.approved} approved`} />
             <Stat label="Approved amount moved" value={formatMoney(summary.approvedAmount)} sub="total leaving From packages = total arriving in To packages" />
             <Stat label="Pending approval" value={formatMoney(summary.pendingAmount)} sub="not yet in the cost report" tone={summary.pendingAmount > 0 ? "amber" : undefined} />
-            <div className="card min-w-0 p-4">
-              <div className="text-xs font-medium uppercase tracking-wide text-muted">Cost report check</div>
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                <Chip tone={summary.netsToZero ? "green" : "red"}>
-                  {summary.netsToZero ? <CheckCircle2 size={11} className="mr-1" /> : <AlertTriangle size={11} className="mr-1" />}
-                  Column F nets to zero
-                </Chip>
-                <Chip tone={summary.notApplied.length ? "red" : "green"}>{summary.notApplied.length ? `${summary.notApplied.length} approved not applied` : "All approved applied"}</Chip>
+            {summary.columnF.fromWorkbook ? (
+              <Stat label="Cost report column F" value={formatMoney(summary.columnF.broughtForward)} sub={`Schedule B grand total, brought forward over ${summary.columnF.lines} cost lines`} />
+            ) : (
+              <div className="card min-w-0 p-4">
+                <div className="text-xs font-medium uppercase tracking-wide text-muted">Cost report check</div>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  <Chip tone={summary.netsToZero ? "green" : "red"}>
+                    {summary.netsToZero ? <CheckCircle2 size={11} className="mr-1" /> : <AlertTriangle size={11} className="mr-1" />}
+                    Column F nets to zero
+                  </Chip>
+                  <Chip tone={summary.notApplied.length ? "red" : "green"}>{summary.notApplied.length ? `${summary.notApplied.length} approved not applied` : "All approved applied"}</Chip>
+                </div>
               </div>
-            </div>
+            )}
           </div>
+
+          {summary.columnF.fromWorkbook && (
+            <div className="flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-900">
+              <CheckCircle2 size={14} className="mt-0.5 shrink-0" />
+              <span>
+                Column F of the cost report is brought forward from the Excel cost report (Schedule B, column F grand total {formatMoney(summary.columnF.broughtForward)}), and this register is the full Schedule J transfer log behind that figure – every transfer imported is kept as it is, and every approved transfer counts as in the cost report. Transfers are not added to column F a second time from here.
+              </span>
+            </div>
+          )}
 
           {summary.notApplied.length > 0 && (
             <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-900">
@@ -78,7 +91,7 @@ export default async function BudgetTransfersPage() {
 
           <div className="card overflow-hidden">
             <div className="px-5 pt-4">
-              <h2 className="text-sm font-semibold text-ink">Net movement by package (as applied to cost report column F)</h2>
+              <h2 className="text-sm font-semibold text-ink">{summary.columnF.fromWorkbook ? "Net movement by package (approved transfers, as recorded on Schedule J)" : "Net movement by package (as applied to cost report column F)"}</h2>
             </div>
             <div className="overflow-x-auto px-2 pb-2 pt-3">
               <table className="data w-full">
@@ -94,7 +107,7 @@ export default async function BudgetTransfersPage() {
                   {summary.netByPackage.length === 0 && (
                     <tr>
                       <td colSpan={4} className="py-6 text-center text-muted">
-                        No approved transfers applied yet.
+                        {summary.columnF.fromWorkbook ? "No approved transfers recorded yet." : "No approved transfers applied yet."}
                       </td>
                     </tr>
                   )}
@@ -112,11 +125,23 @@ export default async function BudgetTransfersPage() {
           </div>
 
           <p className="text-xs text-muted">
-            A transfer lands on the package&apos;s Level 2 line automatically. If a package has more than one line (several contractors), pick the line in the form. The <em>In cost report</em> column shows whether each transfer is currently applied. Column F on the{" "}
-            <Link href="/modules/cost-report" className="text-accent hover:underline">
-              Cost Report
-            </Link>{" "}
-            is now live.
+            {summary.columnF.fromWorkbook ? (
+              <>
+                The list below is the Schedule J transfer log as imported from the Excel cost report, in full. The <em>In cost report</em> column shows every approved transfer as in column F, which is brought forward from Schedule B on the{" "}
+                <Link href="/modules/cost-report" className="text-accent hover:underline">
+                  Cost Report
+                </Link>
+                .
+              </>
+            ) : (
+              <>
+                A transfer lands on the package&apos;s Level 2 line automatically. If a package has more than one line (several contractors), pick the line in the form. The <em>In cost report</em> column shows whether each transfer is currently applied. Column F on the{" "}
+                <Link href="/modules/cost-report" className="text-accent hover:underline">
+                  Cost Report
+                </Link>{" "}
+                is now live.
+              </>
+            )}
           </p>
           <RegisterPage registerKey="budget_transfers" isAdmin={user.role === "admin"} />
         </>

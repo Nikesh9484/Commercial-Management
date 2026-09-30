@@ -9,10 +9,8 @@ import { XL, MONEY_FMT, DATE_FMT, titleBlock, headerRow, totalRow } from "../xls
 
 /**
  * The one-click "F1 – Open VO Register" workbook for one report, laid out column for column like
- * the head office register (their column C onwards), so the rows paste straight in: the DVOs
- * approved in the month and every VO still waiting for its DVO, each with its movement since the
- * previous report; then a sheet of only what moved, and the DVOs approved on earlier reports for
- * reference.
+ * the head office register (their column C onwards), so the rows paste straight in: only what moved
+ * in the month – the DVOs approved this report and the PVOs / VOs recorded or changed this report.
  */
 const HO_COLS = [
   "Please use this for Supported Docs File name",
@@ -116,14 +114,10 @@ export function kpiRegisterSheet(wb: ExcelJS.Workbook, d: ReportData) {
   };
 
   const ws = wb.addWorksheet("KPI_Register");
-  putRows(ws, [...kpi.closed, ...kpi.open], `F1 – Open VO Register – ${d.programme.name} – ${d.period.label}`, `Closed KPI = DVO recorded as Approved on this report (${kpi.counts.closed}); Open KPI = PVO / VO recorded, DVO pending (${kpi.counts.open}, ${kpi.counts.open90} over 90 days) · columns E onward match the head office register from its column C${kpi.previousLabel ? ` · movement against ${kpi.previousLabel}` : " · no earlier report to compare with"}`);
+  putRows(ws, [...kpi.closed, ...kpi.open], `F1 – Open VO Register entries for ${d.period.label} – ${d.programme.name}`, `Only what moved this report${kpi.previousLabel ? ` against ${kpi.previousLabel}` : ""}: Closed KPI = DVO recorded as Approved this report (${kpi.counts.closed}); Open KPI = PVO / VO recorded or changed this report (${kpi.counts.open}, ${kpi.counts.open90} over 90 days) · columns E onward match the head office register from its column C`);
   ws.addRow([]);
-  ws.addRow(["Closed KPI: the DVO is recorded as Approved on this report – WEIGHT 1 and the report month, as the head office files it. Open KPI: a PVO or VO is recorded and the DVO is still pending – progress 1, deadline = instruction date + 90 days, remaining days counted to the report cut-off. The file name in column E is what the supporting-document pack is called; enter the head office S/N on the KPI Report page so it reads S/N_REEF PO_DVO_Vendor."]).font = { italic: true, size: 9, color: { argb: XL.muted } };
+  ws.addRow(["Closed KPI: the DVO is recorded as Approved on this report – WEIGHT 1 and the report month, as the head office files it. Open KPI: a PVO or VO recorded or changed on this report with the DVO still pending – progress 1, deadline = instruction date + 90 days, remaining days counted to the report cut-off. Entries reported in earlier months are not repeated. The file name in column E is what the supporting-document pack is called; enter the head office S/N on the KPI Report page so it reads S/N_REEF PO_DVO_Vendor."]).font = { italic: true, size: 9, color: { argb: XL.muted } };
   ws.mergeCells(ws.rowCount, 1, ws.rowCount, 12);
   ws.getRow(ws.rowCount).alignment = { wrapText: true, vertical: "top" };
   ws.getRow(ws.rowCount).height = 54;
-
-  const moved = kpi.items.filter((i) => i.movement !== "unchanged");
-  putRows(wb.addWorksheet("Movement this report"), moved, `What moved since ${kpi.previousLabel ?? "the previous report"} – ${d.period.label}`, `${moved.length} entr${moved.length === 1 ? "y" : "ies"}: DVOs approved this report, new VOs / PVOs and changed values`);
-  putRows(wb.addWorksheet("Closed earlier"), kpi.closedEarlier, `DVOs approved on earlier reports – for reference`, `${kpi.closedEarlier.length} entr${kpi.closedEarlier.length === 1 ? "y" : "ies"} already reported to the head office in earlier months`);
 }

@@ -31,7 +31,7 @@ export const IMPORT_KINDS: Record<string, { title: string; subtitle: string; onl
   accommodation: {
     title: "Import accommodation invoice tracker",
     subtitle: "Upload the AMAALA Construction Village lease-agreement invoice tracker whenever it changes – it is not part of the monthly report – and the Cost Recovery page shows what each of our contractors has been invoiced, has paid or had recovered through its IPCs, and still owes.",
-    only: ["accommodation_recovery", "customs_recovery"],
+    only: ["accommodation_recovery", "accommodation_invoices", "customs_recovery", "customs_declarations"],
     intro: "Upload the accommodation invoice tracker (the workbook with the \"L.A. Invoice Tracker (W)\" sheet, .xlsx or .xlsm). It is one file for every project: the lease agreements of The Marina and of VBH are picked out by their asset code (1TB01031, 1TB01006 …) or the program name on the row, each is tied to that project's contractor by name, and each is filed under its own project. Rows already here are updated and rows no longer on the tracker are removed, so the tracker can be re-uploaded as often as it changes. The app recognises which tracker a file is – accommodation or customs – so a file uploaded on the wrong page still lands in its own register.",
     fileHint: "Accommodation invoice tracker (L.A. Invoice Tracker sheet)",
     doneHref: "/modules/cost-recovery",
@@ -42,7 +42,7 @@ export const IMPORT_KINDS: Record<string, { title: string; subtitle: string; onl
   customs: {
     title: "Import customs recovery tracker",
     subtitle: "Upload the AMAALA Customs Recovery Tracker whenever it changes – it is not part of the monthly report – and the Cost Recovery page shows the customs duties RSG paid on each contractor's imports and how they are being recovered.",
-    only: ["customs_recovery", "accommodation_recovery"],
+    only: ["customs_recovery", "customs_declarations", "accommodation_recovery", "accommodation_invoices"],
     intro: "Upload the customs recovery tracker (the workbook with the \"Summary-Site Team to Enter\" sheet). It is one file for every project: the contracts of The Marina and of VBH are recognised by the asset code in the commercial lead's columns, together with the customs figures of vendors that are that project's contractors, each tied to its cost report line by contract code (031C13 → CN.031C13) and filed under its own project. Rows already here are updated on a re-upload and rows no longer on the tracker are removed.",
     fileHint: "AMAALA Customs Recovery Tracker (Summary sheet)",
     doneHref: "/modules/cost-recovery?tab=customs",

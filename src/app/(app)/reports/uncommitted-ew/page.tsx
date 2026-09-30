@@ -119,7 +119,7 @@ export default async function UncommittedEwPage({ searchParams }: { searchParams
       </div>
 
       <div className="card overflow-x-auto p-0">
-        <div className="border-b border-line bg-slate-50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-muted">Early warnings behind column L – from the report&apos;s Early Warning sheet</div>
+        <div className="border-b border-line bg-slate-50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-muted">Early warnings behind column L – from the report&apos;s Early Warning sheet, each carried in the column its wording names</div>
         {withEws.length === 0 && table.unlinkedEws.length === 0 ? (
           <p className="px-4 py-3 text-sm text-muted">No early warnings are recorded on this report.</p>
         ) : (
@@ -132,7 +132,8 @@ export default async function UncommittedEwPage({ searchParams }: { searchParams
                 <th className="px-3 py-2">Raised</th>
                 <th className="px-3 py-2">Likelihood</th>
                 <th className="px-3 py-2">Status</th>
-                <th className="px-3 py-2 text-right">In column L</th>
+                <th className="px-3 py-2">Counted under</th>
+                <th className="px-3 py-2 text-right">Amount</th>
               </tr>
             </thead>
             <tbody>
@@ -152,11 +153,11 @@ function EwGroup({ code, name, total, ews }: { code: string; name: string; total
   return (
     <>
       <tr className="border-t border-line bg-slate-100 font-semibold text-ink">
-        <td className="px-3 py-1.5" colSpan={6}>
+        <td className="px-3 py-1.5" colSpan={7}>
           {code && <span className="mr-2 font-mono text-[11px] font-normal text-muted">{code}</span>}
           {name}
         </td>
-        <td className="whitespace-nowrap px-3 py-1.5 text-right tnum">{Math.abs(total) < 0.005 ? "" : formatMoney(total)}</td>
+        <td className="whitespace-nowrap px-3 py-1.5 text-right tnum" title="What stays under the early warnings column after the amounts carried in EOT claims, other claims, uncommitted scope, plant supply and FF&E">{Math.abs(total) < 0.005 ? "" : formatMoney(total)}</td>
       </tr>
       {ews.map((e, i) => (
         <tr key={`${e.ewNo}-${i}`} className="border-t border-line">
@@ -168,6 +169,7 @@ function EwGroup({ code, name, total, ews }: { code: string; name: string; total
           <td className="px-3 py-1.5">
             <Chip tone={e.status === "Open" ? "amber" : "grey"}>{e.status || "–"}</Chip>
           </td>
+          <td className="whitespace-nowrap px-3 py-1.5 text-xs text-muted">{e.bucketLabel}</td>
           <td className="whitespace-nowrap px-3 py-1.5 text-right tnum">{e.amount ? formatMoney(e.amount) : <span className="text-muted">–</span>}</td>
         </tr>
       ))}

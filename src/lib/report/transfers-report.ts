@@ -26,6 +26,10 @@ export interface TransfersReport {
     approvedAmount: number;
     pendingAmount: number;
     notApplied: number;
+    /** column F brought forward from the Excel cost report (Schedule B): the log is the record, not the feed */
+    columnFFromWorkbook: boolean;
+    /** the cost report's column F grand total */
+    columnF: number;
   };
   narrative: { heading: string; text: string }[];
   movement: { label: string; items: string[] } | null;
@@ -55,7 +59,11 @@ export function buildTransfersReport(data: ReportData): TransfersReport {
   const pendingRows = rows.filter((r) => r.status === "Pending");
   const approvedAmount = Math.round(approvedRows.reduce((t, r) => t + r.amount, 0) * 100) / 100;
   const pendingAmount = Math.round(pendingRows.reduce((t, r) => t + r.amount, 0) * 100) / 100;
-  const notApplied = approvedRows.filter((r) => !/^applied|^yes|^in cost report/i.test(r.applied) && r.applied !== "Applied").length;
+  // Column F brought forward from the Excel cost report: every line carrying a brought-forward figure
+  // says so, and the log is the Schedule J record behind the Schedule B grand total – nothing is "not applied".
+  const columnFFromWorkbook = data.costReport.lines.some((l) => Number(l.F) !== 0) && approvedRows.length > 0 && approvedRows.every((r) => /schedule b/i.test(r.applied));
+  const columnF = Math.round(Number(data.costReport.grandTotal.F ?? 0) * 100) / 100;
+  const notApplied = columnFFromWorkbook ? 0 : approvedRows.filter((r) => !/^applied|^yes|^in cost report/i.test(r.applied) && r.applied !== "Applied").length;
 
   const byPkgMap = new Map<string, { out: number; in: number }>();
   for (const r of approvedRows) {
@@ -75,6 +83,8 @@ export function buildTransfersReport(data: ReportData): TransfersReport {
     approvedAmount,
     pendingAmount,
     notApplied,
+    columnFFromWorkbook,
+    columnF,
   };
 
   const mv = data.movement;
@@ -101,7 +111,9 @@ export function buildTransfersReport(data: ReportData): TransfersReport {
   }
   narrative.push({
     heading: "Cost report reconciliation",
-    text: `${netsToZero ? "Approved transfers net to zero across packages, so column F is in balance." : "Approved transfers do not currently net to zero – reconcile the From and To cost lines before relying on column F."}${notApplied ? ` ${plural(notApplied, "approved transfer")} still needs its cost line set before it reaches the cost report.` : ""}`,
+    text: columnFFromWorkbook
+      ? `Column F of the cost report is brought forward from the Excel cost report (Schedule B, column F grand total ${money(columnF)}). The transfer log above is the full Schedule J record behind that figure: ${plural(approvedRows.length, "approved transfer")} moving ${money(approvedAmount)} between packages, all of it in the cost report.`
+      : `${netsToZero ? "Approved transfers net to zero across packages, so column F is in balance." : "Approved transfers do not currently net to zero – reconcile the From and To cost lines before relying on column F."}${notApplied ? ` ${plural(notApplied, "approved transfer")} still needs its cost line set before it reaches the cost report.` : ""}`,
   });
 
   return { title: `Budget Transfers Status Report – ${data.period.label}`, asOf, headline, narrative, movement: capMovement(movement), attention, rows, byPackage };

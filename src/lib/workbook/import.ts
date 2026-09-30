@@ -99,9 +99,9 @@ export interface SheetMapping {
 }
 
 /** Registers that are fed only by their stand-alone imports (Claims Tracker, Bonds & Insurance, Final Account Status) – never by the monthly workbook. */
-export const STANDALONE_ONLY = ["claims", "bonds", "final_accounts", "accommodation_recovery", "customs_recovery", "aconex_control_accounts"] as const;
+export const STANDALONE_ONLY = ["claims", "bonds", "final_accounts", "accommodation_recovery", "accommodation_invoices", "customs_recovery", "customs_declarations", "aconex_control_accounts"] as const;
 /** The cost-recovery trackers: uploaded when they change, never part of the monthly workbook, whatever the project's feeds. */
-export const RECOVERY_REGISTERS = ["accommodation_recovery", "customs_recovery", "aconex_control_accounts"] as const;
+export const RECOVERY_REGISTERS = ["accommodation_recovery", "accommodation_invoices", "customs_recovery", "customs_declarations", "aconex_control_accounts"] as const;
 
 /**
  * The registers the monthly workbook must not write for a project: claims always (the Claims Tracker is

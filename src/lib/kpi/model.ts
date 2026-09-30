@@ -13,9 +13,9 @@ export { MOVEMENT_LABEL } from "./shared";
  * Open VO Register, classified the way they read it –
  *   Closed KPI  = the DVO is recorded as Approved on this report;
  *   Open KPI    = a PVO or a VO is recorded but the DVO is not approved yet –
- * with each item's movement since the previous report (a DVO approved this month, a VO or PVO newly
- * recorded, a value that changed), because the head office asks for the entries that were updated in
- * the month, with the supporting documents for each. A locked report gives the figures it was issued
+ * and only what moved since the previous report – a DVO approved this month, a VO or PVO newly
+ * recorded or changed this month – because the head office asks for the entries updated in the
+ * month, with the supporting documents for each. A locked report gives the figures it was issued
  * with, so every month's KPI can be produced again later exactly as it was.
  */
 
@@ -23,9 +23,7 @@ export interface KpiReport {
   items: KpiItem[];
   closed: KpiItem[];
   open: KpiItem[];
-  /** approved DVOs on earlier reports – off the open register, kept for reference */
-  closedEarlier: KpiItem[];
-  counts: { closed: number; closedNow: number; open: number; open90: number; moved: number };
+  counts: { closed: number; closedNow: number; open: number; open90: number; moved: number; openPending: number; closedAll: number };
   totals: { closedPvo: number; closedAvv: number; openPvo: number };
   previousLabel: string | null;
   /** the month the head office files the entries under (first day of the report month) */
@@ -201,8 +199,9 @@ export function buildKpi(data: ReportData, previous: ReportData | null, opts: Kp
     const p = prevById.get(it.changeId) ?? (it.itemNo ? prevByNo.get(it.itemNo.toLowerCase()) : undefined) ?? null;
     if (p) it.previous = { pvoValue: p.pvoValue, avvValue: p.avvValue, dvoRef: p.dvoRef, instructionRef: p.instructionRef, category: p.category };
     if (!previous) {
-      it.movement = "unchanged";
-      it.movementNote = "No earlier report to compare with";
+      // the first report: everything on it is reported for the first time
+      it.movement = "new";
+      it.movementNote = "First report – no earlier report to compare with";
     } else if (!p) {
       it.movement = "new";
       it.movementNote = it.category === "closed" ? "New on this report, DVO already approved" : `New on this report – ${it.voRef ? `${refLabel("VO", it.voRef)} recorded` : it.pvoRef ? `${refLabel("PVO", it.pvoRef)} recorded` : "recorded"}`;
@@ -227,18 +226,19 @@ export function buildKpi(data: ReportData, previous: ReportData | null, opts: Kp
   }
   const order: Record<KpiMovement, number> = { closed_now: 0, new: 1, updated: 2, unchanged: 3 };
   items.sort((a, b) => order[a.movement] - order[b.movement] || (a.remainingDays ?? 0) - (b.remainingDays ?? 0) || a.itemNo.localeCompare(b.itemNo, undefined, { numeric: true }));
+  // Only what moved in this report is reported to the head office: the DVOs approved this month
+  // (Closed KPI) and the PVOs / VOs recorded or changed this month (Open KPI). What was reported
+  // in an earlier month is not repeated.
   const closedAll = items.filter((i) => i.category === "closed");
-  // the head office register carries the DVOs approved in the month; the ones approved earlier only stay for reference
-  const closed = closedAll.filter((i) => i.movement === "closed_now" || i.movement === "new" || !previous || (i.dvoDate !== null && i.dvoDate > (previous?.period.period_end ?? "")));
-  const closedEarlier = closedAll.filter((i) => !closed.includes(i));
-  const open = items.filter((i) => i.category === "open");
+  const openAll = items.filter((i) => i.category === "open");
+  const closed = closedAll.filter((i) => i.movement === "closed_now" || i.movement === "new");
+  const open = openAll.filter((i) => i.movement !== "unchanged");
   const sum = (list: KpiItem[], k: "pvoValue" | "avvValue") => r2(list.reduce((t, i) => t + (i[k] ?? 0), 0));
   return {
     items,
     closed,
     open,
-    closedEarlier,
-    counts: { closed: closed.length, closedNow: closed.filter((i) => i.movement === "closed_now" || i.movement === "new").length, open: open.length, open90: open.filter((i) => (i.remainingDays ?? 1) < 0).length, moved: items.filter((i) => i.movement !== "unchanged").length },
+    counts: { closed: closed.length, closedNow: closed.length, open: open.length, open90: open.filter((i) => (i.remainingDays ?? 1) < 0).length, moved: closed.length + open.length, openPending: openAll.length, closedAll: closedAll.length },
     totals: { closedPvo: sum(closed, "pvoValue"), closedAvv: sum(closed, "avvValue"), openPvo: sum(open, "pvoValue") },
     previousLabel: previous?.period.label ?? null,
     month: cutoff.slice(0, 8) + "01",

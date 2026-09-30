@@ -51,7 +51,9 @@ export function getBondsSummary(rows: RecordRow[]): BondsSummary {
     if (d < 0) expired++;
     else if (d <= EXPIRY_RED_DAYS) red++;
     else if (d <= EXPIRY_AMBER_DAYS) amber++;
-    if (d <= EXPIRY_AMBER_DAYS) {
+    // "expiring soon" is what still runs out inside the next 60 days; a policy already past its date is
+    // counted as expired (and listed in the expired card), not as expiring
+    if (d >= 0 && d <= EXPIRY_AMBER_DAYS) {
       expiring.push({
         id: r.id,
         ref: String(r.ref),

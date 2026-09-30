@@ -27,7 +27,7 @@ export const budgetTransfers: RegisterDef = {
     { key: "date", label: "Date", type: "date", required: true },
     { key: "period_id", label: "Reporting period", type: "lookup", lookup: { register: "reporting_periods" }, filter: true },
     { key: "approval_ref", label: "Approval ref", type: "text" },
-    { key: "applied", label: "In cost report", type: "text", virtual: true, readonly: true, hideInForm: true, chip: true, help: "Whether the transfer is currently reflected in column F." },
+    { key: "applied", label: "In cost report", type: "text", virtual: true, readonly: true, hideInForm: true, chip: true, help: "Whether the transfer is reflected in column F of the cost report. When column F is brought forward from the Excel cost report (Schedule B), every approved transfer on the Schedule J log is in it." },
     { key: "notes", label: "Notes", type: "textarea", hideInTable: true },
   ],
 };

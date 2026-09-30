@@ -2,6 +2,8 @@ import { PDFDocument, PDFFont, PDFPage, StandardFonts, rgb, type RGB } from "pdf
 import { formatDate, formatMoney } from "../format";
 import type { KpiItem } from "./model";
 import { KPI_SECTIONS, KPI_SECTION_LABEL, type KpiDoc, type KpiSection } from "./store";
+import { KPI_SECTION_HINT, KPI_SECTION_NO } from "./shared";
+import { parsePages } from "./pages";
 
 /**
  * The supporting-document pack for one KPI entry, as the head office asks for it: a cover with the
@@ -11,12 +13,14 @@ import { KPI_SECTIONS, KPI_SECTION_LABEL, type KpiDoc, type KpiSection } from ".
  */
 
 const A4: [number, number] = [595.28, 841.89];
-const NAVY = rgb(0.12, 0.23, 0.41);
-const GOLD = rgb(0.72, 0.58, 0.32);
-const INK = rgb(0.13, 0.15, 0.2);
-const MUTED = rgb(0.42, 0.46, 0.53);
-const LINE = rgb(0.85, 0.87, 0.9);
-const PALE = rgb(0.96, 0.97, 0.98);
+// graphite and warm grey with a bronze accent – no blue, so the pack reads as a document, not a dashboard
+const NAVY = rgb(0.2, 0.22, 0.25); // graphite
+const GOLD = rgb(0.66, 0.52, 0.36); // bronze
+const INK = rgb(0.16, 0.17, 0.19);
+const MUTED = rgb(0.45, 0.47, 0.5);
+const LINE = rgb(0.84, 0.84, 0.83);
+const PALE = rgb(0.95, 0.95, 0.94);
+const WHITE = rgb(1, 1, 1);
 
 export interface PackInput {
   item: KpiItem;
@@ -92,12 +96,12 @@ function text(page: PDFPage, ctx: Ctx, t: string, x: number, y: number, size: nu
 
 function band(page: PDFPage, ctx: Ctx, input: PackInput, title: string, subtitle: string) {
   const [w, h] = A4;
-  page.drawRectangle({ x: 0, y: h - 118, width: w, height: 118, color: NAVY });
-  page.drawRectangle({ x: 0, y: h - 122, width: w, height: 4, color: GOLD });
-  text(page, ctx, "AMAALA · Commercial KPI Reporting – F1 (Variation Orders)", 40, h - 40, 9, { color: rgb(0.8, 0.86, 0.95) });
-  text(page, ctx, title, 40, h - 70, 22, { bold: true, color: rgb(1, 1, 1) });
-  text(page, ctx, subtitle, 40, h - 92, 11, { color: rgb(0.85, 0.9, 0.97) });
-  text(page, ctx, `${input.programme.name} (${input.programme.code}) · ${input.periodLabel}`, w - 40, h - 110, 9, { color: rgb(0.85, 0.9, 0.97), align: "right" });
+  page.drawRectangle({ x: 0, y: h - 150, width: w, height: 150, color: NAVY });
+  page.drawRectangle({ x: 40, y: h - 118, width: 46, height: 2.5, color: GOLD });
+  text(page, ctx, "AMAALA  ·  COMMERCIAL KPI REPORTING  ·  F1 VARIATION ORDERS", 40, h - 44, 8.5, { color: rgb(0.78, 0.78, 0.76) });
+  text(page, ctx, title, 40, h - 80, 24, { bold: true, color: WHITE });
+  text(page, ctx, subtitle, 40, h - 104, 11, { color: rgb(0.85, 0.85, 0.83) });
+  text(page, ctx, `${input.programme.name} (${input.programme.code})  ·  ${input.periodLabel}`, 40, h - 136, 9.5, { color: rgb(0.85, 0.85, 0.83) });
 }
 
 function footer(page: PDFPage, ctx: Ctx, input: PackInput, label: string) {
@@ -114,7 +118,7 @@ function coverPage(ctx: Ctx, input: PackInput, contents: { section: KpiSection; 
   const [w, h] = A4;
   const it = input.item;
   band(page, ctx, input, it.category === "closed" ? "Closed KPI – DVO approved" : "Open KPI – DVO in progress", "Supporting documents for the Open VO Register entry");
-  let y = text(page, ctx, it.description, 40, h - 150, 13, { bold: true, width: w - 80 }) - 6;
+  let y = text(page, ctx, it.description, 40, h - 180, 13, { bold: true, width: w - 80 }) - 6;
   const rows: [string, string][] = [
     ["Head office S/N", input.sn || "New entry – S/N to be assigned"],
     ["Dashboard item", it.itemNo],
@@ -133,7 +137,8 @@ function coverPage(ctx: Ctx, input: PackInput, contents: { section: KpiSection; 
     const lines = wrap(v, ctx.font, 10, w - 80 - labelW - 10);
     const rowH = Math.max(1, lines.length) * 13.5 + 6;
     page.drawRectangle({ x: 40, y: y - rowH + 10, width: w - 80, height: rowH, color: PALE, borderColor: LINE, borderWidth: 0.5 });
-    text(page, ctx, k, 46, y, 9, { bold: true, color: NAVY });
+    page.drawRectangle({ x: 40, y: y - rowH + 10, width: 2, height: rowH, color: GOLD });
+    text(page, ctx, k, 48, y, 9, { bold: true, color: NAVY });
     text(page, ctx, v, 40 + labelW, y, 10, { width: w - 80 - labelW - 10 });
     y -= rowH;
   }
@@ -142,8 +147,10 @@ function coverPage(ctx: Ctx, input: PackInput, contents: { section: KpiSection; 
   y -= 18;
   for (const c of contents) {
     page.drawRectangle({ x: 40, y: y - 4, width: w - 80, height: 16, color: NAVY });
-    text(page, ctx, KPI_SECTION_LABEL[c.section], 46, y, 9.5, { bold: true, color: rgb(1, 1, 1) });
-    text(page, ctx, `page ${c.page}`, w - 46, y, 9, { color: rgb(1, 1, 1), align: "right" });
+    page.drawRectangle({ x: 40, y: y - 4, width: 22, height: 16, color: GOLD });
+    text(page, ctx, String(KPI_SECTION_NO[c.section]), 51, y, 9.5, { bold: true, color: WHITE, align: "center" });
+    text(page, ctx, KPI_SECTION_LABEL[c.section], 68, y, 9.5, { bold: true, color: WHITE });
+    text(page, ctx, `page ${c.page}`, w - 46, y, 9, { color: WHITE, align: "right" });
     y -= 20;
     for (const d of c.docs) {
       const line = `${d.name}${d.note ? ` – ${d.note}` : ""}`;
@@ -162,21 +169,31 @@ function coverPage(ctx: Ctx, input: PackInput, contents: { section: KpiSection; 
 function dividerPage(ctx: Ctx, input: PackInput, section: KpiSection, docs: { name: string; pages: number; note?: string }[]) {
   const page = ctx.pdf.addPage(A4);
   const [w, h] = A4;
-  const letter = KPI_SECTION_LABEL[section].slice(0, 1);
-  page.drawRectangle({ x: 0, y: 0, width: 26, height: h, color: NAVY });
-  page.drawRectangle({ x: 26, y: 0, width: 3, height: h, color: GOLD });
-  page.drawCircle({ x: w / 2, y: h / 2 + 60, size: 58, color: PALE, borderColor: NAVY, borderWidth: 1.2 });
-  text(page, ctx, letter, w / 2, h / 2 + 40, 56, { bold: true, color: NAVY, align: "center" });
-  text(page, ctx, KPI_SECTION_LABEL[section].replace(/^[A-E]\.\s*/, ""), w / 2, h / 2 - 30, 18, { bold: true, color: NAVY, align: "center", width: w - 120 });
-  text(page, ctx, `${input.item.itemNo} · ${input.item.vendor}`, w / 2, h / 2 - 62, 11, { color: MUTED, align: "center" });
-  let y = h / 2 - 100;
-  page.drawLine({ start: { x: 120, y: y + 12 }, end: { x: w - 120, y: y + 12 }, thickness: 0.6, color: LINE });
+  // a graphite spine with the part number, the title across the page, a bronze rule and the files behind it
+  page.drawRectangle({ x: 0, y: 0, width: 34, height: h, color: NAVY });
+  page.drawRectangle({ x: 34, y: 0, width: 2.5, height: h, color: GOLD });
+  page.drawRectangle({ x: 0, y: h - 150, width: w, height: 150, color: PALE });
+  page.drawRectangle({ x: 0, y: h - 150, width: w, height: 0.8, color: LINE });
+  text(page, ctx, "SUPPORTING DOCUMENTS", 70, h - 52, 8.5, { color: MUTED });
+  text(page, ctx, `${input.item.itemNo}  ·  ${input.item.vendor}`, 70, h - 68, 9.5, { color: MUTED });
+  text(page, ctx, `${input.item.category === "closed" ? "Closed KPI" : "Open KPI"}  ·  ${input.periodLabel}`, w - 40, h - 52, 8.5, { color: MUTED, align: "right" });
+  page.drawCircle({ x: 112, y: h / 2 + 70, size: 46, color: NAVY });
+  page.drawCircle({ x: 112, y: h / 2 + 70, size: 41, color: NAVY, borderColor: GOLD, borderWidth: 1.2 });
+  text(page, ctx, String(KPI_SECTION_NO[section]), 112, h / 2 + 54, 44, { bold: true, color: WHITE, align: "center" });
+  text(page, ctx, "PART", 112, h / 2 + 108, 8, { color: rgb(0.78, 0.78, 0.76), align: "center" });
+  text(page, ctx, KPI_SECTION_LABEL[section], 190, h / 2 + 84, 22, { bold: true, color: NAVY, width: w - 230 });
+  text(page, ctx, KPI_SECTION_HINT[section], 190, h / 2 + 56, 10.5, { color: MUTED, width: w - 230 });
+  page.drawRectangle({ x: 190, y: h / 2 + 40, width: 60, height: 2, color: GOLD });
+  let y = h / 2 + 18;
+  text(page, ctx, docs.length === 1 ? "Document in this part" : `${docs.length} documents in this part`, 190, y, 9, { bold: true, color: NAVY });
+  y -= 16;
   for (const d of docs) {
     const line = `${d.name}${d.note ? ` – ${d.note}` : d.pages ? ` (${d.pages} page${d.pages === 1 ? "" : "s"})` : ""}`;
-    y = text(page, ctx, line, 120, y, 10, { width: w - 240, color: INK }) - 2;
+    page.drawCircle({ x: 194, y: y + 3.5, size: 1.8, color: GOLD });
+    y = text(page, ctx, line, 202, y, 10, { width: w - 242, color: INK }) - 2;
     if (y < 60) break;
   }
-  footer(page, ctx, input, KPI_SECTION_LABEL[section]);
+  footer(page, ctx, input, `Part ${KPI_SECTION_NO[section]} – ${KPI_SECTION_LABEL[section]}`);
 }
 
 function noticePage(ctx: Ctx, input: PackInput, name: string, why: string) {
@@ -210,10 +227,10 @@ export async function buildKpiPack(input: PackInput): Promise<Buffer> {
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
   const ctx: Ctx = { pdf, font, bold };
   // every document is opened first, so the cover can say where each one starts
-  const loaded: { doc: KpiDoc; src: PDFDocument | null; image: { bytes: Buffer; mime: string } | null; pages: number; note?: string }[] = [];
+  const loaded: { doc: KpiDoc; src: PDFDocument | null; image: { bytes: Buffer; mime: string } | null; pages: number; take: number[]; note?: string }[] = [];
   for (const { doc, bytes } of input.docs) {
     if (!bytes) {
-      loaded.push({ doc, src: null, image: null, pages: 0, note: "file missing on the server" });
+      loaded.push({ doc, src: null, image: null, pages: 0, take: [], note: "file missing on the server" });
       continue;
     }
     // the file's own extension decides; the browser's mime type only when there is no extension
@@ -223,12 +240,14 @@ export async function buildKpiPack(input: PackInput): Promise<Buffer> {
     if (isPdf) {
       try {
         const src = await PDFDocument.load(bytes, { ignoreEncryption: true, updateMetadata: false });
-        loaded.push({ doc, src, image: null, pages: src.getPageCount() });
+        // only the key pages go in – the selection made when the file was read, or the one typed on the page
+        const take = parsePages(doc.pages, src.getPageCount());
+        loaded.push({ doc, src, image: null, pages: take.length, take, note: take.length < src.getPageCount() ? `pages ${doc.pages || "all"} of ${src.getPageCount()}` : undefined });
       } catch (e) {
-        loaded.push({ doc, src: null, image: null, pages: 0, note: `could not be read as a PDF (${e instanceof Error ? e.message.slice(0, 80) : "error"})` });
+        loaded.push({ doc, src: null, image: null, pages: 0, take: [], note: `could not be read as a PDF (${e instanceof Error ? e.message.slice(0, 80) : "error"})` });
       }
-    } else if (isImg) loaded.push({ doc, src: null, image: { bytes, mime: doc.mime }, pages: 1 });
-    else loaded.push({ doc, src: null, image: null, pages: 0, note: "only PDF, JPG and PNG files go into the pack" });
+    } else if (isImg) loaded.push({ doc, src: null, image: { bytes, mime: doc.mime }, pages: 1, take: [1] });
+    else loaded.push({ doc, src: null, image: null, pages: 0, take: [], note: "only PDF, JPG and PNG files go into the pack" });
   }
   const contents: { section: KpiSection; docs: { name: string; page: number; pages: number; note?: string }[]; page: number }[] = [];
   let pageNo = 2; // the cover is page 1
@@ -241,7 +260,7 @@ export async function buildKpiPack(input: PackInput): Promise<Buffer> {
     for (const l of inSection) {
       const start = pageNo;
       if (l.src) {
-        const pages = await pdf.copyPages(l.src, l.src.getPageIndices());
+        const pages = await pdf.copyPages(l.src, l.take.map((n) => n - 1));
         for (const p of pages) pdf.addPage(p);
         pageNo += pages.length;
       } else if (l.image) {
@@ -260,7 +279,7 @@ export async function buildKpiPack(input: PackInput): Promise<Buffer> {
     }
     contents.push(entry);
   }
-  if (!contents.length) noticePage(ctx, input, "No supporting documents uploaded yet", "Upload the DVO, the instruction, the PVO and the RFC / CRF on the KPI Report page, then create the pack again.");
+  if (!contents.length) noticePage(ctx, input, "No supporting documents uploaded yet", "Upload the Aconex approvals, the DVO / PVO / VO front pages and the VO-issued reference on the KPI Report page, then create the pack again.");
   coverPage(ctx, input, contents, pageNo - 1);
   return Buffer.from(await pdf.save({ useObjectStreams: true }));
 }
