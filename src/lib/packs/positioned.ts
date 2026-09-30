@@ -14,6 +14,10 @@ export interface Cell {
   h?: number;
   /** set when the run is in a bold face */
   b?: boolean;
+  /** set when the run is in an italic face */
+  i?: boolean;
+  /** the face the run is set in, as the PDF names it ("NotoSans-Bold", "OpenSans-Regular", "ArialMT") */
+  f?: string;
 }
 export interface Row {
   y: number;
@@ -37,9 +41,15 @@ export async function readPositioned(bytes: Buffer): Promise<PosPage[]> {
         const s = String(it.str ?? "").replace(/\s+/g, " ").trim();
         if (!s || !it.transform) continue;
         const style = it.fontName ? (tc.styles as Record<string, { fontFamily?: string }>)[it.fontName] : undefined;
-        const face = `${it.fontName ?? ""} ${style?.fontFamily ?? ""}`;
+        let face = "";
+        try {
+          const fobj = it.fontName && page.commonObjs.has(it.fontName) ? (page.commonObjs.get(it.fontName) as { name?: string } | null) : null;
+          face = String(fobj?.name ?? style?.fontFamily ?? "").replace(/^[A-Z]{6}\+/, "");
+        } catch {
+          face = String(style?.fontFamily ?? "");
+        }
         const h = Math.round(Math.hypot(it.transform[0], it.transform[1]) * 10) / 10;
-        items.push({ x: Math.round(it.transform[4]), y: Math.round(it.transform[5]), w: Math.round(it.width ?? 0), s, h, b: /bold|black|heavy|semibold/i.test(face) });
+        items.push({ x: Math.round(it.transform[4]), y: Math.round(it.transform[5]), w: Math.round(it.width ?? 0), s, h, f: face, b: /bold|black|heavy|semibold/i.test(face), i: /italic|oblique/i.test(face) });
       }
       items.sort((a, b) => b.y - a.y || a.x - b.x);
       const rows: Row[] = [];

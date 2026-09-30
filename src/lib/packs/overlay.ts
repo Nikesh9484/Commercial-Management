@@ -8,6 +8,9 @@
  * way the old one was. Signatures, stamps and sign tags of the earlier document are cleared, because
  * this document goes out for its own signatures.
  */
+import fs from "node:fs";
+import path from "node:path";
+import fontkit from "@pdf-lib/fontkit";
 import { PDFDocument, PDFName, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 import { formatDate, formatMoney } from "../format";
 import { isLabel, readFills, readPositioned, type Cell, type Fill, type PosPage, type Row } from "./positioned";
@@ -50,6 +53,8 @@ const addDays = (iso: string, days: number) => {
 };
 const isNumeric = (s: string) => /^\(?-?[\d,]+(\.\d+)?\)?%?$|^-$/.test(s.trim());
 const isDateLike = (s: string) => /^\d{1,2}-[A-Za-z]{3}-\d{2,4}$/.test(s.trim());
+/** dark enough for white text (the gold bands of the forms carry white headings) */
+const DARK = 0.66;
 const lum = (hex: string) => {
   const n = parseInt(hex.slice(1), 16);
   return (0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
@@ -59,19 +64,80 @@ const rgbOf = (hex: string) => {
   return rgb(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255);
 };
 
+/* ------------------------------------------------------------------ */
+/* the faces the forms are set in: the same families, embedded from the bundled font files, so a
+   rewritten value is in the font of the value it replaces                                        */
+
+type Family = "notosans" | "opensans" | "arial";
+const FONT_FILES: Record<Family, { r: string; b: string; i: string; bi: string }> = {
+  notosans: { r: "NotoSans-Regular.ttf", b: "NotoSans-Bold.ttf", i: "NotoSans-Italic.ttf", bi: "NotoSans-BoldItalic.ttf" },
+  opensans: { r: "OpenSans-Regular.ttf", b: "OpenSans-Bold.ttf", i: "OpenSans-Italic.ttf", bi: "OpenSans-Bold.ttf" },
+  arial: { r: "LiberationSans-Regular.ttf", b: "LiberationSans-Bold.ttf", i: "LiberationSans-Italic.ttf", bi: "LiberationSans-BoldItalic.ttf" },
+};
+/** the bundled family that stands for a face named in the PDF */
+export function familyOf(face: string | undefined): Family {
+  const f = (face ?? "").toLowerCase();
+  if (/open ?sans/.test(f)) return "opensans";
+  if (/arial|helvetica|liberation|calibri|carlito|segoe|cambria|times|minion|playfair/.test(f)) return "arial";
+  return "notosans";
+}
+
+class FontSet {
+  private cache = new Map<string, PDFFont>();
+  constructor(
+    private pdf: PDFDocument,
+    private plain: PDFFont,
+    private plainBold: PDFFont,
+  ) {}
+  /** every face the pages use is embedded up front (embedding is the one async step) */
+  async prepare(pages: PosPage[]) {
+    const wanted = new Set<string>();
+    for (const p of pages) for (const r of p.rows) for (const c of r.cells) wanted.add(`${familyOf(c.f)}:${c.b ? "b" : ""}${c.i ? "i" : ""}`);
+    // bold and regular of each family are always wanted: a value may be written bold where the old one was not
+    for (const k of [...wanted]) {
+      const fam = k.split(":")[0];
+      wanted.add(`${fam}:`);
+      wanted.add(`${fam}:b`);
+    }
+    for (const key of wanted) {
+      if (this.cache.has(key)) continue;
+      const [fam, style] = key.split(":") as [Family, string];
+      const file = FONT_FILES[fam][(style || "r") as "r" | "b" | "i" | "bi"];
+      try {
+        const bytes = fs.readFileSync(path.join(process.cwd(), "public", "fonts", file));
+        this.cache.set(key, await this.pdf.embedFont(bytes, { subset: true }));
+      } catch {
+        this.cache.set(key, style.includes("b") ? this.plainBold : this.plain);
+      }
+    }
+  }
+  get(face: string | undefined, bold: boolean, italic: boolean): PDFFont {
+    const key = `${familyOf(face)}:${bold ? "b" : ""}${italic ? "i" : ""}`;
+    return this.cache.get(key) ?? this.cache.get(`${familyOf(face)}:${bold ? "b" : ""}`) ?? (bold ? this.plainBold : this.plain);
+  }
+}
+
 /** One copied form page with the tools to rewrite its cells. */
 class Sheet {
   readonly width: number;
   readonly height: number;
+  /** the face most of the page's values are set in */
+  readonly face: string;
   constructor(
     readonly page: PDFPage,
     readonly pos: PosPage,
     readonly fills: Fill[],
-    readonly font: PDFFont,
-    readonly bold: PDFFont,
+    readonly fonts: FontSet,
   ) {
     this.width = page.getWidth();
     this.height = page.getHeight();
+    const count = new Map<string, number>();
+    for (const r of pos.rows) for (const c of r.cells) if (c.f && !c.b && !c.i) count.set(c.f, (count.get(c.f) ?? 0) + c.s.length);
+    this.face = [...count.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
+  }
+  /** the font for a run: the family of the cell it replaces (or of the page), in the style asked for */
+  fontOf(cell?: Cell | null, bold?: boolean, italic?: boolean): PDFFont {
+    return this.fonts.get(cell?.f || this.face, bold ?? !!cell?.b, italic ?? !!cell?.i);
   }
   /** the colour under a point: the last-painted fill holding it, else white */
   bgAt(x: number, y: number): string {
@@ -108,7 +174,7 @@ class Sheet {
       if (c.x < x - 1 || c.x + c.w > x + w + 1 || c.y < y || c.y + size > y + h) continue;
       if (!/^(signature|date|name|position|sign|stamp)$/i.test(c.s)) continue;
       const bg = this.bgAt(c.x + c.w / 2, c.y + size / 2);
-      this.text(c.s, c.x, c.y, size, { color: lum(bg) < 0.5 ? "#ffffff" : "#6b6b6b" });
+      this.text(c.s, c.x, c.y, size, { color: lum(bg) < DARK ? "#ffffff" : "#6b6b6b", cell: c });
     }
   }
   fillAt(x: number, y: number): Fill | null {
@@ -125,14 +191,14 @@ class Sheet {
   wipeArea(x: number, y: number, w: number, h: number) {
     this.page.drawRectangle({ x, y, width: w, height: h, color: rgb(1, 1, 1), borderWidth: 0 });
   }
-  widthOf(s: string, size: number, bold = false) {
-    return (bold ? this.bold : this.font).widthOfTextAtSize(s, size);
+  widthOf(s: string, size: number, bold = false, cell?: Cell | null, italic?: boolean) {
+    return this.fontOf(cell, bold, italic).widthOfTextAtSize(s, size);
   }
   /** writes one line, shrinking the size to fit the width, then cutting it with "..." */
-  text(s: string, x: number, y: number, size: number, opts: { align?: "left" | "right" | "center"; maxWidth?: number; color?: string; bold?: boolean; minSize?: number } = {}) {
+  text(s: string, x: number, y: number, size: number, opts: { align?: "left" | "right" | "center"; maxWidth?: number; color?: string; bold?: boolean; italic?: boolean; minSize?: number; cell?: Cell | null } = {}) {
     let t = clean(s);
     if (!t) return;
-    const font = opts.bold ? this.bold : this.font;
+    const font = this.fontOf(opts.cell, opts.bold ?? !!opts.cell?.b, opts.italic ?? !!opts.cell?.i);
     let sz = size;
     const max = opts.maxWidth ?? Infinity;
     const min = opts.minSize ?? Math.max(3.2, size * 0.7);
@@ -146,7 +212,7 @@ class Sheet {
     this.page.drawText(t, { x: x + dx, y, size: sz, font, color: rgbOf(opts.color ?? "#000000") });
   }
   /** wraps a paragraph into lines that fit the width */
-  wrap(s: string, size: number, width: number, bold = false): string[] {
+  wrap(s: string, size: number, width: number, bold = false, cell?: Cell | null): string[] {
     const out: string[] = [];
     for (const para of clean(s).split(/\n/)) {
       const words = para.split(" ").filter(Boolean);
@@ -157,7 +223,7 @@ class Sheet {
       let line = "";
       for (const w of words) {
         const cand = line ? `${line} ${w}` : w;
-        if (this.widthOf(cand, size, bold) <= width || !line) line = cand;
+        if (this.widthOf(cand, size, bold, cell) <= width || !line) line = cand;
         else {
           out.push(line);
           line = w;
@@ -186,9 +252,10 @@ class Sheet {
   replaceCell(cell: Cell, value: string, opts: { rightEdge?: number; align?: "auto" | "left" | "right" | "center"; size?: number; bold?: boolean; leftEdge?: number; minSize?: number } = {}) {
     const size = opts.size ?? cell.h ?? 5;
     const bg = this.bgAt(cell.x + Math.max(1, cell.w / 2), cell.y + size / 2);
-    const color = lum(bg) < 0.5 ? "#ffffff" : "#000000";
+    const color = lum(bg) < DARK ? "#ffffff" : "#000000";
     // the old run, a little wider than measured (the measure runs short of the last glyph)
-    const oldW = cell.w * 1.05 + 1.8;
+    const oldW = cell.w * 1.01 + 0.8;
+    const bold = opts.bold ?? !!cell.b;
     const fill = this.fillAt(cell.x + 1, cell.y + size / 2);
     const oldCentre = cell.x + oldW / 2;
     let align: "left" | "right" | "center" = "left";
@@ -198,13 +265,20 @@ class Sheet {
     const right = opts.rightEdge ?? (align === "right" ? cell.x + oldW : fill && fill.w < 400 ? fill.x + fill.w - 2 : Math.min(this.tableRight, cell.x + Math.max(oldW, 120)));
     const left = opts.leftEdge ?? (align === "right" ? Math.max(cell.x - 60, (opts.leftEdge ?? cell.x) - 60) : cell.x);
     // clear the old text (a little wider than it is, never past the cell's right edge)
-    const wx = align === "right" ? Math.min(cell.x, right - Math.max(oldW, this.widthOf(value, size) + 2)) - 0.5 : cell.x - 0.5;
-    const ww = align === "right" ? right - wx + 0.8 : Math.max(oldW, Math.min(this.widthOf(value, size) + 2, right - cell.x)) + 1.2;
-    this.page.drawRectangle({ x: wx, y: cell.y - size * 0.32, width: Math.max(ww, 1) + (align === "right" ? 1.5 : 0), height: size * 1.36, color: rgbOf(bg), borderWidth: 0 });
+    const wx = align === "right" ? Math.min(cell.x, right - Math.max(oldW, this.widthOf(value, size, bold, cell) + 2)) - 0.5 : cell.x - 0.5;
+    const ww = align === "right" ? right - wx + 0.8 : Math.max(oldW, Math.min(this.widthOf(value, size, bold, cell) + 2, right - cell.x)) + 1.2;
+    const wipe = { x: wx, y: cell.y - size * 0.32, w: Math.max(ww, 1) + (align === "right" ? 1.5 : 0), h: size * 1.36 };
+    this.page.drawRectangle({ x: wipe.x, y: wipe.y, width: wipe.w, height: wipe.h, color: rgbOf(bg), borderWidth: 0 });
+    for (const f of this.fills) {
+      if (!f.stroke || f.w >= 1.5) continue;
+      if (f.x < wipe.x - 0.5 || f.x > wipe.x + wipe.w + 0.5 || f.y > wipe.y + wipe.h || f.y + f.h < wipe.y) continue;
+      const iy = Math.max(wipe.y, f.y);
+      this.page.drawRectangle({ x: f.x, y: iy, width: f.w, height: Math.min(wipe.y + wipe.h, f.y + f.h) - iy, color: rgbOf(f.color), borderWidth: 0 });
+    }
     if (!value) return;
     const maxWidth = align === "right" ? right - left : align === "center" && fill ? fill.w - 4 : right - cell.x;
     const x = align === "right" ? right : align === "center" ? (fill ? fill.x + fill.w / 2 : oldCentre) : cell.x;
-    this.text(value, x, cell.y, size, { align, maxWidth, color, bold: opts.bold, minSize: opts.minSize });
+    this.text(value, x, cell.y, size, { align, maxWidth, color, bold, cell, minSize: opts.minSize });
   }
   /** the value beside the label on its row (or wrapped onto the rows just above/below), replaced */
   replaceRight(label: string | RegExp, value: string | undefined, opts: { notLabels?: (string | RegExp)[]; nearRows?: boolean; rightEdge?: number; align?: "auto" | "left" | "right" | "center"; bold?: boolean; after?: number; last?: boolean; emptyAt?: number; maxDx?: number; minSize?: number } = {}) {
@@ -266,22 +340,25 @@ class Sheet {
     const stopH = stopRow?.cells[0]?.h ?? size;
     const bottom = stopRow ? stopRow.y + stopH + (opts.bottomGap ?? 3) : 30;
     if (top - bottom < size) return;
-    // clear the area between the rows (only its inside, so the borders around it stay)
-    this.page.drawRectangle({ x: left - 0.6, y: bottom, width: right - left + 1.2, height: top - bottom, color: rgb(1, 1, 1), borderWidth: 0 });
+    // clear the text between the rows; the borders and shading of the area come back as they were
+    this.restoreText(left - 0.6, bottom, right - left + 1.2, top - bottom);
+    // the face of the text that was there (or of the page)
+    const old = rows.slice(start + 1, end).flatMap((r) => r.cells).find((c) => c.f) ?? null;
+    const cell: Cell | null = old ? { ...old, b: false, i: false } : null;
     let sz = size;
     let lead = opts.lead ?? Math.max(size * 1.42, 6.5);
-    let lines = this.wrap(text, sz, right - left - 2, opts.bold);
+    let lines = this.wrap(text, sz, right - left - 2, opts.bold, cell);
     const fits = () => (lines.length + 0.6) * lead <= top - bottom;
     while (!fits() && sz > size * 0.72) {
       sz -= 0.2;
       lead = Math.max(sz * 1.35, 5.5);
-      lines = this.wrap(text, sz, right - left - 2, opts.bold);
+      lines = this.wrap(text, sz, right - left - 2, opts.bold, cell);
     }
     const maxLines = Math.max(1, Math.floor((top - bottom - lead * 0.4) / lead));
     if (lines.length > maxLines) lines = [...lines.slice(0, maxLines - 1), `${lines[maxLines - 1].replace(/[.,;:]?$/, "")} ...`];
     let y = top - lead * 0.9;
     lines.forEach((l, i) => {
-      if (l) this.text(l, left, y, sz, { bold: opts.bold || (opts.firstBold && i === 0), maxWidth: right - left - 1 });
+      if (l) this.text(l, left, y, sz, { bold: opts.bold || (opts.firstBold && i === 0), maxWidth: right - left - 1, cell });
       y -= lead;
     });
   }
@@ -298,6 +375,10 @@ class Sheet {
     }
     return out;
   }
+  /** clears a text area: its shading and the borders around it come back, marks inside the text do not */
+  restoreText(x: number, y: number, w: number, h: number) {
+    this.restore(x, y, w, h, (f) => !f.stroke || f.w > w * 0.4 || f.h > h * 0.4);
+  }
   /**
    * Clears the signature and date boxes of a signatory row – the columns right of Position, from
    * just under the row's labels up to the band or row above – and restores the form there.
@@ -313,7 +394,7 @@ class Sheet {
     const h = topY - y;
     // what comes back: the shaded bands, the underlines just above the labels, the table's own right border
     // and any rule that runs across the page – never the frame of a signature picture
-    const pics = this.fills.filter((f) => f.image);
+    const pics = this.fills.filter((f) => f.image && f.w > 5 && f.h > 5 && f.w < this.width * 0.5 && f.h < 150);
     const framesPicture = (f: Fill) => pics.some((i) => f.x >= i.x - 4 && f.x + f.w <= i.x + i.w + 4 && f.y >= i.y - 4 && f.y + f.h <= i.y + i.h + 4);
     const keep = (f: Fill) => !framesPicture(f) && ((!f.stroke && f.h > 5 && f.w > 80) || (f.h < 1.5 && f.y > labelRow.y && f.y < labelRow.y + 10) || (f.w < 1.5 && f.h > h * 0.8 && f.x > this.tableRight - 5) || (f.h < 1.5 && f.w > this.width * 0.6));
     this.restore(x, y, this.tableRight + 1 - x, h, keep);
@@ -332,8 +413,10 @@ class Sheet {
     // the rows just around the name row that are wrapped parts of the position
     for (const r of this.pos.rows) if (r !== nameRow && r !== labelRow && Math.abs(r.y - nameRow.y) <= 8 && r.y > labelRow.y) for (const c of r.cells) if (!/^(name|position|signature|date)$/i.test(c.s)) this.replaceCell(c, "", { size: c.h });
     const half = pc && nc ? (pc - nc) * 0.92 : 130;
-    if (nc && name) this.text(name, nc, nameRow.y, size, { align: "center", maxWidth: half, bold: true });
-    if (pc && position) this.text(position, pc, nameRow.y, size, { align: "center", maxWidth: half * 1.15, bold: true });
+    const nameCell = nameRow.cells[0] ?? null;
+    const posCell = nameRow.cells[1] ?? nameCell;
+    if (nc && name) this.text(name, nc, nameRow.y, size, { align: "center", maxWidth: half, bold: nameCell ? !!nameCell.b : true, cell: nameCell });
+    if (pc && position) this.text(position, pc, nameRow.y, size, { align: "center", maxWidth: half * 1.15, bold: posCell ? !!posCell.b : true, cell: posCell });
     this.clearSignature(labelRow, topY, undefined, bottomY);
   }
   /** where a signatory block starts: under the band above it, or under the labels of the row above */
@@ -354,8 +437,7 @@ interface Loaded {
   src: PDFDocument;
   pages: PosPage[];
   fills: Map<number, Fill[]>;
-  font: PDFFont;
-  bold: PDFFont;
+  fonts: FontSet;
 }
 
 async function open(refBytes: Buffer, wanted: (pages: PosPage[]) => number[]): Promise<{ l: Loaded; sheets: Sheet[] } | null> {
@@ -366,17 +448,20 @@ async function open(refBytes: Buffer, wanted: (pages: PosPage[]) => number[]): P
   const fills = await readFills(refBytes, nos);
   const src = await PDFDocument.load(refBytes, { ignoreEncryption: true, updateMetadata: false });
   const pdf = await PDFDocument.create();
+  pdf.registerFontkit(fontkit);
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const fonts = new FontSet(pdf, font, bold);
+  await fonts.prepare(nos.map((n) => pages[n - 1]));
   const copied = await pdf.copyPages(src, nos.map((n) => n - 1));
   const sheets: Sheet[] = [];
   copied.forEach((pg, i) => {
     // the sign tags, links and stamps of the earlier document are annotations: dropped
     pg.node.delete(PDFName.of("Annots"));
     pdf.addPage(pg);
-    sheets.push(new Sheet(pg, pages[nos[i] - 1], fills.get(nos[i]) ?? [], font, bold));
+    sheets.push(new Sheet(pg, pages[nos[i] - 1], fills.get(nos[i]) ?? [], fonts));
   });
-  return { l: { pdf, src, pages, fills, font, bold }, sheets };
+  return { l: { pdf, src, pages, fills, fonts }, sheets };
 }
 
 const pageText = (p: PosPage) => p.rows.flatMap((r) => r.cells.map((c) => c.s)).join(" | ");
@@ -431,7 +516,9 @@ export async function overlayPvo(refBytes: Buffer, v: PackValues, opts: { target
     for (const [, label, val, not] of gen) if (val) s1.replaceRight(label, val, { notLabels: not, align: "left" });
     if (v.title) s1.replaceRight("Title of this Variation", v.title, { align: "left", bold: true, rightEdge: s1.tableRight - 2 });
     if (v.eac_included) s1.replaceRight("Is this change included in the latest EAC", v.eac_included, { align: "center", bold: true, maxDx: 600 });
-    s1.block("Explain if the topic was included within the EAC", ["Root Cause for this change"], v.eac_explanation ?? "", { topGap: 4, bottomGap: 4 });
+    // the EAC line names the budget hold the value sits under, the way the approved PVOs do
+    const eacLine = String(v.eac_explanation ?? "").trim() || (v.budget_line && v.budget_available ? `Current budget available under the construction budget on Hold - ${v.budget_line} = ${formatMoney(num(v.budget_available))}` : "");
+    s1.block("Explain if the topic was included within the EAC", ["Root Cause for this change"], eacLine, { topGap: 4, bottomGap: 4 });
     if (v.root_cause) s1.replaceRight("Root Cause for this change", v.root_cause, { align: "center", bold: true, maxDx: 600 });
     s1.block("Scope of works / services (brief)", ["Contractual basis for variation entitlement", "b) Estimated Cost Impact"], v.scope ?? "", { firstBold: true });
     s1.block("Contractual basis for variation entitlement", ["b) Estimated Cost Impact", "Basis of ROM Estimate"], v.contractual_basis ?? "", { topGap: 4, bottomGap: 4 });
@@ -455,16 +542,18 @@ export async function overlayPvo(refBytes: Buffer, v: PackValues, opts: { target
       const its = items(v.cost_items);
       if (!its.length && total) its.push({ ref: "", desc: v.title ?? "", omit: total < 0 ? -total : 0, add: total > 0 ? total : 0 });
       const size = dataRows[0].cells[0]?.h ?? 4.9;
+      const face: Cell | null = dataRows.flatMap((r) => r.cells).find((c) => /[A-Za-z]{3}/.test(c.s)) ?? dataRows[0].cells[0] ?? null;
+      const plain = face ? { ...face, b: false, i: false } : null;
       dataRows.forEach((r, i) => {
         for (const c of r.cells) s1.replaceCell(c, "", { size: c.h });
         const it = its[i];
         if (!it) return;
         const descX = cDesc ? Math.min(cDesc.x - 110, 101) : 101;
-        s1.text(it.ref, descX - 8, r.y, size, { align: "right", maxWidth: descX - 30 });
-        s1.text(it.desc, descX, r.y, size, { maxWidth: (cCur ? cCur.x - 6 : 340) - descX });
-        if (cCur) s1.text("SAR", cCur.x + cCur.w / 2, r.y, size, { align: "center" });
-        s1.text(mny(it.omit), omitR, r.y, size, { align: "right" });
-        s1.text(mny(it.add), addR, r.y, size, { align: "right" });
+        s1.text(it.ref, descX - 8, r.y, size, { align: "right", maxWidth: descX - 30, cell: plain });
+        s1.text(it.desc, descX, r.y, size, { maxWidth: (cCur ? cCur.x - 6 : 340) - descX, cell: plain });
+        if (cCur) s1.text("SAR", cCur.x + cCur.w / 2, r.y, size, { align: "center", cell: plain });
+        s1.text(mny(it.omit), omitR, r.y, size, { align: "right", cell: plain });
+        s1.text(mny(it.add), addR, r.y, size, { align: "right", cell: plain });
       });
       const omitSum = its.reduce((a, b) => a + b.omit, 0);
       const addSum = its.reduce((a, b) => a + b.add, 0);
@@ -472,8 +561,8 @@ export async function overlayPvo(refBytes: Buffer, v: PackValues, opts: { target
       if (sub) {
         const nums = sub.row.cells.filter((c) => c.x > sub.cell.x + sub.cell.w && isNumeric(c.s));
         for (const c of nums) s1.replaceCell(c, "", { size: c.h });
-        s1.text(mny(omitSum), omitR, sub.row.y, size, { align: "right" });
-        s1.text(mny(addSum), addR, sub.row.y, size, { align: "right" });
+        s1.text(mny(omitSum), omitR, sub.row.y, size, { align: "right", cell: nums[0] ?? plain });
+        s1.text(mny(addSum), addR, sub.row.y, size, { align: "right", cell: nums[nums.length - 1] ?? plain });
       }
       const net = addSum - omitSum || total;
       s1.replaceRight("Total Value (in Contract Currency)", mny(net), { last: true, rightEdge: addR, bold: true });
@@ -631,12 +720,13 @@ export async function overlayDvo(refBytes: Buffer, v: PackValues): Promise<Buffe
           const size = first.cells[first.cells.length - 1].h ?? 13.9;
           const top = first.y + size * 1.2;
           const bottom = Math.min(...bullet.map((r) => r.y)) - size * 0.5;
-          s.page.drawRectangle({ x: x - 1, y: bottom, width: s.width - 60 - x, height: top - bottom, color: rgb(1, 1, 1), borderWidth: 0 });
+          s.restoreText(x - 1, bottom, s.width - 60 - x, top - bottom);
           const note = String(v.movement_note ?? "") || (diff === 0 ? "The DVO value equals the approved PVO value." : `The DVO value is ${diff > 0 ? "lower" : "higher"} than the approved PVO value, with a variance of SAR ${formatMoney(Math.abs(diff))}`);
-          const ls = s.wrap(note, size, s.width - 62 - x);
+          const face = first.cells.find((c) => c !== dot && !c.b) ?? first.cells[first.cells.length - 1];
+          const ls = s.wrap(note, size, s.width - 62 - x, false, face);
           let y = first.y;
           for (const l of ls.slice(0, 4)) {
-            s.text(l, x, y, size, { maxWidth: s.width - 60 - x });
+            s.text(l, x, y, size, { maxWidth: s.width - 60 - x, cell: face, bold: false });
             y -= size * 1.45;
           }
         }
@@ -675,24 +765,29 @@ export async function overlayDvo(refBytes: Buffer, v: PackValues): Promise<Buffe
       let its = items(v.cost_items);
       if (!its.length && dvoValue) its = [{ ref: "", desc: title, omit: dvoValue < 0 ? -dvoValue : 0, add: dvoValue > 0 ? dvoValue : 0 }];
       const size = header.cell.h ?? 5.8;
+      const old = dataRows.flatMap((r) => r.cells);
+      const refFace = old.find((c) => /^1TB|^[A-Z]{2,}-/.test(c.s)) ?? old[0] ?? null;
+      const descFace = old.find((c) => /[A-Za-z]{3}/.test(c.s) && c !== refFace) ?? old[0] ?? null;
+      const numFace = old.find((c) => isNumeric(c.s) && c.s !== "-") ?? old.find((c) => isNumeric(c.s)) ?? descFace;
       dataRows.forEach((r, i) => {
         for (const c of r.cells) s.replaceCell(c, "", { size: c.h });
         const it = its[i];
         if (!it) return;
         const ref = it.ref || (i === 0 ? String(v.instruction_ref ?? "") : "");
         const descX = cDesc ? cDesc.x : 124;
-        s.text(ref, header.cell.x, r.y, size * 0.88, { maxWidth: descX - header.cell.x - 4 });
-        s.text(it.desc || title, descX, r.y, size, { maxWidth: (cOmit ? cOmit.x - 8 : 380) - descX, bold: is27 });
-        s.text(mny(it.omit), omitR, r.y, size, { align: "right" });
-        s.text(mny(it.add), addR, r.y, size, { align: "right", bold: is27 });
+        s.text(ref, header.cell.x, r.y, refFace?.h ?? size * 0.88, { maxWidth: descX - header.cell.x - 4, cell: refFace });
+        s.text(it.desc || title, descX, r.y, size, { maxWidth: (cOmit ? cOmit.x - 8 : 380) - descX, cell: descFace });
+        s.text(mny(it.omit), omitR, r.y, size, { align: "right", cell: numFace });
+        s.text(mny(it.add), addR, r.y, size, { align: "right", cell: numFace });
       });
       const omitSum = its.reduce((a, b) => a + b.omit, 0);
       const addSum = its.reduce((a, b) => a + b.add, 0);
       const sub = s.find(/^Sub-Total$/);
       if (sub) {
-        for (const c of sub.row.cells.filter((c) => c.x > sub.cell.x + sub.cell.w && isNumeric(c.s))) s.replaceCell(c, "", { size: c.h });
-        s.text(mny(omitSum), omitR, sub.row.y, size, { align: "right" });
-        s.text(mny(addSum), addR, sub.row.y, size, { align: "right", bold: is27 });
+        const subNums = sub.row.cells.filter((c) => c.x > sub.cell.x + sub.cell.w && isNumeric(c.s));
+        for (const c of subNums) s.replaceCell(c, "", { size: c.h });
+        s.text(mny(omitSum), omitR, sub.row.y, size, { align: "right", cell: subNums[0] ?? numFace });
+        s.text(mny(addSum), addR, sub.row.y, size, { align: "right", cell: subNums[subNums.length - 1] ?? numFace });
       }
       s.replaceRight(/^Total Value$/, mny(addSum - omitSum || dvoValue), { last: true, rightEdge: addR, bold: true });
     }
@@ -787,7 +882,8 @@ export async function overlayRfa(refBytes: Buffer, v: PackValues, attachments: s
         const right = s.width - 42;
         const top = head.row.y - 10;
         const bottom = dept.row.y + 14;
-        s.page.drawRectangle({ x, y: bottom, width: right - x, height: top - bottom, color: rgb(1, 1, 1), borderWidth: 0 });
+        s.restoreText(x, bottom, right - x, top - bottom);
+        const bodyFace = s.pos.rows.filter((r) => r.y < head.row.y && r.y > dept.row.y).flatMap((r) => r.cells).find((c) => c.x >= head.cell.x - 2 && !c.b && c.s.length > 10) ?? null;
         const parts: { t: string; bold?: boolean }[] = [];
         for (const p of String(v.purpose ?? "").split(/\n/)) parts.push({ t: p });
         const req = lines(v.requested_approvals);
@@ -798,10 +894,10 @@ export async function overlayRfa(refBytes: Buffer, v: PackValues, attachments: s
         let y = top - lead;
         const width = right - head.cell.x - 4;
         outer: for (const p of parts) {
-          const ls = p.t ? s.wrap(p.t, size, width, p.bold) : [""];
+          const ls = p.t ? s.wrap(p.t, size, width, p.bold, bodyFace) : [""];
           for (const l of ls) {
             if (y < bottom + 4) break outer;
-            if (l) s.text(l, head.cell.x, y, size, { bold: p.bold, maxWidth: width });
+            if (l) s.text(l, head.cell.x, y, size, { bold: !!p.bold, maxWidth: width, cell: bodyFace });
             y -= lead;
           }
         }
@@ -814,9 +910,10 @@ export async function overlayRfa(refBytes: Buffer, v: PackValues, attachments: s
         if (hit) {
           const parts = s.pos.rows.filter((r) => Math.abs(r.y - hit.row.y) <= 14).flatMap((r) => r.cells).filter((c) => c.x > hit.cell.x + hit.cell.w);
           for (const c of parts) s.replaceCell(c, "", { size: c.h });
-          const ls = s.wrap(String(v.funding_source), size, s.width - 42 - (head?.cell.x ?? 208) - 2).slice(0, 2);
+          const fundFace = parts.find((c) => c.s.length > 6) ?? parts[0] ?? null;
+          const ls = s.wrap(String(v.funding_source), size, s.width - 42 - (head?.cell.x ?? 208) - 2, false, fundFace).slice(0, 2);
           const ys = parts.length >= 2 ? [Math.max(...parts.map((c) => c.y)), Math.min(...parts.map((c) => c.y))] : [hit.row.y + 6.5, hit.row.y - 6.5];
-          ls.forEach((l, i) => s.text(l, head?.cell.x ?? 208, ls.length === 1 ? hit.row.y : ys[i], size, { maxWidth: s.width - 44 - (head?.cell.x ?? 208) }));
+          ls.forEach((l, i) => s.text(l, head?.cell.x ?? 208, ls.length === 1 ? hit.row.y : ys[i], size, { maxWidth: s.width - 44 - (head?.cell.x ?? 208), cell: fundFace, bold: false }));
         }
       }
       if (v.budget_remaining) s.replaceRight("Budget Remaining to Date", v.budget_remaining, { align: "left", emptyAt: head?.cell.x ?? 208, rightEdge: s.width - 42 });
@@ -849,10 +946,11 @@ export async function overlayRfa(refBytes: Buffer, v: PackValues, attachments: s
           const bandBottom = i === nameRows.length - 1 ? exec.row.y + 12 : (r.y + nameRows[i + 1].y) / 2;
           s.restore(sigX - 18, bandBottom - 1, s.width - 42 - (sigX - 18), bandTop - bandBottom + 2, (f) => f.h < 1.5 || f.w < 1.5);
           if (!p) return;
-          const fnLines = s.wrap(p.fn, 9.1, nameX - fnX - 8).slice(0, 2);
+          const rowFace = parts.find((c) => c.s.length > 3) ?? between.flatMap((k) => k.cells)[0] ?? null;
+          const fnLines = s.wrap(p.fn, 9.1, nameX - fnX - 8, false, rowFace).slice(0, 2);
           const y0 = fnLines.length > 1 ? r.y + 6 : r.y;
-          fnLines.forEach((l, k) => s.text(l, fnX, y0 - k * 12, 9.1, { maxWidth: nameX - fnX - 8 }));
-          s.text(p.name, nameX, r.y, 9.1, { maxWidth: sigX - nameX - 10 });
+          fnLines.forEach((l, k) => s.text(l, fnX, y0 - k * 12, 9.1, { maxWidth: nameX - fnX - 8, cell: rowFace, bold: false }));
+          s.text(p.name, nameX, r.y, 9.1, { maxWidth: sigX - nameX - 10, cell: rowFace, bold: false });
         });
         // the executive approver, centred under the Executive Approval band
         const execRows = s.pos.rows.filter((r) => r.y < exec.row.y - 4 && r.y > 40 && !r.cells.some((c) => /^Request for Approval Form/i.test(c.s) || /^Revision \d/i.test(c.s)));
@@ -863,14 +961,15 @@ export async function overlayRfa(refBytes: Buffer, v: PackValues, attachments: s
         const centre = all.length ? Math.min(...all.map((c) => c.x + c.w / 2)) : 140;
         for (const c of all) s.replaceCell(c, "", { size: c.h });
         const nameY = nameCells[0]?.y ?? (labelRow ? labelRow.y + 13 : 74);
-        if (v.executive_approver) s.text(String(v.executive_approver), centre, nameY, 9.1, { align: "center", maxWidth: 200 });
-        if (v.executive_position) s.text(String(v.executive_position), centre, labelRow ? labelRow.y : nameY - 13, 9.1, { align: "center", maxWidth: 200 });
+        const execFace = nameCells[0] ?? posCell ?? null;
+        if (v.executive_approver) s.text(String(v.executive_approver), centre, nameY, 9.1, { align: "center", maxWidth: 200, cell: execFace, bold: false });
+        if (v.executive_position) s.text(String(v.executive_position), centre, labelRow ? labelRow.y : nameY - 13, 9.1, { align: "center", maxWidth: 200, cell: posCell ?? execFace, bold: false });
         if (labelRow) s.clearSignature(labelRow, exec.row.y - 8, sigX - 30);
       }
       continue;
     }
   }
-  // the description pages: written afresh from the values, page after page
+  // the description pages: the form's own bands and borders stay, the text is written afresh
   if (descPages.length) {
     const sections: { h: string; body: string[] }[] = [];
     const add = (h: string, val: unknown, numbered = false) => {
@@ -882,56 +981,84 @@ export async function overlayRfa(refBytes: Buffer, v: PackValues, attachments: s
     add("Options considered:", v.options);
     add("Next Steps:", v.next_steps, true);
     const att = lines(v.attachments).length ? lines(v.attachments) : attachments;
-    if (att.length) sections.push({ h: "Attachments", body: att.map((l, i) => (/^\d+[.)]/.test(l) ? l : `${i + 1}. ${l}`)) });
+    const attList = att.map((l, i) => (/^\d+[.)]/.test(l) ? l : `${i + 1}. ${l}`));
     descPages = descPages.slice(0, 4);
-    let pi = 0;
-    let s = descPages[pi];
-    let { top, bottom } = body(s);
-    const bandRow = s.pos.rows.find((r) => r.cells.some((c) => /^Request for Approval . Description$/i.test(c.s)));
-    // clear below the section band on the first page, the whole body on the rest
-    const clear = (sh: Sheet, t: number, b: number) => sh.page.drawRectangle({ x: 50, y: b, width: sh.width - 58, height: t - b, color: rgb(1, 1, 1), borderWidth: 0 });
-    let y = bandRow ? bandRow.y - 18 : top;
-    clear(s, bandRow ? bandRow.y - 8 : top, bottom);
+    // the writable zones, in order: each page's body, split around any heading band the form has there
+    interface Zone {
+      s: Sheet;
+      top: number;
+      bottom: number;
+      face: Cell | null;
+    }
+    const zones: Zone[] = [];
+    let attZone = null as Zone | null;
+    for (const sh of descPages) {
+      const { top, bottom } = body(sh);
+      const face = sh.pos.rows.filter((r) => r.y < top && r.y > bottom).flatMap((r) => r.cells).find((c) => !c.b && c.s.length > 12) ?? null;
+      // the text of the page goes; its bands and borders come back
+      sh.restoreText(50, bottom, sh.width - 58, top - bottom);
+      const bands = sh.pos.rows
+        .filter((r) => r.y < top && r.y > bottom)
+        .map((r) => ({ row: r, band: sh.fillAt(r.cells[0].x + 2, r.y + 2) }))
+        .filter((b): b is { row: Row; band: Fill } => !!b.band && b.band.w > sh.width * 0.5 && b.band.h < 30)
+        .sort((a, b) => b.row.y - a.row.y);
+      let y = top;
+      for (const b of bands) {
+        const heading = b.row.cells.map((c) => c.s).join(" ");
+        // the band's own heading is written back in its place
+        for (const c of b.row.cells) sh.text(c.s, c.x, c.y, c.h ?? 9.1, { color: lum(b.band.color) < DARK ? "#ffffff" : "#000000", cell: c });
+        if (y - (b.band.y + b.band.h) > 30) zones.push({ s: sh, top: y, bottom: b.band.y + b.band.h + 4, face });
+        y = b.band.y - 6;
+        if (/^Attachments/i.test(heading)) attZone = { s: sh, top: y, bottom, face };
+      }
+      if (y - bottom > 30 && !(attZone && attZone.s === sh && attZone.top === y)) zones.push({ s: sh, top: y, bottom, face });
+    }
+    if (attZone) zones.splice(zones.indexOf(attZone), 1);
+    let zi = 0;
+    let z: Zone | undefined = zones[0];
+    let y = z ? z.top - 4 : 0;
     const x = 59;
-    const width = s.width - 42 - x;
+    const width = (sh: Sheet) => sh.width - 42 - x;
     const next = () => {
-      pi++;
-      if (pi >= descPages.length) return false;
-      s = descPages[pi];
-      ({ top, bottom } = body(s));
-      clear(s, top, bottom);
-      y = top - 4;
+      zi++;
+      z = zones[zi];
+      if (!z) return false;
+      y = z.top - 4;
       return true;
     };
     const line = (t: string, bold = false, indent = 0) => {
-      if (y < bottom + lead) {
-        if (!next()) return false;
-      }
-      if (t) s.text(t, x + indent, y, size, { bold, maxWidth: width - indent });
+      if (!z) return false;
+      if (y < z.bottom + lead && !next()) return false;
+      if (t && z) z.s.text(t, x + indent, y, size, { bold, maxWidth: width(z.s) - indent, cell: z.face });
       y -= bold ? lead * 1.15 : lead * 1.2;
       return true;
     };
     outer: for (const sec of sections) {
       y -= lead * 0.6;
-      if (sec.h === "Attachments") {
-        if (y < bottom + lead * 3 && !next()) break;
-        s.page.drawRectangle({ x: x - 1, y: y - 4, width: width + 2, height: 16, color: rgbOf("#b89c67"), borderWidth: 0 });
-        s.text("Attachments", x + 4, y, 9.1, { color: "#ffffff", bold: true });
-        y -= lead * 1.5;
-        for (const b of sec.body) if (!line(b, false, 18)) break outer;
-        continue;
-      }
       if (!line(sec.h, true)) break;
       for (const p of sec.body) {
         const numbered = /^\d+[.)]\s/.test(p);
-        for (const l of s.wrap(p, size, width - (numbered ? 18 : 0))) if (!line(l, false, numbered ? 18 : 0)) break outer;
+        if (!z) break outer;
+        for (const l of z.s.wrap(p, size, width(z.s) - (numbered ? 18 : 0), false, z.face)) if (!line(l, false, numbered ? 18 : 0)) break outer;
         y -= lead * 0.35;
       }
     }
-    // pages of the reference that were not needed are left blank below their header
-    for (let k = pi + 1; k < descPages.length; k++) {
-      const { top: t, bottom: b } = body(descPages[k]);
-      clear(descPages[k], t, b);
+    // the attachments list: under the form's own Attachments band, or after the text when the form has none
+    if (attList.length) {
+      if (attZone) {
+        z = attZone as Zone;
+        y = z.top - 6;
+      } else if (z) {
+        y -= lead * 0.6;
+        if (y < z.bottom + lead * 3) next();
+        if (z) {
+          z.s.page.drawRectangle({ x: x - 1, y: y - 4, width: width(z.s) + 2, height: 16, color: rgbOf("#b89c67"), borderWidth: 0 });
+          z.s.text("Attachments", x + 4, y, 9.1, { color: "#ffffff", bold: true, cell: z.face });
+          y -= lead * 1.5;
+        }
+      }
+      zi = zones.length;
+      for (const b of attList) if (!line(b, false, 18)) break;
     }
   }
   return Buffer.from(await o.l.pdf.save({ useObjectStreams: true }));
