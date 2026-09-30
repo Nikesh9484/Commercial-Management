@@ -71,7 +71,9 @@ export function PackEditor({ type, initial, docs: initialDocs, canManage, templa
   const [head, setHead] = useState({ revision: initial.revision, status: initial.status, fileName: initial.fileName });
   const [docs, setDocs] = useState<PackDoc[]>(initialDocs);
   const [busy, setBusy] = useState(false);
-  const [progress, setProgress] = useState<string | null>(null);
+  // every file in flight, by its path: uploads may run for several entries at the same time
+  const [inflight, setInflight] = useState<Record<string, string>>({});
+  const progress = Object.keys(inflight).length ? `${Object.keys(inflight).length} file${Object.keys(inflight).length === 1 ? "" : "s"} – ${Object.values(inflight).slice(0, 2).join(" · ")}${Object.keys(inflight).length > 2 ? " …" : ""}` : null;
   const [extra, setExtra] = useState(initial.extraSlots);
   const slots = slotsFor({ ...type, source: "changes", sourceLabel: "", description: "", fields: [], groups: type.groups, packOrder: type.packOrder, key: type.key as never }, extra);
   const packName = head.fileName.trim() || initial.defaultFileName;
@@ -118,13 +120,18 @@ export function PackEditor({ type, initial, docs: initialDocs, canManage, templa
     const CHUNK = 256 * 1024;
     let added = 0;
     const filled = new Set<string>();
-    for (let n = 0; n < picked.length; n++) {
-      const f = picked[n];
+    const mark = (rel: string, text: string | null) => setInflight((cur) => {
+      const next = { ...cur };
+      if (text === null) delete next[rel];
+      else next[rel] = text;
+      return next;
+    });
+    const one = async (f: File) => {
       const rel = (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name;
       const count = Math.max(1, Math.ceil(f.size / CHUNK));
       let uploadId = "";
       for (let i = 0; i < count; i++) {
-        setProgress(`${n + 1} of ${picked.length}: ${rel}${count > 1 ? ` (part ${i + 1} of ${count})` : ""}`);
+        mark(rel, `${rel}${count > 1 ? ` (part ${i + 1} of ${count})` : ""}`);
         const data = await toBase64(f.slice(i * CHUNK, (i + 1) * CHUNK));
         let j: { error?: string; uploadId?: string; doc?: PackDoc & { filled?: string[] } } = {};
         try {
@@ -146,8 +153,13 @@ export function PackEditor({ type, initial, docs: initialDocs, canManage, templa
           added++;
         }
       }
-    }
-    setProgress(null);
+      mark(rel, null);
+    };
+    // three files at a time; a click on another entry's Upload starts its own batch alongside
+    const queue = [...picked];
+    await Promise.all(Array.from({ length: Math.min(3, queue.length) }, async () => {
+      for (let f = queue.shift(); f; f = queue.shift()) await one(f);
+    }));
     if (added) toast(`${added} file${added === 1 ? "" : "s"} added – ${filled.size} value${filled.size === 1 ? "" : "s"} read from ${added === 1 ? "it" : "them"}.`);
     router.refresh();
   }
@@ -198,9 +210,15 @@ export function PackEditor({ type, initial, docs: initialDocs, canManage, templa
           </label>
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-1.5">
-          <a className="btn btn-sm btn-secondary" href={`/api/packs/output?case=${initial.id}&format=docx`} title={templateName ? `Written into the Word template ${templateName}` : "Word document"}>
-            <FileText size={13} /> Word
-          </a>
+          {templateName && /\.(xlsx|xlsm|xltx|xltm)$/i.test(templateName) ? (
+            <a className="btn btn-sm btn-secondary" href={`/api/packs/output?case=${initial.id}&format=xlsx`} title={`Written into the RSG workbook ${templateName}, every tab kept`}>
+              <FileText size={13} /> Excel form
+            </a>
+          ) : (
+            <a className="btn btn-sm btn-secondary" href={`/api/packs/output?case=${initial.id}&format=docx`} title={templateName ? `Written into the Word template ${templateName}` : "Word document"}>
+              <FileText size={13} /> Word
+            </a>
+          )}
           <a className="btn btn-sm btn-pdf" href={`/api/packs/output?case=${initial.id}&format=pdf`} title="The document in the RSG layout">
             <FileDown size={13} /> PDF
           </a>
@@ -231,18 +249,22 @@ export function PackEditor({ type, initial, docs: initialDocs, canManage, templa
             <div className="text-[11px] font-semibold uppercase tracking-wide text-muted">Upload entries · {docs.length} files</div>
             {canManage && (
               <>
+                <input type="file" multiple className="hidden" id={`files-${initial.id}`} onChange={(e) => { upload(e.target.files); e.target.value = ""; }} />
+                <button className="btn btn-xs btn-secondary" onClick={() => (document.getElementById(`files-${initial.id}`) as HTMLInputElement | null)?.click()} title="Several files at once: each is filed under the entry its name says (PVO, RFC, RFA, cost, drawing …); move any that lands wrongly">
+                  <Upload size={12} /> Upload files
+                </button>
                 <input type="file" multiple className="hidden" id={`dir-${initial.id}`} {...({ webkitdirectory: "", directory: "" } as Record<string, string>)} onChange={(e) => { upload(e.target.files); e.target.value = ""; }} />
-                <button className="btn btn-xs btn-secondary" onClick={() => (document.getElementById(`dir-${initial.id}`) as HTMLInputElement | null)?.click()} disabled={!!progress} title="A folder holding every entry: each file is filed under the entry its folder or name says (1. …, 2. …)">
+                <button className="btn btn-xs btn-secondary" onClick={() => (document.getElementById(`dir-${initial.id}`) as HTMLInputElement | null)?.click()} title="A folder holding every entry: each file is filed under the entry its folder or name says (1. …, 2. …)">
                   <FolderUp size={12} /> Upload a folder
                 </button>
               </>
             )}
           </div>
-          {progress && <div className="mb-2 text-navy">Uploading {progress}…</div>}
+          {progress && <div className="mb-2 text-navy">Uploading {progress} – you can keep adding files to other entries meanwhile.</div>}
           <div className="mb-2 text-muted">Everything in the {type.short} is read from these files. The compiled pack is made of: {type.packOrder.join(" · ")}.</div>
           <ol className="space-y-2">
             {slots.map((slot) => (
-              <SlotRow key={slot.key} slot={slot} docs={docs.filter((d) => d.slot === slot.key)} slots={slots} canManage={canManage} busy={!!progress} onUpload={(files) => upload(files, slot.key)} onMove={(d, s) => patchDoc(d, { slot: s })} onPages={(d, p) => patchDoc(d, { pages: p })} onRemove={removeDoc} />
+              <SlotRow key={slot.key} slot={slot} docs={docs.filter((d) => d.slot === slot.key)} slots={slots} canManage={canManage} busy={false} onUpload={(files) => upload(files, slot.key)} onMove={(d, s) => patchDoc(d, { slot: s })} onPages={(d, p) => patchDoc(d, { pages: p })} onRemove={removeDoc} />
             ))}
           </ol>
           {canManage && (

@@ -1,3 +1,4 @@
+import path from "node:path";
 /**
  * A PDF read by position rather than by text order: the RSG forms are tables, and the value of a
  * cell sits on the same row to the right of its label (or in the rows beneath a heading). pdf.js
@@ -26,12 +27,21 @@ export interface Row {
 export interface PosPage {
   no: number;
   rows: Row[];
+  /** page size in points */
+  w?: number;
+  h?: number;
+}
+
+/** where pdf.js finds its standard fonts and CMaps – given outright, so the bundled server finds them too */
+export function pdfjsOptions(): Record<string, unknown> {
+  const base = path.join(process.cwd(), "node_modules", "pdfjs-dist");
+  return { useSystemFonts: true, disableFontFace: true, isEvalSupported: false, standardFontDataUrl: `${base}/standard_fonts/`, cMapUrl: `${base}/cmaps/`, cMapPacked: true, verbosity: 0 };
 }
 
 export async function readPositioned(bytes: Buffer): Promise<PosPage[]> {
   try {
     const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-    const doc = await pdfjs.getDocument({ data: new Uint8Array(bytes), useSystemFonts: true, disableFontFace: true, isEvalSupported: false }).promise;
+    const doc = await pdfjs.getDocument({ data: new Uint8Array(bytes), ...pdfjsOptions() }).promise;
     const pages: PosPage[] = [];
     for (let p = 1; p <= doc.numPages; p++) {
       const page = await doc.getPage(p);
@@ -73,12 +83,14 @@ export async function readPositioned(bytes: Buffer): Promise<PosPage[]> {
         r.cells = merged;
       }
       rows.sort((a, b) => b.y - a.y);
-      pages.push({ no: p, rows });
+      const view = page.view as number[] | undefined;
+      pages.push({ no: p, rows, w: view ? Math.abs(view[2] - view[0]) : undefined, h: view ? Math.abs(view[3] - view[1]) : undefined });
       page.cleanup();
     }
     await doc.destroy();
     return pages;
-  } catch {
+  } catch (e) {
+    console.error("pdf read failed:", e instanceof Error ? e.message : e);
     return [];
   }
 }
@@ -327,7 +339,7 @@ export async function readFills(bytes: Buffer, pageNos?: number[]): Promise<Map<
   const out = new Map<number, Fill[]>();
   try {
     const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-    const doc = await pdfjs.getDocument({ data: new Uint8Array(bytes), useSystemFonts: true, disableFontFace: true, isEvalSupported: false }).promise;
+    const doc = await pdfjs.getDocument({ data: new Uint8Array(bytes), ...pdfjsOptions() }).promise;
     const OPS = pdfjs.OPS as Record<string, number>;
     const FILLS = new Set([OPS.fill, OPS.eoFill, OPS.fillStroke, OPS.eoFillStroke, OPS.closeFillStroke, OPS.closeEOFillStroke]);
     const STROKES = new Set([OPS.stroke, OPS.closeStroke, OPS.fillStroke, OPS.eoFillStroke, OPS.closeFillStroke, OPS.closeEOFillStroke]);

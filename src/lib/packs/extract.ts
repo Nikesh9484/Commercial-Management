@@ -1,5 +1,5 @@
 import { readPositioned, valueRight, valueBelow, numericRowsAfter, peopleUnder, peopleWithHeadings, moneyOf, findLabel, type PosPage } from "./positioned";
-import type { PackValues } from "./shared";
+import { REFERENCE_SLOT, type PackType, type PackValues, type TemplateInspection } from "./shared";
 
 /**
  * What the dashboard reads out of the files uploaded into a pack – no AI, no typing: the last
@@ -56,6 +56,18 @@ export function classifyDoc(pages: PosPage[], slotHint: string): DocKind {
   if (/grand total|unit price|unite price|\bqty\b|cost proposal|bill of quantit|\bboq\b|rate breakdown/.test(all)) return "cost";
   if (slotHint === "cost" || slotHint === "rfc" || slotHint === "details") return slotHint === "cost" ? "cost" : "rfc";
   return "unknown";
+}
+
+/** A PDF set as a category's template (the last approved pack): what the dashboard reads from it. */
+export async function inspectPdfTemplate(bytes: Buffer, type: PackType): Promise<TemplateInspection> {
+  const pages = await positioned(bytes);
+  if (!pages.length) throw new Error("no text");
+  const kind = classifyDoc(pages, REFERENCE_SLOT);
+  const r = kind === "dvo" ? readReferenceDvo(pages) : kind === "rfa" ? readReferenceRfa(pages) : kind === "ear" ? readReferenceEar(pages) : readReferencePvo(pages);
+  const byKey = new Map(type.fields.map((f) => [f.key, f]));
+  const labels = Object.keys(r.values).filter((k) => byKey.has(k)).map((k) => ({ label: byKey.get(k)!.label, field: k }));
+  const taken = new Set(labels.map((l) => l.field));
+  return { placeholders: [], labels, unmatched: type.fields.filter((f) => !taken.has(f.key)).map((f) => f.key) };
 }
 
 /* ------------------------------------------------------------------ */
@@ -380,6 +392,97 @@ export function readRfc(pages: PosPage[]): Reading {
   if (/^\d+/.test(ti)) set(r, "time_impact", ti.replace(/\D.*$/, ""), src);
   return r;
 }
+
+/**
+ * A Request for Approval (RSG-PR-FRM-0004) put in as the change itself: the PVO's title, scope and
+ * reason come from its contract name, its purpose and its background and justification.
+ */
+export function readRfaForChange(pages: PosPage[]): Reading {
+  const r: Reading = { values: {}, sources: {} };
+  const src = "RFA";
+  set(r, "rfc_ref", valueRight(pages, "RFA Form Reference", { notLabels: ["Submittal Date"] }), src);
+  set(r, "requesting_department", valueRight(pages, "Requesting Department"), src);
+  set(r, "title", valueRight(pages, "Contract Name") || valueRight(pages, /^(Subject|Title):?$/i), src);
+  // the purpose sits in the big cell between the Item / Description heading and Requesting Department
+  const first = pages[0];
+  if (first) {
+    const head = first.rows.find((row) => row.cells.some((c) => /^Description$/i.test(c.s)) && row.cells.some((c) => /^Item$/i.test(c.s)));
+    const dept = first.rows.find((row) => row.cells.some((c) => /^Requesting Department$/i.test(c.s)));
+    if (head && dept) {
+      const descX = head.cells.find((c) => /^Description$/i.test(c.s))!.x;
+      const body = first.rows.filter((row) => row.y < head.y && row.y > dept.y).map((row) => row.cells.filter((c) => c.x >= descX - 6).map((c) => c.s).join(" ").trim());
+      const text = body.join("\n").replace(/\n{2,}/g, "\n").trim();
+      const cut = text.search(/Requested Approvals?:?/i);
+      const purpose = (cut >= 0 ? text.slice(0, cut) : text).trim();
+      const requested = cut >= 0 ? text.slice(cut).replace(/^Requested Approvals?:?\s*/i, "").trim() : "";
+      set(r, "scope", unwrap(purpose), src);
+      set(r, "purpose", unwrap(purpose), src);
+      set(r, "requested_approvals", unwrap(requested), src);
+    }
+  }
+  const background = unwrap(valueBelow(pages, /^Background:?$/i, [/^Justification/i, /^Options/i, /^Next Steps/i, /^Attachments/i], 40));
+  const justification = unwrap(valueBelow(pages, /^Justification( for .*)?:?$/i, [/^Next Steps/i, /^Attachments/i, /^Options/i, /^Background/i], 40));
+  set(r, "background", background, src);
+  set(r, "justification", justification, src);
+  set(r, "reason", [background, justification].filter(Boolean).join("\n\n") || (requestedOf(r) ? `As requested for approval: ${requestedOf(r)}` : ""), src);
+  set(r, "contractual_basis", valueBelow(pages, /^(Contractual basis|Contract basis)/i, [/^Next Steps/i, /^Attachments/i], 4), src);
+  const price = valueRight(pages, /^Contract Price$/i);
+  if (money(price)) set(r, "rom_estimate", money(price), src);
+  const fund = [valueRight(pages, "Project Budget / Funding Source"), valueBelow(pages, "Project Budget / Funding Source", ["Budget Remaining"], 3)].find((x) => x.length > 8) ?? "";
+  set(r, "funding_source", unwrap(fund).replace(/\n/g, " "), src);
+  return r;
+}
+const requestedOf = (r: Reading) => String(r.values.requested_approvals ?? "").split(/\n/)[0]?.trim() ?? "";
+/** lines that were only wrapped on the page are joined again; list items and sentences keep their breaks */
+function unwrap(text: string): string {
+  const out: string[] = [];
+  for (const raw of text.split(/\n/)) {
+    const l = raw.trim();
+    if (!l) {
+      out.push("");
+      continue;
+    }
+    const prev = out[out.length - 1];
+    if (prev && !/[.:;!?]$/.test(prev) && !/^(\d+[.)]|[•·\-–]|[a-z][.)])\s/.test(l) && !/^[A-Z][A-Za-z ]{0,40}:$/.test(l)) out[out.length - 1] = `${prev} ${l}`;
+    else out.push(l);
+  }
+  return out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+/**
+ * Where a change pack (an RFC, an RFA or an approved PVO) carries its own cost proposal and drawings:
+ * the pages with priced items, and the landscape or near-empty pages that hold drawings.
+ */
+export function packParts(pages: PosPage[]): { cost: number[]; drawings: number[] } {
+  const cost: number[] = [];
+  const drawings: number[] = [];
+  for (const p of pages) {
+    const text = p.rows.flatMap((r) => r.cells.map((c) => c.s)).join(" ");
+    const cells = p.rows.reduce((n, r) => n + r.cells.length, 0);
+    const money = (text.match(/\d{1,3}(,\d{3})+(\.\d{2})?/g) ?? []).length;
+    const isForm = /RSG-[A-Z]{2}-FRM|Proposed Variation Order \(PVO\)|Variation Order Assessment Form|Determination of Variation Order|Request for Approval Form|^ANNEXURE|CHANGE LOG|BUDGET PARTICULARS|Yours faithfully/i.test(text);
+    const priced = /unit (price|rate)|\bqty\b|quantity|bill of quantit|\bboq\b|rate breakdown|grand total|price breakdown|cost break ?down|\bu\/?rate\b/i.test(text) && money >= 3;
+    const landscape = !!p.w && !!p.h && p.w > p.h;
+    const big = !!p.w && !!p.h && Math.max(p.w, p.h) >= 1000;
+    const drawn = /\b(drawing no|dwg|sketch|section [a-z]|elevation|plan view|typical detail|scale\s*[:=]?\s*1\s*[:/]\s*\d+|\bnts\b|revision|title block)\b/i.test(text);
+    const cover = /^ANNEXURE|CLASSIFICATION: INTERNAL/i.test(text) && cells < 30;
+    if (isForm && !big) continue;
+    if (priced) cost.push(p.no);
+    else if (!cover && ((landscape && (drawn || big || cells < 25)) || (big && cells < 400) || (cells < 6 && p.no > 1))) drawings.push(p.no);
+  }
+  return { cost, drawings };
+}
+/** "3-5, 8" for a list of page numbers */
+export const pageSpec = (nos: number[]): string => {
+  const out: string[] = [];
+  for (let i = 0; i < nos.length; i++) {
+    let j = i;
+    while (j + 1 < nos.length && nos[j + 1] === nos[j] + 1) j++;
+    out.push(j > i ? `${nos[i]}-${nos[j]}` : String(nos[i]));
+    i = j;
+  }
+  return out.join(", ");
+};
 
 /** The cost assessment: the last "total" row's amount is the value; a bracketed total is an omission. */
 export function readCost(pages: PosPage[], title: string): Reading {

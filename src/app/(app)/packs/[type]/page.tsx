@@ -34,6 +34,7 @@ export default async function PackCategoryPage({ params }: { params: Promise<{ t
   }
   const canManage = canManagePacks(user);
   const template = getTemplate(t.key);
+  const templateIsExcel = !!template && /\.(xlsx|xlsm|xltx|xltm)$/i.test(template.name);
   let inspection: TemplateInspection | null = null;
   if (template) {
     try {
@@ -131,9 +132,15 @@ export default async function PackCategoryPage({ params }: { params: Promise<{ t
                     </span>
                   </td>
                   <td className="whitespace-nowrap px-3 py-2 text-right">
-                    <a className="btn btn-xs btn-secondary" href={`/api/packs/output?case=${c.id}&format=docx`} title="The form as a Word file (written into the RSG template when one is uploaded)">
-                      <FileText size={12} /> Word
-                    </a>{" "}
+                    {templateIsExcel ? (
+                      <a className="btn btn-xs btn-secondary" href={`/api/packs/output?case=${c.id}&format=xlsx`} title={`Written into the RSG workbook ${template?.name ?? ""}, every tab kept`}>
+                        <FileText size={12} /> Excel
+                      </a>
+                    ) : (
+                      <a className="btn btn-xs btn-secondary" href={`/api/packs/output?case=${c.id}&format=docx`} title="The form as a Word file (written into the RSG template when one is uploaded)">
+                        <FileText size={12} /> Word
+                      </a>
+                    )}{" "}
                     <a className="btn btn-xs btn-pdf" href={`/api/packs/output?case=${c.id}&format=pdf`} title="The form as a PDF">
                       <FileDown size={12} /> PDF
                     </a>{" "}

@@ -3,15 +3,18 @@ import { computeCostReport } from "../cost-report/compute";
 import { nowIso } from "../format";
 import type { UserInfo } from "../registers/types";
 import { buildDocx, buildEarDocx, fillTemplate } from "./word";
+import { fillExcelTemplate, isExcelTemplate } from "./excel";
 import { buildCompiledPack, renderFormPdf, safeFileName, type FormMeta, type PackPart, type PartItem } from "./pdf";
 import { renderBasisPage, renderBudgetParticulars, renderChangeLog, renderDraftVo, renderDvoForm, renderEarReport, renderIndexPage, renderPvoForm, renderRfaForm, type AccRow } from "./forms";
 import { changeLogRows, type ChangeLogRow } from "./data";
 import { overlayDvo, overlayPvo, overlayRfa } from "./overlay";
+import { packParts, pageSpec, positioned } from "./extract";
 import { caseValues, getTemplate, listDocs, readDocBytes, readTemplateBytes, type PackCase } from "./store";
+import { ValidationError } from "../registers/engine";
 import { defaultPackFileName, packType, REFERENCE_SLOT, slotsFor, type PackDoc, type PackType, type PackValues } from "./shared";
 
-/** The three outputs of a pack: the Word document, the PDF document and the compiled PDF pack. */
-export type OutputFormat = "docx" | "pdf" | "pack";
+/** The outputs of a pack: the Word document, the Excel form (when the template is a workbook), the PDF document and the compiled PDF pack. */
+export type OutputFormat = "docx" | "xlsx" | "pdf" | "pack";
 
 export function outputMeta(c: PackCase, user: UserInfo): FormMeta {
   const p = getDb().prepare("SELECT code, name FROM programmes WHERE id = ?").get(c.programme_id) as { code: string; name: string } | undefined;
@@ -71,7 +74,10 @@ function referenceBytes(c: PackCase, t: PackType): Buffer | null {
   const docs = listDocs(c.id).filter((d) => /\.pdf$/i.test(d.name));
   const inSlot = docs.find((d) => d.slot === REFERENCE_SLOT) ?? (t.key === "dvo" ? undefined : docs.find((d) => d.slot === "pvo"));
   const d = inSlot ?? docs.find((d) => (t.key === "pvo" && /pvo/i.test(d.name) && !/dvo/i.test(d.name)) || (t.key === "dvo" && /dvo/i.test(d.name)) || (t.key === "rfa" && /rfa/i.test(d.name)));
-  return d ? readDocBytes(d) : null;
+  if (d) return readDocBytes(d);
+  // nothing on the pack itself: the PDF set as the category's template, when there is one
+  const tpl = getTemplate(t.key);
+  return tpl && /\.pdf$/i.test(tpl.name) ? readTemplateBytes(tpl) : null;
 }
 
 /** The category of the cost line behind the pack (the ACC table row this PVO sits on). */
@@ -128,6 +134,35 @@ export async function renderDocumentPdf(c: PackCase, t: PackType, values: PackVa
 }
 
 const itemsOf = (docs: PackDoc[], slot: string): PartItem[] => docs.filter((d) => d.slot === slot).map((d) => ({ name: d.name, bytes: readDocBytes(d), pages: d.pages, mime: d.mime }));
+
+/**
+ * The cost proposal and the drawings of Annexure 4: the files uploaded for them, or – when nothing
+ * was uploaded – the pages that carry them inside the RFC / RFA (for a DVO, the approved PVO pack).
+ * A separate upload always supersedes what the change pack holds.
+ */
+async function costAndDrawings(docs: PackDoc[], carrierSlots: string[], carrierLabel: string): Promise<PartItem[]> {
+  const cost = itemsOf(docs, "cost");
+  const drawings = itemsOf(docs, "drawings");
+  if (cost.length && drawings.length) return [...cost, ...drawings];
+  const out: PartItem[] = [...cost];
+  const carriers = docs.filter((d) => carrierSlots.includes(d.slot) && /\.pdf$/i.test(d.name));
+  let fromCost: PartItem[] = [];
+  let fromDrawings: PartItem[] = [];
+  for (const d of carriers) {
+    const bytes = readDocBytes(d);
+    if (!bytes) continue;
+    const parts = packParts(await positioned(bytes));
+    if (parts.cost.length) fromCost.push({ name: `Cost proposal – pages ${pageSpec(parts.cost)} of ${d.name}`, bytes, pages: pageSpec(parts.cost), mime: d.mime, note: `taken from the ${carrierLabel}` });
+    if (parts.drawings.length) fromDrawings.push({ name: `Drawings – pages ${pageSpec(parts.drawings)} of ${d.name}`, bytes, pages: pageSpec(parts.drawings), mime: d.mime, note: `taken from the ${carrierLabel}` });
+  }
+  if (!cost.length) out.push(...fromCost);
+  else fromCost = [];
+  if (drawings.length) {
+    out.push(...drawings);
+    fromDrawings = [];
+  } else out.push(...fromDrawings);
+  return out;
+}
 const gen = (name: string, bytes: Buffer): PartItem => ({ name, bytes, mime: "application/pdf" });
 
 /** The pack of one category: what opens it and its annexures or parts, in the order the approved packs follow. */
@@ -142,7 +177,7 @@ async function assemble(c: PackCase, t: PackType, values: PackValues, meta: Form
       { no: 1, label: "Draft Variation Order (VO) – to be signed by the ER upon approval of the PVO", hint: "The Employer's Instruction letter and the Variation Order form, drafted from this PVO", style: "annexure", items: [gen("Draft VO and Employer's Instruction letter", await renderDraftVo(t, values, meta))] },
       { no: 2, label: "Change assessment pack", hint: "The Request for Change and the revise-and-resubmit updates", style: "annexure", items: [...itemsOf(docs, "rfc"), ...itemsOf(docs, "resubmit")] },
       { no: 3, label: "Contractual basis for variation entitlement", hint: "The clause relied on, with the contract pages where attached", style: "annexure", items: [gen("Contractual basis", await renderBasisPage(t, values, meta))] },
-      { no: 4, label: "Particulars of 'estimated cost & time impact'", hint: "The cost proposal and the drawings", style: "annexure", items: [...itemsOf(docs, "cost"), ...itemsOf(docs, "drawings")] },
+      { no: 4, label: "Particulars of 'estimated cost & time impact'", hint: "The cost proposal and the drawings – uploaded, or the pages inside the RFC / RFA", style: "annexure", items: await costAndDrawings(docs, ["rfc"], "RFC / RFA") },
       { no: 5, label: "Budget particulars / ACC cost worksheet", hint: "Where the budget comes from and where it goes", style: "annexure", items: [gen("Budget particulars", await renderBudgetParticulars(t, values, meta))] },
       { no: 6, label: "Change log", hint: "Every change on the contract with its RFC, PVO, VO and DVO", style: "annexure", items: [gen("Change log", await renderChangeLog(t, values, meta, logRows(c)))] },
     ];
@@ -152,7 +187,7 @@ async function assemble(c: PackCase, t: PackType, values: PackValues, meta: Form
   if (t.key === "dvo") {
     const ann: PackPart[] = [
       { no: 1, label: "Approved PVO & VO – cover page + WF approvals only", hint: "The approved PVO with its workflow approvals, and the revise-and-resubmit updates", style: "annexure", items: [...itemsOf(docs, "pvo"), ...itemsOf(docs, "resubmit")] },
-      { no: 2, label: "Cost impact – Employer's assessment and determination", hint: "The cost proposal and the drawings behind the determined value", style: "annexure", items: [...itemsOf(docs, "cost"), ...itemsOf(docs, "drawings")] },
+      { no: 2, label: "Cost impact – Employer's assessment and determination", hint: "The cost proposal and the drawings behind the determined value – uploaded, or the pages inside the approved PVO pack", style: "annexure", items: await costAndDrawings(docs, ["pvo"], "approved PVO pack") },
       { no: 3, label: "Budget particulars", hint: "Where the budget comes from and where it goes", style: "annexure", items: [gen("Budget particulars", await renderBudgetParticulars(t, values, meta))] },
       { no: 4, label: "Change log", hint: "Every change on the contract with its RFC, PVO, VO and DVO", style: "annexure", items: [gen("Change log", await renderChangeLog(t, values, meta, logRows(c)))] },
     ];
@@ -187,9 +222,17 @@ export async function renderOutput(c: PackCase, format: OutputFormat, user: User
   const meta = outputMeta(c, user);
   const base = outputFileBase(c);
   const DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  const tpl = getTemplate(c.pack_type);
+  const tplExcel = !!tpl && isExcelTemplate(tpl.name);
+  if (format === "xlsx") {
+    const bytes = tpl && tplExcel ? readTemplateBytes(tpl) : null;
+    if (!tpl || !bytes) throw new ValidationError("No Excel template has been uploaded for this category – upload the RSG form as a workbook on the category page.");
+    const ext = tpl.name.match(/\.(xlsx|xlsm|xltx|xltm)$/i)?.[1].toLowerCase() ?? "xlsx";
+    const mime = ext === "xlsm" || ext === "xltm" ? "application/vnd.ms-excel.sheet.macroEnabled.12" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    return { bytes: await fillExcelTemplate(bytes, t, values), fileName: safeFileName(base, ext === "xltx" ? "xlsx" : ext === "xltm" ? "xlsm" : ext), mime, note: `written into the RSG workbook ${tpl.name}` };
+  }
   if (format === "docx") {
-    const tpl = getTemplate(c.pack_type);
-    const bytes = tpl ? readTemplateBytes(tpl) : null;
+    const bytes = tpl && /\.(docx|dotx|docm)$/i.test(tpl.name) ? readTemplateBytes(tpl) : null;
     if (tpl && bytes) return { bytes: await fillTemplate(bytes, t, values), fileName: safeFileName(base, "docx"), mime: DOCX, note: `written into the RSG template ${tpl.name}` };
     if (t.key === "eot_ear" || t.key === "cost_ear") return { bytes: await buildEarDocx(t, values, meta), fileName: safeFileName(base, "docx"), mime: DOCX, note: "Employer's Assessment Report with its cover letter" };
     return { bytes: await buildDocx(t, values, meta), fileName: safeFileName(base, "docx"), mime: DOCX, note: "built-in layout (no template uploaded for this category)" };

@@ -38,7 +38,6 @@ export function PackTemplateCard({ type, template, inspection, canManage }: { ty
   async function upload(list: FileList | null) {
     const f = list?.[0];
     if (!f) return;
-    if (!/\.(docx|dotx|docm)$/i.test(f.name)) return toast("The template must be a Word file (.docx).", "error");
     setBusy(true);
     const CHUNK = 256 * 1024;
     const count = Math.max(1, Math.ceil(f.size / CHUNK));
@@ -75,11 +74,11 @@ export function PackTemplateCard({ type, template, inspection, canManage }: { ty
           {template ? (
             <div className="mt-1 text-sm font-semibold text-ink">{template.name}</div>
           ) : (
-            <div className="mt-1 text-sm font-semibold text-ink">No template uploaded – the built-in layout is used</div>
+            <div className="mt-1 text-sm font-semibold text-ink">No template uploaded – upload the RSG form as an Excel workbook (every tab is kept), a Word file, or the last approved pack as a PDF</div>
           )}
           {template && (
             <div className="text-muted">
-              {(template.size / 1024).toFixed(0)} KB · uploaded {formatDate(template.created_at)} by {template.created_by}
+              {(template.size / 1024).toFixed(0)} KB · uploaded {formatDate(template.created_at)} by {template.created_by} · {/\.(xlsx|xlsm|xltx|xltm)$/i.test(template.name) ? "Excel workbook – every pack is written into a copy of it, all tabs kept" : /\.pdf$/i.test(template.name) ? "PDF – read as the last approved pack for every new pack that has none of its own, and its form pages carry the new values" : /\.(docx|dotx|docm)$/i.test(template.name) ? "Word file – every pack is written into a copy of it" : "kept for reference – the built-in layout is used"}
             </div>
           )}
         </div>
@@ -91,9 +90,9 @@ export function PackTemplateCard({ type, template, inspection, canManage }: { ty
           )}
           {canManage && (
             <>
-              <input ref={input} type="file" accept=".docx,.dotx,.docm" className="hidden" onChange={(e) => { upload(e.target.files); e.target.value = ""; }} />
+              <input ref={input} type="file" className="hidden" onChange={(e) => { upload(e.target.files); e.target.value = ""; }} />
               <button className="btn btn-xs btn-primary" onClick={() => input.current?.click()} disabled={busy}>
-                <FileUp size={12} /> {busy ? "Uploading…" : template ? "Replace template" : "Upload RSG template (.docx)"}
+                <FileUp size={12} /> {busy ? "Uploading…" : template ? "Replace template" : "Upload RSG template (Excel, Word or PDF)"}
               </button>
               {template && (
                 <button className="btn btn-xs btn-ghost text-red-700" onClick={remove} title="Remove the template">
@@ -143,7 +142,7 @@ export function PackTemplateCard({ type, template, inspection, canManage }: { ty
         <button className="text-accent hover:underline" onClick={() => setShowFields((v) => !v)}>
           {showFields ? "Hide" : "Show"} the field keys for this form
         </button>
-        <span className="ml-1">– write {"{{key}}"} anywhere in the RSG template, or leave the form as it is: a label cell next to a blank cell is filled by its wording.</span>
+        <span className="ml-1">– write {"{{key}}"} in any cell of the RSG template, or leave the form as it is: the cell beside a label (beneath it for a paragraph) is filled by the label&apos;s wording, the item rows, the signatory rows and every tab are recognised, and cells holding formulas are left to work themselves out.</span>
         {showFields && (
           <table className="mt-2 w-full text-[11px]">
             <tbody>

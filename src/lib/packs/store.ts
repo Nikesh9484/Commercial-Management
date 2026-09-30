@@ -10,7 +10,7 @@ import type { UserInfo } from "../registers/types";
 import { formatPages, keyPages, readPdfPages } from "../kpi/pages";
 import type { PosPage } from "./positioned";
 import { PACK_STATUSES, packType, slotsFor, REFERENCE_SLOT, type PackCase, type PackDoc, type PackTemplate, type PackTypeKey, type PackValues, type TemplateInspection } from "./shared";
-import { classifyDoc, positioned, readApprovedPvoForDvo, readCost, readReferenceDvo, readReferenceEar, readReferencePvo, readReferenceRfa, readRfc, type DocKind, type Reading } from "./extract";
+import { classifyDoc, packParts, positioned, readApprovedPvoForDvo, readCost, readReferenceDvo, readReferenceEar, readReferencePvo, readReferenceRfa, readRfaForChange, readRfc, type DocKind, type Reading } from "./extract";
 import { autoValues } from "./data";
 
 export * from "./shared";
@@ -126,7 +126,6 @@ export function readTemplateBytes(t: PackTemplate): Buffer | null {
 export function saveTemplate(type: PackTypeKey, input: { name: string; bytes: Buffer; mime?: string; inspection: TemplateInspection }, user: UserInfo): PackTemplate {
   assertManage(user);
   if (!packType(type)) throw new ValidationError("Unknown pack category.");
-  if (!/\.(docx|dotx|docm)$/i.test(input.name)) throw new ValidationError("The template must be a Word file (.docx). Save the RSG form as .docx and upload it again.");
   const d = db();
   const prior = d.prepare("SELECT * FROM pack_templates WHERE pack_type = ?").all(type) as PackTemplate[];
   const stamp = nowIso();
@@ -281,6 +280,8 @@ export function guessSlot(type: PackTypeKey, relPath: string, extra = 0): string
     }
   }
   if (/\brfc\b|\bcrf\b|request for change/.test(name) && slots.some((s) => s.key === "rfc")) return "rfc";
+  // an RFA stands as the change behind a PVO when the pack has no RFA entry of its own
+  if (/\brfa\b|request for approval/.test(name) && !slots.some((s) => s.key === "details") && slots.some((s) => s.key === "rfc")) return "rfc";
   if (/\bpvo\b/.test(name) && slots.some((s) => s.key === "pvo")) return "pvo";
   if (/cost|proposal|boq|estimate|rom|price/.test(name) && slots.some((s) => s.key === "cost")) return "cost";
   if (/drawing|dwg|sketch|layout|plan/.test(name) && slots.some((s) => s.key === "drawings")) return "drawings";
@@ -357,14 +358,22 @@ export async function rebuildValues(caseId: number, user: UserInfo): Promise<{ v
     if (pages.length) read.push({ doc: d, pages, kind: classifyDoc(pages, d.slot) });
   }
   const readAll = async (slot: string) => {
-    const want: DocKind[] = slot === REFERENCE_SLOT ? (t.key === "pvo" ? ["pvo"] : t.key === "dvo" ? ["dvo"] : t.key === "rfa" ? ["rfa"] : t.key === "eot_ear" || t.key === "cost_ear" ? ["ear"] : ["pvo", "dvo"]) : slot === "pvo" ? ["pvo"] : slot === "rfc" || slot === "details" ? ["rfc"] : slot === "cost" ? ["cost"] : [];
+    // the change behind a PVO or DVO may be an RFC or an RFA – both are read for the scope and reason
+    const want: DocKind[] = slot === REFERENCE_SLOT ? (t.key === "pvo" ? ["pvo"] : t.key === "dvo" ? ["dvo"] : t.key === "rfa" ? ["rfa"] : t.key === "eot_ear" || t.key === "cost_ear" ? ["ear"] : ["pvo", "dvo"]) : slot === "pvo" ? ["pvo"] : slot === "rfc" || slot === "details" ? (t.key === "rfa" ? ["rfc"] : ["rfc", "rfa"]) : slot === "cost" ? ["cost"] : [];
     // the files in the entry itself first (the entry is the user's word on what the file is), then any file elsewhere that reads as that kind
     const inSlot = read.filter((x) => x.doc.slot === slot);
     const elsewhere = read.filter((x) => x.doc.slot !== slot && want.includes(x.kind) && !(slot === "pvo" && x.doc.slot === REFERENCE_SLOT) && !(slot === REFERENCE_SLOT && x.doc.slot === "pvo"));
     return [...inSlot, ...elsewhere].map((x) => x.pages);
   };
-  // 1. the template – the last approved document of the same kind
-  for (const pages of await readAll(REFERENCE_SLOT)) {
+  // 1. the template – the last approved document of the same kind: the one uploaded on this pack,
+  //    or, when there is none, the PDF set as the category's template
+  let references = (await readAll(REFERENCE_SLOT)).filter((p) => p.length);
+  if (!references.length) {
+    const tpl = getTemplate(t.key);
+    const bytes = tpl && /\.pdf$/i.test(tpl.name) ? readTemplateBytes(tpl) : null;
+    if (bytes) references = [await positioned(bytes)];
+  }
+  for (const pages of references) {
     if (!pages.length) continue;
     // what names the earlier document itself is not carried over: its number, its date, its title and value are this pack's own
     const own = ["pvo_no", "dvo_no", "rfa_no", "date", "title", "scope", "reason", "total_value", "dvo_value", "add", "omit", "cost_items", "rfc_ref", "eac_explanation", "letter_ref", "report_ref", "claim_no", "eot_no"];
@@ -404,9 +413,22 @@ export async function rebuildValues(caseId: number, user: UserInfo): Promise<{ v
   // 2. the approved PVO behind a DVO
   if (t.key === "dvo") for (const pages of await readAll("pvo")) if (pages.length) apply(readApprovedPvoForDvo(pages));
   // 3. the RFC (or the RFA details): the change itself
-  for (const slot of ["rfc", "details"]) for (const pages of await readAll(slot)) if (pages.length) apply(readRfc(pages));
-  // 4. the cost assessment: the value
-  for (const pages of await readAll("cost")) if (pages.length) apply(readCost(pages, values.title || c.title));
+  for (const slot of ["rfc", "details"]) for (const pages of await readAll(slot)) if (pages.length) apply(classifyDoc(pages, "rfc") === "rfa" && t.key !== "rfa" ? readRfaForChange(pages) : readRfc(pages));
+  // 4. the cost assessment: the value – from the cost proposal entry; with nothing there, from the
+  //    cost pages inside the RFC / RFA (or, for a DVO, the approved PVO pack)
+  const costDocs = (await readAll("cost")).filter((p) => p.length);
+  if (costDocs.length) for (const pages of costDocs) apply(readCost(pages, values.title || c.title));
+  else {
+    const carriers = t.key === "dvo" ? await readAll("pvo") : [...(await readAll("rfc")), ...(await readAll("details"))];
+    for (const pages of carriers) {
+      const part = packParts(pages);
+      if (!part.cost.length) continue;
+      const r = readCost(pages.filter((p) => part.cost.includes(p.no)), values.title || c.title);
+      for (const k of Object.keys(r.sources)) r.sources[k] = t.key === "dvo" ? "cost in the approved PVO pack" : "cost in the RFC/RFA";
+      apply(r);
+      break;
+    }
+  }
   // the figures that follow from the others
   const num = (k: string) => Number(String(values[k] ?? "").replace(/[^0-9.\-]/g, "")) || 0;
   const r2s = (n: number) => String(Math.round(n * 100) / 100);

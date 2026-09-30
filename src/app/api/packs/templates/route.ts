@@ -3,11 +3,13 @@ import { withUser } from "@/lib/api";
 import { AuthError } from "@/lib/auth";
 import { appendUploadPart, finishUploadParts } from "@/lib/workbook/import";
 import { canManagePacks, saveTemplate, TEMPLATE_MAX_BYTES } from "@/lib/packs/store";
-import { packType } from "@/lib/packs/shared";
+import { packType, type TemplateInspection } from "@/lib/packs/shared";
 import { inspectTemplate } from "@/lib/packs/word";
+import { inspectExcelTemplate, isExcelTemplate } from "@/lib/packs/excel";
+import { inspectPdfTemplate } from "@/lib/packs/extract";
 
 /**
- * Sets the RSG Word template of one pack category. The browser sends the file in base64 pieces:
+ * Sets the RSG template of one pack category – the form as a Word file or as an Excel workbook. The browser sends the file in base64 pieces:
  * { uploadId, packType, name, mime, size, index, count, data }. The last piece stores the template
  * and returns it with what it will take (placeholders and matched labels).
  */
@@ -24,12 +26,14 @@ export async function POST(req: Request, ctx: unknown) {
     const bytes = finishUploadParts(uploadId);
     if (typeof body.size === "number" && bytes.length !== body.size) return NextResponse.json({ error: `The upload of ${body.name ?? "the file"} arrived incomplete. Please try again.` }, { status: 400 });
     const name = String(body.name ?? "template.docx");
-    if (!/\.(docx|dotx|docm)$/i.test(name)) return NextResponse.json({ error: "The template must be a Word file (.docx). Save the RSG form as .docx and upload it again." }, { status: 400 });
-    let inspection;
+    // any file is kept as the template; a workbook, a Word file or a PDF is also read and filled
+    let inspection: TemplateInspection = { placeholders: [], labels: [], unmatched: t.fields.map((f) => f.key) };
     try {
-      inspection = await inspectTemplate(bytes, t);
+      if (/\.pdf$/i.test(name)) inspection = await inspectPdfTemplate(bytes, t);
+      else if (isExcelTemplate(name)) inspection = await inspectExcelTemplate(bytes, t);
+      else if (/\.(docx|dotx|docm)$/i.test(name)) inspection = await inspectTemplate(bytes, t);
     } catch {
-      return NextResponse.json({ error: "The file could not be read as a Word document." }, { status: 400 });
+      return NextResponse.json({ error: `The file could not be read as ${/\.pdf$/i.test(name) ? "a PDF" : isExcelTemplate(name) ? "an Excel workbook" : "a Word document"}.` }, { status: 400 });
     }
     const template = saveTemplate(t.key, { name, bytes, mime: String(body.mime ?? ""), inspection }, user);
     return NextResponse.json({ template, inspection }, { status: 201 });

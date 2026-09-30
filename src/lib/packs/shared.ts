@@ -193,9 +193,9 @@ export const PACK_TYPES: PackType[] = [
     slots: [
       { key: "resubmit", no: 1, label: "Revise-and-resubmit updates (if any)", hint: "The workflow comments and the updates made after a revise-and-resubmit" },
       { key: "reference", no: 2, label: "PVO pack template – last approved PVO", hint: "The last approved PVO pack (PDF): its structure, wording and signatories pattern this one" },
-      { key: "rfc", no: 3, label: "RFC – Request for Change", hint: "The approved RFC: the scope of work and reason are read from it" },
-      { key: "cost", no: 4, label: "Cost proposal – price impact (+ / −)", hint: "The contractor's proposal or the Employer's ROM build-up; the total is read from it" },
-      { key: "drawings", no: 5, label: "Drawings", hint: "Marked-up drawings, sketches and specifications" },
+      { key: "rfc", no: 3, label: "RFC or RFA – the request behind this change", hint: "The approved RFC (Request for Change) or RFA (Request for Approval): the title, scope of work and reason are read from it" },
+      { key: "cost", no: 4, label: "Cost proposal – price impact (+ / −)", hint: "The contractor's proposal or the Employer's ROM build-up; the total is read from it. Left empty, the cost proposal inside the RFC or RFA is used; a file here supersedes it" },
+      { key: "drawings", no: 5, label: "Drawings", hint: "Marked-up drawings, sketches and specifications. Left empty, the drawings inside the RFC or RFA are used; files here supersede them" },
     ],
   },
   {
@@ -277,8 +277,8 @@ export const PACK_TYPES: PackType[] = [
       { key: "resubmit", no: 1, label: "Revise-and-resubmit updates (if any)", hint: "The workflow comments and the updates made after a revise-and-resubmit" },
       { key: "reference", no: 2, label: "DVO pack template – last approved DVO", hint: "The last approved DVO pack (PDF): its structure, wording and signatories pattern this one" },
       { key: "pvo", no: 3, label: "Approved PVO of this DVO", hint: "The approved PVO pack: its cover pages and workflow approvals go into Annexure 1" },
-      { key: "cost", no: 4, label: "DVO cost proposal – price impact (+ / −)", hint: "The contractor's final proposal and the Employer's assessment; the total is read from it" },
-      { key: "drawings", no: 5, label: "Drawings", hint: "Shop drawings, marked-ups and specifications" },
+      { key: "cost", no: 4, label: "DVO cost proposal – price impact (+ / −)", hint: "The contractor's final proposal and the Employer's assessment; the total is read from it. Left empty, the cost proposal inside the approved PVO pack is used; a file here supersedes it" },
+      { key: "drawings", no: 5, label: "Drawings", hint: "Shop drawings, marked-ups and specifications. Left empty, the drawings inside the approved PVO pack are used; files here supersede them" },
     ],
   },
   {
@@ -553,6 +553,7 @@ export function defaultPackFileName(type: PackType, values: PackValues, ref: str
 export function normLabel(s: string): string {
   return String(s ?? "")
     .toLowerCase()
+    .replace(/^\s*(?:[a-h]|\d{1,2}|[ivx]{1,4})[.)]\s+/, "")
     .replace(/[’‘`]/g, "'")
     .replace(/\[[^\]]*\]|\([^)]*\)/g, " ")
     .replace(/[:.*_…]+$/g, "")
