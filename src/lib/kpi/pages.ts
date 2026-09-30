@@ -78,7 +78,8 @@ export function keyPagesFor(section: string, kinds: PageKind[]): number[] {
     pvo_vo_approval: ["transmittal", "approvals"],
     dvo_front: ["dvo_form"],
     pvo_vo_front: ["pvo_form", "vo_form", "cover"],
-    vo_issued: ["mail", "letter", "acknowledgement"],
+    vo_issued: ["mail", "acknowledgement", "letter"],
+    vo_letter: ["letter", "vo_form", "cover"],
   };
   const wanted = want[section];
   if (!wanted) return keyPages(kinds);

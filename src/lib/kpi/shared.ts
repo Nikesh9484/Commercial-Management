@@ -53,10 +53,10 @@ export interface KpiItem {
 export const MOVEMENT_LABEL: Record<KpiMovement, string> = { closed_now: "DVO approved this report", new: "New this report", updated: "Updated this report", unchanged: "No movement" };
 
 /**
- * The five parts of a KPI supporting-document pack, in the order the head office reads them. A
- * Closed KPI (DVO approved) takes all five; an Open KPI (DVO still pending) the last three.
+ * The six parts of a KPI supporting-document pack, in the order the head office reads them. A
+ * Closed KPI (DVO approved) takes all six; an Open KPI (DVO still pending) the last four.
  */
-export const KPI_SECTIONS = ["dvo_approval", "dvo_front", "pvo_vo_approval", "pvo_vo_front", "vo_issued"] as const;
+export const KPI_SECTIONS = ["dvo_approval", "dvo_front", "pvo_vo_approval", "pvo_vo_front", "vo_issued", "vo_letter"] as const;
 export type KpiSection = (typeof KPI_SECTIONS)[number];
 export const KPI_SECTION_LABEL: Record<KpiSection, string> = {
   dvo_approval: "DVO – Aconex approval",
@@ -64,19 +64,21 @@ export const KPI_SECTION_LABEL: Record<KpiSection, string> = {
   pvo_vo_approval: "PVO and VO – Aconex approval",
   pvo_vo_front: "PVO and VO – front pages",
   vo_issued: "VO issued – Aconex reference",
+  vo_letter: "Letter + VO issued",
 };
 export const KPI_SECTION_HINT: Record<KpiSection, string> = {
   dvo_approval: "The Aconex workflow transmittal that approved the DVO, with its review history",
   dvo_front: "The signed Determination of Variation Order form – first page",
   pvo_vo_approval: "The Aconex workflow transmittal(s) that approved the PVO and the VO",
   pvo_vo_front: "The PVO form and the VO form – first pages",
-  vo_issued: "The Aconex mail or letter that issued the VO to the contractor (its reference and date)",
+  vo_issued: "The Aconex mail or transmittal that issued the VO to the contractor (its reference and date)",
+  vo_letter: "The Employer's letter issuing the VO, with the signed VO form behind it",
 };
 /** The parts that apply to a category: no DVO parts while the DVO is still pending. */
 export function kpiSectionsFor(category: "closed" | "open"): KpiSection[] {
   return category === "closed" ? [...KPI_SECTIONS] : KPI_SECTIONS.filter((s) => !s.startsWith("dvo_"));
 }
-export const KPI_SECTION_NO: Record<KpiSection, number> = { dvo_approval: 1, dvo_front: 2, pvo_vo_approval: 3, pvo_vo_front: 4, vo_issued: 5 };
+export const KPI_SECTION_NO: Record<KpiSection, number> = { dvo_approval: 1, dvo_front: 2, pvo_vo_approval: 3, pvo_vo_front: 4, vo_issued: 5, vo_letter: 6 };
 
 export interface KpiDoc {
   id: number;

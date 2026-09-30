@@ -115,7 +115,10 @@ export function guessSection(relPath: string): KpiSection {
     if (/^\s*3\b/.test(x)) return "pvo_vo_approval";
     if (/^\s*4\b/.test(x)) return "pvo_vo_front";
     if (/^\s*5\b/.test(x)) return "vo_issued";
+    if (/^\s*6\b/.test(x)) return "vo_letter";
     if (dvo) return approval ? "dvo_approval" : "dvo_front";
+    // the letter issuing the VO goes with the VO form; the Aconex mail or transmittal is the reference
+    if (/\bltr\b|letter/.test(x) && !/\bpvo\b/.test(x)) return "vo_letter";
     if (issued && !/\bpvo\b/.test(x)) return "vo_issued";
     if (approval) return "pvo_vo_approval";
     if (/\bpvo\b|\bvo\b|variation|\bei\b|instruction|\brfc\b|\bcrf\b|evo/.test(x)) return "pvo_vo_front";

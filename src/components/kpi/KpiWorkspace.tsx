@@ -244,7 +244,7 @@ function Row({ r, periodId, category, canManage, open, onToggle }: { r: KpiRow; 
                     {canManage && (
                       <>
                         <input ref={dirInput} type="file" multiple className="hidden" {...({ webkitdirectory: "", directory: "" } as Record<string, string>)} onChange={(e) => { upload(e.target.files); e.target.value = ""; }} />
-                        <button className="btn btn-xs btn-secondary" onClick={() => dirInput.current?.click()} disabled={!!progress} title="A folder holding every part: each file is filed under the part its folder or name says (1. DVO approval, 2. DVO, 3. PVO VO approval, 4. PVO VO, 5. VO issued)">
+                        <button className="btn btn-xs btn-secondary" onClick={() => dirInput.current?.click()} disabled={!!progress} title="A folder holding every part: each file is filed under the part its folder or name says (1. DVO approval, 2. DVO, 3. PVO VO approval, 4. PVO VO, 5. VO issued Aconex reference, 6. Letter + VO issued)">
                           <FolderUp size={12} /> Upload a folder
                         </button>
                       </>
