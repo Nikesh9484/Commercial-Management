@@ -16,6 +16,7 @@
 import type { SheetValues } from "./read";
 import { cellText } from "./read";
 import { readLevel1Check, type Level1Check } from "./level1-check";
+import { faStatusFromExcel } from "../bonds/contract-status";
 
 export type Row = unknown[];
 export type Sheet = SheetValues;
@@ -644,8 +645,7 @@ export function convertMarinaReport(sheets: Sheet[]): ConversionResult {
       const hdr = findHeaderRow(FA0, "acc code", "status") ?? 12;
       for (const [r, v] of rows(FA0)) {
         if (r <= hdr || !isNum(cell(v, 1)) || !txt(v, 2)) continue;
-        const st = txt(v, 12).toLowerCase();
-        if (!(st.startsWith("closed") || st.startsWith("not req") || st.startsWith("no fa"))) continue;
+        if (faStatusFromExcel(txt(v, 12)) === "Open") continue;
         const frag = txt(v, 2).replace(/\s+/g, "").replace(/^(PS|CN|MS|CM)\./, "").split(".")[0];
         const line = lineForFrag(frag);
         if (line) closedLines.add(line);
@@ -720,8 +720,8 @@ export function convertMarinaReport(sheets: Sheet[]): ConversionResult {
       if (seenAcc.has(acc)) continue;
       seenAcc.add(acc);
       const frag = acc.replace(/^(PS|CN|MS|CM)\./, "").split(".")[0];
-      const st = txt(v, 12).toLowerCase();
-      const status = st.startsWith("closed") ? "Closed" : st.startsWith("not req") ? "Not Required" : st.startsWith("no fa") ? "Direct Payment – No FA" : "Open";
+      // only "Open" is open: "FAS Signed", "Closed" and the workbook's other wordings all close the contract
+      const status = faStatusFromExcel(txt(v, 12));
       const typ = txt(v, 5);
       faRows.push([acc, txt(v, 3).replace(/\s+/g, " "), contractor(txt(v, 4) || txt(v, 3)), ["Contractor", "Consultant", "Supplier", "Insurer"].includes(typ) ? typ : "", lineForFrag(frag), contractByFrag.get(frag)?.po ?? "", txt(v, 9) === "TBC" ? "" : txt(v, 9), date(v, 10), status, "", status === "Closed" ? null : null, txt(v, 13)]);
     }

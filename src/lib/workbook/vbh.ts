@@ -11,6 +11,7 @@
  */
 import { BOND_TYPES, cell, cols, date, findHeaderRow, findSheet, fmt, isNum, money, monthText, norm, rows, txt, type ConversionResult, type ConvertedSheet, type ReportControl, type Row, type Sheet } from "./marina";
 import { readLevel1Check } from "./level1-check";
+import { faStatusFromExcel } from "../bonds/contract-status";
 
 /* ------------------------------------------------------------------ detection */
 
@@ -297,8 +298,8 @@ export function convertVbhReport(sheets: Sheet[]): ConversionResult {
       const acc = txt(v, 2).replace(/\s+/g, "");
       const frag = fragOf(acc);
       if (!frag || faStatus.has(frag)) continue;
-      const st = txt(v, 12).toLowerCase();
-      const status = st.startsWith("closed") ? "Closed" : st.startsWith("not req") ? "Not Required" : st.startsWith("no fa") ? "Direct Payment – No FA" : "Open";
+      // only "Open" is open: "FAS Signed", "Closed" and the workbook's other wordings all close the contract
+      const status = faStatusFromExcel(txt(v, 12));
       const typ = txt(v, 5);
       faStatus.set(frag, { acc, status, responsible: txt(v, 9), forecast: date(v, 10), comments: txt(v, 13), type: /direct/i.test(typ) ? "Supplier" : ["Contractor", "Consultant", "Supplier", "Insurer"].includes(typ) ? typ : "", contractor: tidy(txt(v, 4) || txt(v, 3)), desc: tidy(txt(v, 3)) });
     }

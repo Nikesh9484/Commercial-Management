@@ -9,7 +9,7 @@ import { businessDaysBetween } from "../workdays";
 import { PROBABILITY_BANDS, IMPACT_BANDS, bandIndex, severity } from "./defs/risks";
 import { EXPIRY_AMBER_DAYS, EXPIRY_RED_DAYS } from "./defs/bonds";
 import { revisedContractValues } from "../bonds/revised";
-import { closedContracts, contractorKey, type ClosedContracts } from "../bonds/closed";
+import { closedContracts, closureByName, contractorKey, type ClosedContracts } from "../bonds/closed";
 import { getDb, getSetting } from "../db";
 import { computeCostReport } from "../cost-report/compute";
 import { FA_AMBER_DAYS } from "./defs/final-accounts";
@@ -253,44 +253,49 @@ function enrichProvisionalSum(row: RecordRow) {
 
 function enrichBond(row: RecordRow, revised: Map<number, number>, closed: ClosedContracts, superseded: boolean, duplicate: boolean) {
   const lineIdRaw = row.cost_line_id === null || row.cost_line_id === undefined ? null : Number(row.cost_line_id);
-  // Worked out in order of how sure it is. A cost line the Final Account Status and Payment Tracking
-  // both say nothing about is unknown, not open, so the bond falls back to its contractor rather than
-  // being reported as live on the strength of a line nobody has recorded a status for. The contractor
-  // is matched by name as well as by id, because the same company entered twice under slightly
-  // different spellings is still one company and its closure has to reach both sets of bonds.
   const pkgIdRaw = row.package_id === null || row.package_id === undefined ? null : Number(row.package_id);
-  const byLine = lineIdRaw !== null && closed.lines.has(lineIdRaw);
+  // A bond is live only while it can be tied to a contract the registers say is open. The link is
+  // read in order of how sure it is: the cost report line, then the package (a number on both rows,
+  // so it holds when two spellings of a company are nothing alike), then the contractor (by row and
+  // by squashed name, so "Co. Ltd." and "Co.Ltd." are one company). A bond that cannot be tied to
+  // any open contract is treated as closed: nothing is chased on the strength of a contract nobody
+  // has recorded as open.
   const lineKnown = lineIdRaw !== null && closed.knownLines.has(lineIdRaw);
-  // The contractor is matched by row and by name: one company entered twice under different spellings
-  // ("Co. Ltd." / "Co.Ltd.") is still one company.
-  const byContractor =
-    !byLine &&
-    !lineKnown &&
-    (closed.contractors.has(Number(row.contractor_id)) || closed.contractorNames.has(contractorKey(row.contractor_id__label)));
-  // The package is the surest link of the three, because it is a number on both rows: it holds even
-  // when the two spellings are nothing alike ("WSP Middle East" and "WSP Consulting") and when the
-  // bond carries no cost report line at all.
-  const byPackage = !byLine && !lineKnown && !byContractor && pkgIdRaw !== null && closed.packages.has(pkgIdRaw);
-  const released = row.contract_closed === true || byLine || byContractor || byPackage;
-  row.contract_closed_reason = released
-    ? row.contract_closed === true
-      ? "Ticked on the row"
-      : byLine
-        ? "Final Account Status / Payment Tracking: contract closed"
-        : byContractor
-          ? "Every contract of this contractor is closed"
-          : "Every contract of this package is closed"
-    : null;
+  const pkgKnown = pkgIdRaw !== null && closed.knownPackages.has(pkgIdRaw);
+  const nameKey = contractorKey(row.contractor_id__label);
+  const ctrKnown = closed.knownContractors.has(Number(row.contractor_id)) || (!!nameKey && closed.knownContractorNames.has(nameKey));
+  const ctrClosed = closed.contractors.has(Number(row.contractor_id)) || (!!nameKey && closed.contractorNames.has(nameKey));
+  let released: boolean;
+  let reason: string | null = null;
+  let note: string | null = null;
+  let byName: boolean | null = null;
+  if (row.contract_closed === true) {
+    released = true;
+    reason = "Ticked on the row";
+  } else if (lineKnown) {
+    released = closed.lines.has(lineIdRaw!);
+    reason = released ? "Final Account Status / Payment Tracking: contract closed" : null;
+    note = released ? null : "The contract on this cost report line is open.";
+  } else if (pkgKnown) {
+    released = closed.packages.has(pkgIdRaw!);
+    reason = released ? "Every contract of this package is closed" : null;
+    note = released ? null : "This package still has an open contract.";
+  } else if ((byName = closureByName(closed, row.package_id__label)) !== null) {
+    // a package of the bond's own ("Marina Basin") tied to the contract its words belong to ("Al Saad-Marina Basin")
+    released = byName;
+    reason = released ? "The contract this package belongs to is closed" : null;
+    note = released ? null : "The contract this package belongs to is open.";
+  } else if (ctrKnown) {
+    released = ctrClosed;
+    reason = released ? "Every contract of this contractor is closed" : null;
+    note = released ? null : "This contractor still has an open contract.";
+  } else {
+    released = true;
+    reason = "No open contract is recorded for this bond's cost report line, package or contractor";
+  }
+  row.contract_closed_reason = reason;
   // says why a bond is still being chased, so a missing link can be found and fixed
-  row.link_note = released
-    ? null
-    : row.contractor_id === null || row.contractor_id === undefined
-      ? "No contractor on this row, so there is nothing to check a closure against. Set the contractor on the bond."
-      : lineIdRaw !== null && !lineKnown
-        ? "The cost report line linked here is not in the Final Account Status or Payment Tracking."
-        : pkgIdRaw !== null && !closed.knownPackages.has(pkgIdRaw)
-          ? "Neither the Final Account Status nor Payment Tracking mentions this package, so no closure can be read for it."
-          : "This contractor still has an open contract.";
+  row.link_note = note;
   row.released = released || superseded || duplicate;
   row.superseded = superseded && !released && !duplicate;
   row.duplicate = duplicate && !released;
