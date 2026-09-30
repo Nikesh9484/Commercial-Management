@@ -156,6 +156,8 @@ export const REPORTER_MODULES = [
   "cash-flow",
   "budget-transfers",
   "executive-summary",
+  "cost-recovery",
+  "aconex-check",
 ];
 export const REPORTER_PATHS = [
   "/",

@@ -99,7 +99,9 @@ export interface SheetMapping {
 }
 
 /** Registers that are fed only by their stand-alone imports (Claims Tracker, Bonds & Insurance, Final Account Status) – never by the monthly workbook. */
-export const STANDALONE_ONLY = ["claims", "bonds", "final_accounts"] as const;
+export const STANDALONE_ONLY = ["claims", "bonds", "final_accounts", "accommodation_recovery", "customs_recovery", "aconex_control_accounts"] as const;
+/** The cost-recovery trackers: uploaded when they change, never part of the monthly workbook, whatever the project's feeds. */
+export const RECOVERY_REGISTERS = ["accommodation_recovery", "customs_recovery", "aconex_control_accounts"] as const;
 
 /**
  * The registers the monthly workbook must not write for a project: claims always (the Claims Tracker is
@@ -108,7 +110,7 @@ export const STANDALONE_ONLY = ["claims", "bonds", "final_accounts"] as const;
  */
 export function standaloneOnly(db: Database.Database, programmeId: number): string[] {
   const row = db.prepare("SELECT workbook_feeds_all FROM programmes WHERE id = ?").get(programmeId) as { workbook_feeds_all: number | null } | undefined;
-  return row?.workbook_feeds_all ? ["claims"] : [...STANDALONE_ONLY];
+  return row?.workbook_feeds_all ? ["claims", ...RECOVERY_REGISTERS] : [...STANDALONE_ONLY];
 }
 
 export interface ImportRequest {
@@ -207,10 +209,13 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo, progres
   }
   const period = getPeriod(periodId)!;
   if (period.programme_id !== programmeId) throw new ValidationError(`${period.label} belongs to another project. Switch the project in the top bar first.`);
-  if (period.status === "Locked") throw new ValidationError(`${period.label} is locked. Unlock it first if you really want to re-import that month.`);
+  // The cost-recovery trackers are not part of any month's report: they are uploaded when they
+  // change, whatever report is selected, locked or not, and never go through the older-month sandbox.
+  const recoveryOnly = !!req.allowedRegisters?.length && req.allowedRegisters.every((k) => (RECOVERY_REGISTERS as readonly string[]).includes(k));
+  if (period.status === "Locked" && !recoveryOnly) throw new ValidationError(`${period.label} is locked. Unlock it first if you really want to re-import that month.`);
   // the latest report owns the live registers; an older month is imported "in a sandbox"
   const latest = latestPeriod(db, programmeId);
-  const older = !!latest && latest.id !== periodId && latest.report_no > period.report_no;
+  const older = !recoveryOnly && !!latest && latest.id !== periodId && latest.report_no > period.report_no;
   const olderImport = older;
   const newer = latest ? [{ label: latest.label }] : [];
   let baseNote = "";
@@ -230,7 +235,7 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo, progres
       baseNote = "starting from empty registers (no earlier report is stored)";
     }
   }
-  setSetting(db, "current_period_id", String(periodId));
+  if (!recoveryOnly) setSetting(db, "current_period_id", String(periodId));
 
   const lookupsCreated: string[] = [];
   const results: SheetResult[] = [];

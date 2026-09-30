@@ -12,7 +12,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { WorkbookImporter, type StandaloneMode } from "@/components/workbook/WorkbookImporter";
 
 /** The stand-alone import pages (left menu "Stand-alone imports"). "monthly" is the full monthly workbook. */
-export const IMPORT_KINDS: Record<string, { title: string; subtitle: string; only?: string[]; exclude?: string[]; intro?: string; fileHint?: string; doneHref?: string; doneLabel?: string }> = {
+export const IMPORT_KINDS: Record<string, { title: string; subtitle: string; only?: string[]; exclude?: string[]; intro?: string; fileHint?: string; doneHref?: string; doneLabel?: string; /** not part of any month's report: may be uploaded whatever report is selected, locked or not */ anyTime?: boolean }> = {
   monthly: {
     title: "Import monthly workbook",
     subtitle: "Upload one of your Excel monthly reports and the app records it against a reporting period. Each month is stored as its own report, so months can be loaded in any order and each one shows its movement against the last. Bonds & Insurance, Invoices & Payments and Final Account Status all come from this workbook – Schedule G, Schedule H with its IPC sheets, and the FA Status sheet – so one upload keeps the whole month in step. Claims & Disputes are the exception: they are never taken from the workbook, because they come from the AMAALA Claims Tracker, which is a different file.",
@@ -26,6 +26,36 @@ export const IMPORT_KINDS: Record<string, { title: string; subtitle: string; onl
     fileHint: "Claims Tracker (Program_01 sheet)",
     doneHref: "/modules/claims-disputes",
     doneLabel: "Open Claims & Disputes",
+  },
+  accommodation: {
+    title: "Import accommodation invoice tracker",
+    subtitle: "Upload the AMAALA Construction Village lease-agreement invoice tracker whenever it changes – it is not part of the monthly report – and the Cost Recovery page shows what each of our contractors has been invoiced, has paid or had recovered through its IPCs, and still owes.",
+    only: ["accommodation_recovery"],
+    intro: "Upload the accommodation invoice tracker (the workbook with the \"L.A. Invoice Tracker (W)\" sheet, .xlsx or .xlsm). Only the lease agreements of the project in the top bar are kept – recognised by their asset code (1TB01031 …) or the program name on the row – and each is tied to our contractor by name. Rows already here are updated, so the tracker can be re-uploaded as often as it changes.",
+    fileHint: "Accommodation invoice tracker (L.A. Invoice Tracker sheet)",
+    doneHref: "/modules/cost-recovery",
+    doneLabel: "Open Cost Recovery",
+    anyTime: true,
+  },
+  customs: {
+    title: "Import customs recovery tracker",
+    subtitle: "Upload the AMAALA Customs Recovery Tracker whenever it changes – it is not part of the monthly report – and the Cost Recovery page shows the customs duties RSG paid on each contractor's imports and how they are being recovered.",
+    only: ["customs_recovery"],
+    intro: "Upload the customs recovery tracker (the workbook with the \"Summary-Site Team to Enter\" sheet). Only the contracts of the project in the top bar are kept – recognised by the asset code in the commercial lead's columns – together with the customs figures of vendors that are our contractors, each tied to its cost report line by contract code (031C13 → CN.031C13). Rows already here are updated on a re-upload.",
+    fileHint: "AMAALA Customs Recovery Tracker (Summary sheet)",
+    doneHref: "/modules/cost-recovery?tab=customs",
+    doneLabel: "Open Cost Recovery",
+    anyTime: true,
+  },
+  aconex: {
+    title: "Import Aconex control account export",
+    subtitle: "Upload the control-account export from Aconex for the project in the top bar (one file per project) and the Aconex Cost Check reconciles its budget, commitments, changes and estimate at completion against the dashboard's cost report, line by line.",
+    only: ["aconex_control_accounts"],
+    intro: "Upload the Aconex control-account export (the .csv file, or the same table saved as .xlsx). Only the rows of the project in the top bar are kept: one per contract (1TB01031.01.CN.031C15) and per budget hold (…PS.98), each tied to its cost report line by contract code. Rows already here are replaced by the new figures on a re-upload.",
+    fileHint: "control-account-export.csv",
+    doneHref: "/modules/aconex-check",
+    doneLabel: "Open Aconex Cost Check",
+    anyTime: true,
   },
 };
 
@@ -96,7 +126,7 @@ export default async function ImportPage({ params, searchParams }: { params: Pro
   if (!ctx.programme) blocker = <>Select a programme in the top bar first.</>;
   else if (user.role !== "admin" && user.role !== "editor") blocker = <>Only Editors and Admins can import.</>;
   else if (spec.only && !current) blocker = <>Choose a reporting period in the top bar first – the import updates that report only.</>;
-  else if (spec.only && current && current.status === "Locked")
+  else if (spec.only && current && current.status === "Locked" && !spec.anyTime)
     blocker = (
       <>
         <b>{current.label}</b> is locked (issued). Stand-alone imports only update the report selected in the top bar, so switch to an open report – or ask an Admin to unlock this one – and try again.
@@ -115,7 +145,15 @@ export default async function ImportPage({ params, searchParams }: { params: Pro
           {spec.only && current && (
             <div className="card flex flex-wrap items-center justify-between gap-3 border-l-4 border-l-navy p-4 text-sm">
               <div>
-                Updating <b>{current.label}</b> only (the report selected in the top bar). To update another month, change the period in the top bar first.
+                {spec.anyTime ? (
+                  <>
+                    Updating the <b>{ctx.programme?.name}</b> rows of this tracker. The tracker is not part of a monthly report: upload it whenever it changes, whatever report is selected in the top bar.
+                  </>
+                ) : (
+                  <>
+                    Updating <b>{current.label}</b> only (the report selected in the top bar). To update another month, change the period in the top bar first.
+                  </>
+                )}
               </div>
               <Link href="/" className="text-xs text-accent hover:underline">
                 Executive Summary

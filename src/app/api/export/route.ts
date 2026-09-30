@@ -29,6 +29,9 @@ const NAMES: Record<string, string> = {
   bonds_report: "Bonds_and_Insurance_Status_Report",
   transfers_report: "Budget_Transfers_Status_Report",
   period_summary: "Period_Summary_Key_Movements",
+  recovery_report: "Cost_Recovery_Accommodation_Customs",
+  uncommitted_ew: "Uncommitted_Costs_and_Early_Warnings",
+  aconex_report: "Aconex_Cost_Check",
   deck: "Cost_Report_Presentation",
   dashboard: "Commercial_Dashboard",
 };

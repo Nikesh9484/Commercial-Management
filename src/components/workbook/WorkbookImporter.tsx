@@ -258,7 +258,7 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo,
           <div className="flex flex-wrap items-end gap-3">
             <label className="flex min-w-64 flex-1 flex-col gap-1 text-xs text-muted">
               Excel files (.xlsx) – as many as you like
-              <input type="file" accept=".xlsx" multiple className="input" onChange={(e) => { setBatchFiles(Array.from(e.target.files ?? [])); setBatch([]); }} disabled={batchBusy} />
+              <input type="file" accept=".xlsx,.xlsm" multiple className="input" onChange={(e) => { setBatchFiles(Array.from(e.target.files ?? [])); setBatch([]); }} disabled={batchBusy} />
             </label>
             {isAdmin && (
               <label className="inline-flex items-center gap-2 text-sm">
@@ -316,7 +316,7 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo,
         <div className="grid gap-4 lg:grid-cols-2">
           <label className="flex flex-col gap-1 text-xs text-muted">
             Excel file{standalone ? ` – ${standalone.fileHint}` : ""}
-            <input type="file" accept=".xlsx" className="input" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+            <input type="file" accept=".xlsx,.xlsm,.csv" className="input" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
           </label>
           {standalone ? (
             <div className="rounded-lg border border-line bg-slate-50 p-3 text-xs text-ink">

@@ -17,6 +17,8 @@ import { groupByParty, plural, type PartyGroup } from "./report-utils";
 import { buildTransfersReport } from "./transfers-report";
 import { buildFaReport } from "./fa-report";
 import { buildPeriodSummary, sar, sarMove } from "./period-summary";
+import { getAccommodationSummary, getCustomsSummary, buildUncommittedTable } from "../recovery/summary";
+import { buildAconexReconciliation, ACONEX_MEASURES } from "../recovery/aconex";
 
 type Doc = PDFKit.PDFDocument;
 
@@ -69,6 +71,9 @@ export function resolveSections(keys: string[], opts: SectionOptions = {}): { ti
     }
     else if (k === "transfers_report") out.push({ title: "Budget Transfers Status Report", run: transfersStatusReport });
     else if (k === "period_summary") out.push({ title: "Period Summary – Key Period Movements", run: periodSummaryReport });
+    else if (k === "recovery_report") out.push({ title: "Cost Recovery – Accommodation & Customs Duty", run: recoveryReport });
+    else if (k === "uncommitted_ew") out.push({ title: "Uncommitted Costs and Early Warnings", run: uncommittedEwReport });
+    else if (k === "aconex_report") out.push({ title: "Aconex Cost Check – control accounts vs cost report", run: aconexReport });
     else if (k === "level1") out.push({ title: "Schedule A – Cost Report Level 1 (Executive)", run: costLevel1 });
     else if (k === "level2") out.push({ title: "Schedule B – Cost Report Level 2 (Detailed)", run: costLevel2 });
     else if (k === "cashflow") out.push({ title: "Schedule I – Cash Flow", run: cashflow });
@@ -1228,6 +1233,187 @@ function changesStatusReport(ctx: Ctx) {
 /* Period Summary – the month's story as the directors get it by email  */
 
 /** Horizontal signed bars: increases to the right in red, reductions to the left in green. */
+/** Cost recovery: what contractors owe RSG for staff accommodation and for customs duties RSG paid on their imports. */
+function recoveryReport(ctx: Ctx) {
+  const { doc, data } = ctx;
+  const width = PAGE.width - PAGE.margin * 2;
+  const money = (v: unknown) => (v === null || v === undefined || v === "" ? "" : formatMoney(v as number));
+  const acc = getAccommodationSummary(data.recovery.accommodation);
+  const cus = getCustomsSummary(data.recovery.customs, data.registers.changes?.rows ?? []);
+  const red = (n: number) => (n > 0.5 ? "#b91c1c" : null);
+
+  subheading(ctx, "Accommodation cost recovery", `Construction village lease-agreement invoices per contractor${acc.asOf ? ` – tracker as of ${formatDate(acc.asOf)}` : ""}.`);
+  if (!acc.totals.rows) {
+    doc.fillColor(MUTED).font("Helvetica-Oblique").fontSize(9).text("No accommodation invoice tracker has been uploaded for this project yet.", { width });
+    doc.moveDown(0.5);
+  } else {
+    kpiCards(
+      ctx,
+      [
+        ["Invoiced to date (incl. VAT)", formatMoney(acc.totals.invoiced), `${acc.totals.rows} lease agreement(s), ${acc.totals.open} open`],
+        ["Received + recovered", formatMoney(acc.totals.received), `${formatMoney(acc.totals.offset)} offset through IPCs`],
+        ["Outstanding", formatMoney(acc.totals.outstanding), `${formatMoney(acc.totals.withheld)} withheld under IPCs`],
+        ["Not covered by an IPC withholding", formatMoney(acc.totals.exposed), `${formatMoney(acc.totals.settleInFa)} to settle in the final account`],
+      ],
+      (k) => (k[0] === "Outstanding" ? red(acc.totals.outstanding) : k[0].startsWith("Not covered") ? red(acc.totals.exposed) : null),
+    );
+    table(
+      ctx,
+      [
+        { key: "contractor", label: "Contractor", width: 2.4 },
+        { key: "invoiced", label: "Invoiced", width: 1.1, align: "right", format: money },
+        { key: "received", label: "Received + recovered", width: 1.1, align: "right", format: money },
+        { key: "outstanding", label: "Outstanding", width: 1.1, align: "right", format: money },
+        { key: "withheld", label: "Withheld in IPC", width: 1.1, align: "right", format: money },
+        { key: "settleInFa", label: "To settle in FA", width: 1.1, align: "right", format: money },
+        { key: "note", label: "Tracker note", width: 2.4 },
+      ],
+      acc.byContractor.map((c) => ({ contractor: c.contractor, ...c.totals, note: c.note })),
+      { zebra: true, totalRow: { contractor: "Total", ...acc.totals, note: "" }, rowStyle: (r) => (Number(r.outstanding) > 0.5 ? { color: "#b91c1c" } : undefined) },
+    );
+    doc.moveDown(0.5);
+  }
+
+  subheading(ctx, "Customs duty recovery", `Customs duties RSG paid on contractors' imports and their recovery under each contract${cus.asOf ? ` – tracker as of ${formatDate(cus.asOf)}` : ""}.`);
+  if (!cus.totals.rows) {
+    doc.fillColor(MUTED).font("Helvetica-Oblique").fontSize(9).text("No customs recovery tracker has been uploaded for this project yet.", { width });
+    doc.moveDown(0.5);
+  } else {
+    kpiCards(
+      ctx,
+      [
+        ["Customs paid by RSG", formatMoney(cus.totals.rsgPaid), `${cus.totals.rows} contract / vendor row(s)`],
+        ["RSG / AMAALA to recover", formatMoney(cus.totals.toRecover), `${formatMoney(cus.totals.contractorPaid)} paid by the contractors`],
+        ["Recovered by DVO", formatMoney(cus.totals.recoveredByDvo), "determined variation orders recorded for the recovery"],
+        ["Still to recover", formatMoney(cus.totals.stillToRecover), `${formatMoney(cus.totals.ewn)} notified in EWNs, ${formatMoney(cus.totals.unrecoverable)} unrecoverable`],
+      ],
+      (k) => (k[0] === "Still to recover" ? red(cus.totals.stillToRecover) : null),
+    );
+    table(
+      ctx,
+      [
+        { key: "contractor", label: "Contractor", width: 2.2 },
+        { key: "payer", label: "Who pays per contract", width: 1.3 },
+        { key: "rsgPaid", label: "Paid by RSG", width: 1, align: "right", format: money },
+        { key: "toRecover", label: "To recover", width: 1, align: "right", format: money },
+        { key: "recoveredByDvo", label: "Recovered by DVO", width: 1, align: "right", format: money },
+        { key: "stillToRecover", label: "Still to recover", width: 1, align: "right", format: money },
+        { key: "ewn", label: "EWN", width: 0.9, align: "right", format: money },
+        { key: "remainingToPay", label: "Remaining to pay", width: 1.1, align: "right", format: money },
+        { key: "dvoNote", label: "DVO", width: 1.4 },
+      ],
+      cus.byContractor.map((c) => ({ contractor: c.contractor, payer: c.payer, ...c.totals, dvoNote: c.dvoNote })),
+      { zebra: true, totalRow: { contractor: "Total", payer: "", ...cus.totals, dvoNote: "" }, rowStyle: (r) => (Number(r.stillToRecover) > 0.5 ? { color: "#b91c1c" } : undefined) },
+    );
+    if (cus.noFigures.length) {
+      doc.moveDown(0.3);
+      doc.fillColor(MUTED).font("Helvetica-Oblique").fontSize(8).text(`${cus.noFigures.length} contract(s) are annotated on the tracker without customs figures yet: ${cus.noFigures.map((r) => `${String(r.contract_code ?? r.vendor ?? "")}`).join(", ")}.`, { width });
+    }
+  }
+}
+
+/** The Aconex control account export against the cost report, figure by figure. */
+function aconexReport(ctx: Ctx) {
+  const { doc, data } = ctx;
+  const width = PAGE.width - PAGE.margin * 2;
+  const rec = buildAconexReconciliation(data);
+  const money = (v: unknown) => (v === null || v === undefined ? "–" : formatMoney(v as number));
+  if (!rec.counts.aconex) {
+    doc.fillColor(MUTED).font("Helvetica-Oblique").fontSize(9).text("No Aconex control account export has been uploaded for this project yet.", { width });
+    return;
+  }
+  doc.fillColor(MUTED).font("Helvetica").fontSize(8.5).text(`${rec.counts.matched} contract and budget-hold lines compared (${rec.counts.aconex} Aconex rows${rec.asOf ? `, export uploaded ${formatDate(rec.asOf)}` : ""}, ${rec.counts.dashboard} cost report lines in ${data.period.label}). A contract differs when its commitments, estimate at completion or incurred to date disagree; a budget hold when its budget or estimate at completion does. Approved budget, DVOs and PVOs on a contract are shown for information, because the two systems hold them on different bases. Differences under SAR ${rec.counts.tolerance} are rounding.`, { width });
+  doc.moveDown(0.4);
+  kpiCards(
+    ctx,
+    [
+      ["Lines with a difference", String(rec.counts.differing), rec.counts.differing ? "listed below, largest first" : "every compared figure agrees"],
+      ["Estimate at completion – difference", formatMoney(rec.totals.diff.eac), `Aconex ${formatMoney(rec.totals.aconex.eac)} vs dashboard ${formatMoney(rec.totals.dashboard.eac)}`],
+      ["Commitments – difference", formatMoney(rec.totals.diff.commitments), `Aconex ${formatMoney(rec.totals.aconex.commitments)} vs dashboard ${formatMoney(rec.totals.dashboard.commitments)}`],
+      ["Only on one side", String(rec.aconexOnly.length + rec.dashboardOnly.length), `${rec.aconexOnly.length} only in Aconex, ${rec.dashboardOnly.length} only on the dashboard`],
+    ],
+    (k) => (k[0].startsWith("Lines with") && rec.counts.differing ? "#b91c1c" : null),
+  );
+  subheading(ctx, "Totals – Aconex vs dashboard");
+  table(
+    ctx,
+    [
+      { key: "label", label: "Figure", width: 1.6 },
+      { key: "aconex", label: "Aconex", width: 1.1, align: "right", format: money },
+      { key: "dashboard", label: "Dashboard", width: 1.1, align: "right", format: money },
+      { key: "diff", label: "Difference", width: 1.1, align: "right", format: money },
+      { key: "note", label: "What is compared", width: 3.2 },
+    ],
+    ACONEX_MEASURES.map((m) => ({ label: m.label, aconex: rec.totals.aconex[m.key], dashboard: rec.totals.dashboard[m.key], diff: rec.totals.diff[m.key], note: m.note })),
+    { zebra: true, rowStyle: (r) => (Math.abs(Number(r.diff)) >= rec.counts.tolerance ? { color: "#b91c1c" } : undefined) },
+  );
+  const listed = [...rec.discrepancies, ...rec.aconexOnly, ...rec.dashboardOnly];
+  subheading(ctx, "Discrepancies, line by line", listed.length ? "Matched lines with a difference (largest first), then the lines only one side knows about." : "Every compared figure agrees with the dashboard.");
+  if (listed.length) {
+    table(
+      ctx,
+      [
+        { key: "line", label: "Line", width: 2 },
+        { key: "status", label: "Status", width: 0.8 },
+        ...ACONEX_MEASURES.flatMap((m) => [
+          { key: `${m.key}_a`, label: `${m.label} – Aconex`, width: 0.85, align: "right" as const, format: money },
+          { key: `${m.key}_d`, label: `${m.label} – dashboard`, width: 0.85, align: "right" as const, format: money },
+          { key: `${m.key}_x`, label: "Diff", width: 0.75, align: "right" as const, format: money },
+        ]),
+      ],
+      listed.map((l) => {
+        const row: Record<string, unknown> = { line: `${l.code || l.aconexCode} – ${l.name}`, status: l.status === "matched" ? "differs" : l.status === "aconex_only" ? "only in Aconex" : "only on dashboard" };
+        for (const m of ACONEX_MEASURES) {
+          row[`${m.key}_a`] = l.aconex[m.key];
+          row[`${m.key}_d`] = l.dashboard[m.key];
+          row[`${m.key}_x`] = l.diff[m.key];
+        }
+        return row;
+      }),
+      { zebra: true },
+    );
+  }
+}
+
+/** The consolidated "Uncommitted Costs and Early Warnings" table, one row per cost report line, in the programme-wide Level 5 layout. */
+function uncommittedEwReport(ctx: Ctx) {
+  const { doc, data } = ctx;
+  const width = PAGE.width - PAGE.margin * 2;
+  const t = buildUncommittedTable(data);
+  const money = (v: unknown) => (v === null || v === undefined || Math.abs(Number(v)) < 0.005 ? "–" : formatMoney(v as number));
+  doc.fillColor(MUTED).font("Helvetica").fontSize(8.5).text(
+    `Every cost report line of ${data.programme.name} as the programme-wide "Level 5 – Contracts" sheet lays them out: approved budget, commitments, the uncommitted amounts by kind, the two recoveries and the estimate at completion, from ${data.period.label}${t.asOf.accommodation ? `, the accommodation tracker as of ${formatDate(t.asOf.accommodation)}` : ""}${t.asOf.customs ? ` and the customs tracker as of ${formatDate(t.asOf.customs)}` : ""}.`,
+    { width },
+  );
+  doc.moveDown(0.5);
+  table(
+    ctx,
+    [
+      { key: "code", label: "Code", width: 1.5 },
+      { key: "name", label: "Name", width: 2.2 },
+      { key: "contractor", label: "Contractor", width: 1.5 },
+      { key: "budget", label: "Approved budget", width: 1, align: "right", format: money },
+      { key: "commitments", label: "Commitments", width: 1, align: "right", format: money },
+      { key: "voUnderProcess", label: "VO under process", width: 0.9, align: "right", format: money },
+      { key: "eotClaims", label: "EOT claims", width: 0.9, align: "right", format: money },
+      { key: "otherClaims", label: "Other claims", width: 0.9, align: "right", format: money },
+      { key: "uncommittedScope", label: "Uncommitted scope (RFC)", width: 0.9, align: "right", format: money },
+      { key: "earlyWarnings", label: "Early warnings", width: 0.9, align: "right", format: money },
+      { key: "accommodationRecovery", label: "Accommodation recovery", width: 0.9, align: "right", format: money },
+      { key: "customsRecovery", label: "Customs recovery", width: 0.9, align: "right", format: money },
+      { key: "totalUncommitted", label: "Total uncommitted", width: 1, align: "right", format: money },
+      { key: "notRequired", label: "Uncommitted / not required", width: 1, align: "right", format: money },
+      { key: "eac", label: "EAC", width: 1, align: "right", format: money },
+    ],
+    t.rows.map((r) => ({ ...r, code: r.kind === "line" ? r.code : "" })) as unknown as Record<string, unknown>[],
+    { totalRow: { ...t.total, code: "" } as unknown as Record<string, unknown>, rowStyle: (r) => (r.kind === "category" ? { bold: true, bg: ZEBRA, color: NAVY } : undefined) },
+  );
+  if (t.unlinked.length) {
+    doc.moveDown(0.3);
+    doc.fillColor(MUTED).font("Helvetica-Oblique").fontSize(8).text(`Not tied to a cost report line: ${t.unlinked.map((u) => `${u.label} – ${u.source} ${formatMoney(u.amount)}`).join("; ")}.`, { width });
+  }
+}
+
 function signedBars(ctx: Ctx, rows: { short: string; value: number }[]) {
   const { doc } = ctx;
   if (!rows.length) return;

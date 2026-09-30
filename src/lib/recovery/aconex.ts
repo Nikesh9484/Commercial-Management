@@ -1,0 +1,147 @@
+import type { RecordRow } from "../registers/types";
+import type { ReportData } from "../report/data";
+
+/**
+ * The Aconex cost check: every contract and budget hold in the Aconex control account export set
+ * against its cost report line on the dashboard, figure by figure, with the difference. Lines only
+ * one side knows about are listed as well, so nothing is silently left out of the comparison.
+ */
+const n = (v: unknown) => (v === null || v === undefined || v === "" ? 0 : Number(v) || 0);
+const r2 = (x: number) => Math.round(x * 100) / 100;
+
+/**
+ * The figures compared, in the order they are shown. Only some of them decide whether a line
+ * "differs": the two systems hold budgets and changes on different bases – the dashboard keeps the
+ * unallocated budget on the "Remaining budget" hold lines and folds historic variations into the
+ * award, while Aconex re-bases each contract's approved budget and lists its changes separately – so
+ * budget, DVO and PVO are shown for information on a contract line and only commitments, estimate
+ * at completion and incurred to date decide. A budget hold has no commitments: there budget and
+ * estimate at completion decide.
+ */
+export const ACONEX_MEASURES = [
+  { key: "budget", label: "Approved budget", aconex: "approved_budget", dashboard: "G", decides: "hold", note: "Aconex approved budget vs cost report column G (awarded / latest budget incl. transfers) – decides for budget holds; on a contract the dashboard keeps unallocated budget on the hold line, so it is for information" },
+  { key: "commitments", label: "Commitments", aconex: "current_commitments", dashboard: "I", decides: "contract", note: "Aconex current commitments vs column I (committed costs) – decides for contracts" },
+  { key: "dvo", label: "Approved changes (DVO)", aconex: "approved_changes", dashboard: "H", decides: "none", note: "Aconex approved downstream contract changes vs column H (determined variation orders) – for information: the dashboard folds historic variations into the award" },
+  { key: "pvo", label: "Pending changes (PVO)", aconex: "pending_changes", dashboard: "J", decides: "none", note: "Aconex pending downstream contract changes vs column J (potential variation orders) – for information" },
+  { key: "eac", label: "Estimate at completion", aconex: "eac", dashboard: "N", decides: "both", note: "Aconex estimate at completion vs column N (anticipated final account) – decides for every line" },
+  { key: "incurred", label: "Incurred to date", aconex: "incurred_to_date", dashboard: "P", decides: "contract", note: "Aconex incurred to date vs column P (certified to date) – decides for contracts" },
+] as const;
+
+/** Does this figure decide whether a line of this kind differs? */
+export function measureDecides(m: (typeof ACONEX_MEASURES)[number], rowType: string): boolean {
+  const hold = /hold/i.test(rowType);
+  return m.decides === "both" || (m.decides === "hold" && hold) || (m.decides === "contract" && !hold);
+}
+
+export type AconexMeasureKey = (typeof ACONEX_MEASURES)[number]["key"];
+
+export interface AconexLine {
+  status: "matched" | "aconex_only" | "dashboard_only";
+  code: string;
+  aconexCode: string;
+  name: string;
+  contractor: string;
+  category: string;
+  rowType: string;
+  aconex: Record<AconexMeasureKey, number | null>;
+  dashboard: Record<AconexMeasureKey, number | null>;
+  diff: Record<AconexMeasureKey, number | null>;
+  /** the largest absolute difference on the line */
+  worst: number;
+  /** which figures differ, for the note column */
+  differs: AconexMeasureKey[];
+}
+
+export interface AconexReconciliation {
+  asOf: string | null;
+  lines: AconexLine[];
+  /** matched lines with at least one difference, largest first */
+  discrepancies: AconexLine[];
+  aconexOnly: AconexLine[];
+  dashboardOnly: AconexLine[];
+  totals: { aconex: Record<AconexMeasureKey, number>; dashboard: Record<AconexMeasureKey, number>; diff: Record<AconexMeasureKey, number> };
+  counts: { aconex: number; dashboard: number; matched: number; differing: number; tolerance: number };
+}
+
+/** Differences under one SAR are rounding, not discrepancies. */
+export const TOLERANCE = 1;
+
+function blankMeasures(): Record<AconexMeasureKey, number | null> {
+  return { budget: null, commitments: null, dvo: null, pvo: null, eac: null, incurred: null };
+}
+
+export function buildAconexReconciliation(data: ReportData): AconexReconciliation {
+  const rows = data.recovery.aconex;
+  const asOf = rows.map((r) => String(r.tracker_date ?? "")).filter(Boolean).sort().pop() ?? null;
+  const lines: AconexLine[] = [];
+  const usedLine = new Set<number>();
+  const byLine = new Map<number, (typeof data.costReport.lines)[number]>();
+  for (const l of data.costReport.lines) byLine.set(l.id, l);
+  const aconexOf = (r: RecordRow): Record<AconexMeasureKey, number | null> => ({
+    budget: r.approved_budget === null || r.approved_budget === undefined ? null : n(r.approved_budget),
+    commitments: r.current_commitments === null || r.current_commitments === undefined ? null : n(r.current_commitments),
+    dvo: r.approved_changes === null || r.approved_changes === undefined ? null : n(r.approved_changes),
+    pvo: r.pending_changes === null || r.pending_changes === undefined ? null : n(r.pending_changes),
+    eac: r.eac === null || r.eac === undefined ? null : n(r.eac),
+    incurred: r.incurred_to_date === null || r.incurred_to_date === undefined ? null : n(r.incurred_to_date),
+  });
+  const dashOf = (l: (typeof data.costReport.lines)[number]): Record<AconexMeasureKey, number | null> => ({ budget: l.G, commitments: l.I, dvo: l.H, pvo: l.J, eac: l.N, incurred: l.P });
+  const finish = (line: AconexLine) => {
+    for (const m of ACONEX_MEASURES) {
+      const a = line.aconex[m.key];
+      const d = line.dashboard[m.key];
+      line.diff[m.key] = a === null && d === null ? null : r2((a ?? 0) - (d ?? 0));
+      if (line.status === "matched" && measureDecides(m, line.rowType) && Math.abs(line.diff[m.key] ?? 0) >= TOLERANCE) line.differs.push(m.key);
+    }
+    line.worst = Math.max(0, ...ACONEX_MEASURES.filter((m) => measureDecides(m, line.rowType)).map((m) => Math.abs(line.diff[m.key] ?? 0)));
+    return line;
+  };
+  for (const r of rows) {
+    const lineId = Number(r.cost_line_id);
+    const l = lineId ? byLine.get(lineId) : undefined;
+    if (l) usedLine.add(l.id);
+    lines.push(
+      finish({
+        status: l ? "matched" : "aconex_only",
+        code: l ? l.code : "",
+        aconexCode: String(r.code ?? ""),
+        name: l ? l.name : String(r.name ?? r.description ?? ""),
+        contractor: l ? l.contractor : "",
+        category: l ? l.category : String(r.row_type ?? ""),
+        rowType: String(r.row_type ?? ""),
+        aconex: aconexOf(r),
+        dashboard: l ? dashOf(l) : blankMeasures(),
+        diff: blankMeasures(),
+        worst: 0,
+        differs: [],
+      }),
+    );
+  }
+  for (const l of data.costReport.lines) {
+    if (usedLine.has(l.id)) continue;
+    lines.push(finish({ status: "dashboard_only", code: l.code, aconexCode: "", name: l.name, contractor: l.contractor, category: l.category, rowType: l.is_budget_hold ? "Budget hold" : "Contract", aconex: blankMeasures(), dashboard: dashOf(l), diff: blankMeasures(), worst: 0, differs: [] }));
+  }
+  const zero = () => ({ budget: 0, commitments: 0, dvo: 0, pvo: 0, eac: 0, incurred: 0 });
+  const totals = { aconex: zero(), dashboard: zero(), diff: zero() };
+  for (const line of lines)
+    for (const m of ACONEX_MEASURES) {
+      totals.aconex[m.key] += line.aconex[m.key] ?? 0;
+      totals.dashboard[m.key] += line.dashboard[m.key] ?? 0;
+    }
+  for (const m of ACONEX_MEASURES) {
+    totals.aconex[m.key] = r2(totals.aconex[m.key]);
+    totals.dashboard[m.key] = r2(totals.dashboard[m.key]);
+    totals.diff[m.key] = r2(totals.aconex[m.key] - totals.dashboard[m.key]);
+  }
+  const matched = lines.filter((l) => l.status === "matched");
+  const discrepancies = matched.filter((l) => l.differs.length).sort((a, b) => b.worst - a.worst);
+  return {
+    asOf,
+    lines: lines.sort((a, b) => (a.category || "").localeCompare(b.category || "") || (a.code || a.aconexCode).localeCompare(b.code || b.aconexCode)),
+    discrepancies,
+    aconexOnly: lines.filter((l) => l.status === "aconex_only"),
+    dashboardOnly: lines.filter((l) => l.status === "dashboard_only"),
+    totals,
+    counts: { aconex: rows.length, dashboard: data.costReport.lines.length, matched: matched.length, differing: discrepancies.length, tolerance: TOLERANCE },
+  };
+}

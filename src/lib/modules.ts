@@ -23,6 +23,8 @@ export const modules: ModuleInfo[] = [
   { no: 10, slug: "budget-transfers", title: "Budget Transfers", short: "Budget Transfers", icon: "ArrowLeftRight", description: "Movements of budget between packages / cost codes with approval trail." },
   { no: 11, slug: "executive-summary", title: "Executive Summary & Minutes of Meeting", short: "Executive Summary", icon: "LayoutDashboard", description: "Headline KPIs, key issues, open actions and charts for directors, plus minutes of commercial meetings." },
   { no: 12, slug: "monthly-report", title: "Monthly Report Export", short: "Monthly Report", icon: "FileDown", description: "Generate the monthly commercial report as PDF / Excel from the locked period." },
+  { no: 13, slug: "cost-recovery", title: "Cost Recovery – Accommodation & Customs", short: "Cost Recovery", icon: "HandCoins", description: "Accommodation charges and customs duties paid by RSG that are recovered from contractors: what is invoiced, recovered, withheld and outstanding, and the early warning distribution per contract." },
+  { no: 14, slug: "aconex-check", title: "Aconex Cost Check", short: "Aconex Check", icon: "Scale", description: "The Aconex control account export reconciled line by line against the dashboard's cost report: budget, commitments, changes and estimate at completion." },
 ];
 
 export function getModule(slug: string): ModuleInfo | undefined {

@@ -20,6 +20,9 @@ export const IMPORTABLE: { key: string; label: string }[] = [
   { key: "budget_transfers", label: "Budget Transfers" },
   { key: "project_team", label: "Distribution & Project Team" },
   { key: "actions", label: "Meeting items & actions" },
+  { key: "accommodation_recovery", label: "Accommodation Cost Recovery (invoice tracker)" },
+  { key: "customs_recovery", label: "Customs Duty Recovery (customs tracker)" },
+  { key: "aconex_control_accounts", label: "Aconex Control Accounts (control-account export)" },
 ];
 
 /** Extra words your workbook may use for a field (normalised: lowercase, letters and digits only). */

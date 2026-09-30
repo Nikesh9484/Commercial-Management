@@ -38,6 +38,8 @@ export interface ReportData {
   registers: Record<string, { def: RegisterDef; rows: RecordRow[] }>;
   /** Which sources came from the locked snapshot vs live data. */
   sources: Record<string, "snapshot" | "live">;
+  /** The cost-recovery trackers (accommodation invoices, customs duties): stand-alone, as last uploaded, never part of a stored report. */
+  recovery: { accommodation: RecordRow[]; customs: RecordRow[]; aconex: RecordRow[] };
 }
 
 function snapshotRows(periodId: number, key: string): RecordRow[] | null {
@@ -136,5 +138,10 @@ export function getReportData(programmeId: number, periodId: number): ReportData
     cashflow,
     registers,
     sources,
+    recovery: {
+      accommodation: listRecords(getRegisterDef("accommodation_recovery")!, { allScopes: true }).filter((r) => Number(r.programme_id) === programmeId),
+      customs: listRecords(getRegisterDef("customs_recovery")!, { allScopes: true }).filter((r) => Number(r.programme_id) === programmeId),
+      aconex: listRecords(getRegisterDef("aconex_control_accounts")!, { allScopes: true }).filter((r) => Number(r.programme_id) === programmeId),
+    },
   };
 }

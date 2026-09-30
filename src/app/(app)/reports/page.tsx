@@ -25,6 +25,9 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
       heading: "Summaries",
       items: [
         item("period_summary", "Period Summary – Key Period Movements", "The month in one click, as sent to the directors: projected cost to complete, budget position, forecast movement analysis, change status and the items behind every movement, with a written narrative – on screen, PDF, Excel or email draft"),
+        item("recovery_report", "Cost Recovery – Accommodation & Customs Duty", "What contractors owe RSG: accommodation charges invoiced, recovered through IPCs, withheld and outstanding, and customs duties RSG paid on their imports with the recovery position – per contractor, with the tracker rows"),
+        item("aconex_report", "Aconex Cost Check", "The Aconex control account export reconciled line by line against the cost report: budget, commitments, approved and pending changes, estimate at completion and incurred to date, with every difference listed"),
+        item("uncommitted_ew", "Uncommitted Costs and Early Warnings table (Level 5 layout)", "Every cost report line with its budget, commitments, VOs under process, EOT and other claims, uncommitted scope, early warnings and the two recoveries – ready to paste into the programme-wide consolidated sheet"),
         item("dashboard", "Commercial Dashboard (Excel)", "The whole dashboard in one workbook: headline tiles, native Excel charts and one sheet per module with live formulas over the registers"),
         // the Excel edition is a working copy of the whole app (imports, locking, users): for the people who keep the data
         ...(isEditorRole(user.role) ? [item("excel-app", "Commercial Dashboard – Excel edition (.xlsm)", "Work entirely in Excel: sign in with the same users and roles, import the monthly report and stand-alone workbooks, lock periods, export PDF – loaded with today's data")] : []),

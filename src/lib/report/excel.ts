@@ -16,6 +16,9 @@ import type { SectionOptions } from "./pdf";
 import { REPORT_SCHEDULES } from "./schedules";
 import { formatDate, formatDateTime, formatMoney, toDate } from "../format";
 import type { FieldDef, RecordRow, RegisterDef } from "../registers/types";
+import { getRegisterDef } from "../registers";
+import { getAccommodationSummary, getCustomsSummary, buildUncommittedTable } from "../recovery/summary";
+import { buildAconexReconciliation, ACONEX_MEASURES, measureDecides } from "../recovery/aconex";
 
 import { XL, MONEY_FMT, titleBlock, headerRow, totalRow, sectionRow, sumFormula, finishWorkbook, setWorkbookLink } from "../xlsx-style";
 import { writeLevel1, writeLevel2, type Level2Ref } from "../cost-report/excel";
@@ -65,6 +68,9 @@ export async function renderSectionsExcel(data: ReportData, keys: string[], link
     else if (k === "bonds_report") bondsReportSheet(wb, data, opts.bonds);
     else if (k === "transfers_report") transfersReportSheet(wb, data);
     else if (k === "period_summary") periodSummarySheet(wb, data);
+    else if (k === "recovery_report") recoveryReportSheet(wb, data);
+    else if (k === "uncommitted_ew") uncommittedEwSheet(wb, data);
+    else if (k === "aconex_report") aconexSheet(wb, data);
     else if (k === "level1" || k === "level2" || k.toUpperCase() === "A" || k.toUpperCase() === "B") {
       if (!costDone) costPair(wb, data, wantsL1 ? "Level 1 - Executive" : null, wantsL2 ? "Level 2 - Detailed" : null);
       costDone = true;
@@ -920,6 +926,112 @@ function execSheet(wb: ExcelJS.Workbook, d: ReportData) {
 }
 
 /** Period Summary – the key period movements as the directors get them, on one sheet. */
+/** Cost recovery: accommodation invoices and customs duties per contractor, with the tracker rows behind them. */
+export function recoveryReportSheet(wb: ExcelJS.Workbook, d: ReportData) {
+  const acc = getAccommodationSummary(d.recovery.accommodation);
+  const cus = getCustomsSummary(d.recovery.customs, d.registers.changes?.rows ?? []);
+  const ws = wb.addWorksheet("Cost Recovery");
+  [44, 22, 18, 18, 18, 18, 18, 18, 40].forEach((w, i) => (ws.getColumn(i + 1).width = w));
+  titleBlock(ws, "Cost Recovery – Accommodation & Customs Duty", sub(d), 9);
+  const section = (t: string) => {
+    ws.addRow([]);
+    ws.addRow([t]).font = { bold: true, size: 11, color: { argb: NAVY } };
+  };
+  const moneyCells = (r: ExcelJS.Row, from: number, to: number) => {
+    for (let i = from; i <= to; i++) r.getCell(i).numFmt = MONEY_FMT;
+  };
+  section(`Accommodation cost recovery${acc.asOf ? ` – tracker as of ${formatDate(acc.asOf)}` : ""}`);
+  header(ws.addRow(["Contractor", "Invoiced (incl. VAT)", "Received + recovered", "Offset via IPC", "Outstanding", "Withheld in IPC", "To settle in FA", "Lease agreements", "Tracker note"]));
+  for (const c of acc.byContractor) moneyCells(ws.addRow([c.contractor, c.totals.invoiced, c.totals.received, c.totals.offset, c.totals.outstanding, c.totals.withheld, c.totals.settleInFa, c.totals.rows, c.note]), 2, 7);
+  moneyCells(totalRow(ws.addRow(["Total", acc.totals.invoiced, acc.totals.received, acc.totals.offset, acc.totals.outstanding, acc.totals.withheld, acc.totals.settleInFa, acc.totals.rows, ""])), 2, 7);
+  if (!acc.totals.rows) ws.addRow(["No accommodation invoice tracker has been uploaded for this project yet."]);
+
+  section(`Customs duty recovery${cus.asOf ? ` – tracker as of ${formatDate(cus.asOf)}` : ""}`);
+  header(ws.addRow(["Contractor", "Who pays per contract", "Paid by RSG", "To recover", "Recovered by DVO", "Still to recover", "EWN value", "Remaining to pay", "DVO recorded"]));
+  for (const c of cus.byContractor) moneyCells(ws.addRow([c.contractor, c.payer, c.totals.rsgPaid, c.totals.toRecover, c.totals.recoveredByDvo, c.totals.stillToRecover, c.totals.ewn, c.totals.remainingToPay, c.dvoNote]), 3, 8);
+  moneyCells(totalRow(ws.addRow(["Total", "", cus.totals.rsgPaid, cus.totals.toRecover, cus.totals.recoveredByDvo, cus.totals.stillToRecover, cus.totals.ewn, cus.totals.remainingToPay, ""])), 3, 8);
+  if (!cus.totals.rows) ws.addRow(["No customs recovery tracker has been uploaded for this project yet."]);
+
+  // the tracker rows themselves, one sheet each
+  for (const key of ["accommodation_recovery", "customs_recovery"] as const) {
+    const def = getRegisterDef(key)!;
+    const rows = key === "accommodation_recovery" ? d.recovery.accommodation : d.recovery.customs;
+    if (!rows.length) continue;
+    const ws2 = wb.addWorksheet(def.title.slice(0, 31));
+    titleBlock(ws2, def.title, sub(d), 8);
+    registerBlock(ws2, def, rows, "live");
+  }
+}
+
+/** The Aconex control account export against the cost report: totals, then every line with the difference per figure. */
+export function aconexSheet(wb: ExcelJS.Workbook, d: ReportData) {
+  const rec = buildAconexReconciliation(d);
+  const ws = wb.addWorksheet("Aconex Cost Check");
+  const cols = ["Line", "Name", "Contractor", "Status", ...ACONEX_MEASURES.flatMap((m) => [`${m.label} – Aconex`, `${m.label} – dashboard`, `${m.label} – difference`])];
+  [24, 40, 28, 16, ...ACONEX_MEASURES.flatMap(() => [18, 18, 16])].forEach((w, i) => (ws.getColumn(i + 1).width = w));
+  titleBlock(ws, `Aconex Cost Check – ${d.programme.name} (${d.programme.code})`, `${sub(d)}${rec.asOf ? ` · export uploaded ${formatDate(rec.asOf)}` : ""} · differences under SAR ${rec.counts.tolerance} are rounding`, cols.length);
+  if (!rec.counts.aconex) {
+    ws.addRow(["No Aconex control account export has been uploaded for this project yet."]);
+    return;
+  }
+  ws.addRow([`${rec.counts.matched} lines compared · ${rec.counts.differing} with a difference · ${rec.aconexOnly.length} only in Aconex · ${rec.dashboardOnly.length} only on the dashboard. A contract differs when its commitments, estimate at completion or incurred to date disagree; a budget hold when its budget or estimate at completion does. Approved budget, DVOs and PVOs on a contract are for information (the two systems hold them on different bases).`]).font = { italic: true, color: { argb: XL.muted } };
+  ws.addRow([]);
+  header(ws.addRow(["Totals", "", "", "", ...ACONEX_MEASURES.flatMap((m) => [`${m.label} – Aconex`, `${m.label} – dashboard`, `${m.label} – difference`])]));
+  const tr = ws.addRow(["Total", d.programme.name, "", "", ...ACONEX_MEASURES.flatMap((m) => [rec.totals.aconex[m.key], rec.totals.dashboard[m.key], rec.totals.diff[m.key]])]);
+  for (let i = 5; i <= cols.length; i++) tr.getCell(i).numFmt = MONEY_FMT;
+  totalRow(tr);
+  ws.addRow([]);
+  header(ws.addRow(cols));
+  ws.getRow(ws.rowCount).height = 40;
+  const put = (l: (typeof rec.lines)[number]) => {
+    const status = l.status === "matched" ? (l.differs.length ? "differs" : "agrees") : l.status === "aconex_only" ? "only in Aconex" : "only on dashboard";
+    const row = ws.addRow([l.code || l.aconexCode, l.name, l.contractor, status, ...ACONEX_MEASURES.flatMap((m) => [l.aconex[m.key], l.dashboard[m.key], l.diff[m.key]])]);
+    for (let i = 5; i <= cols.length; i++) row.getCell(i).numFmt = MONEY_FMT;
+    ACONEX_MEASURES.forEach((m, j) => {
+      const c = row.getCell(7 + j * 3);
+      if (l.status === "matched" && measureDecides(m, l.rowType) && Math.abs(l.diff[m.key] ?? 0) >= rec.counts.tolerance) c.font = { bold: true, color: { argb: "FFB91C1C" } };
+    });
+    if (l.status !== "matched") row.getCell(4).font = { color: { argb: "FFB45309" } };
+  };
+  sectionRow(ws, "Discrepancies (largest first) and lines only one side knows about", cols.length);
+  for (const l of [...rec.discrepancies, ...rec.aconexOnly, ...rec.dashboardOnly]) put(l);
+  sectionRow(ws, "Every line", cols.length);
+  for (const l of rec.lines) put(l);
+}
+
+/** The consolidated "Uncommitted Costs and Early Warnings" table in the programme-wide Level 5 layout, ready to paste. */
+export function uncommittedEwSheet(wb: ExcelJS.Workbook, d: ReportData) {
+  const t = buildUncommittedTable(d);
+  const ws = wb.addWorksheet("Uncommitted & Early Warnings");
+  const cols = ["Program", "Code", "Name", "Contractor", "Current Approved Budget", "Total Commitments (Approved & Pending)", "VO Under Process", "EOT Claims", "Other Claims", "Identified Uncommitted Scope (RFC)", "Early Warnings (cost report L)", "Accommodation Cost Recovery (outstanding)", "Customs Duty Recovery (to recover)", "Total Uncommitted", "Uncommitted / Not Required", "Estimate at Completion", "Basis"];
+  [10, 30, 44, 30, 20, 20, 18, 16, 16, 18, 18, 18, 18, 18, 18, 20, 50].forEach((w, i) => (ws.getColumn(i + 1).width = w));
+  titleBlock(ws, `Uncommitted Costs and Early Warnings – ${d.programme.name} (${d.programme.code})`, `${sub(d)}${t.asOf.accommodation ? ` · accommodation tracker as of ${formatDate(t.asOf.accommodation)}` : ""}${t.asOf.customs ? ` · customs tracker as of ${formatDate(t.asOf.customs)}` : ""}`, cols.length);
+  header(ws.addRow(cols));
+  ws.getRow(ws.rowCount).height = 42;
+  const program = d.programme.code.replace(/^\d/, "P").slice(0, 3);
+  const put = (r: typeof t.total, style?: "category" | "total") => {
+    const row = ws.addRow([program, r.kind === "line" ? r.code : "", r.name, r.contractor, r.budget, r.commitments, r.voUnderProcess, r.eotClaims, r.otherClaims, r.uncommittedScope, r.earlyWarnings, r.accommodationRecovery, r.customsRecovery, r.totalUncommitted, r.notRequired, r.eac, r.note]);
+    for (let i = 5; i <= 16; i++) row.getCell(i).numFmt = MONEY_FMT;
+    if (style === "total") totalRow(row);
+    else if (style === "category") {
+      row.font = { bold: true, color: { argb: NAVY } };
+      row.eachCell({ includeEmpty: true }, (c) => (c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: XL.subtotalFill } }));
+    }
+    return row;
+  };
+  for (const r of t.rows) put(r, r.kind === "category" ? "category" : undefined);
+  put(t.total, "total");
+  if (t.unlinked.length) {
+    ws.addRow([]);
+    ws.addRow([`Not tied to a cost report line: ${t.unlinked.map((u) => `${u.label} – ${u.source} ${formatMoney(u.amount)}`).join("; ")}`]).font = { italic: true, color: { argb: XL.muted } };
+  }
+  ws.addRow([]);
+  ws.addRow(["Current Approved Budget = cost report column G (latest budget incl. transfers); Total Commitments = column I (awarded + DVOs); VO Under Process = column J (PVOs); EOT / Other Claims = column M split by claim type; Identified Uncommitted Scope = column K (RFCs); Early Warnings = column L; Total Uncommitted = J + K + L + M; Uncommitted / Not Required = G − I; Estimate at Completion = column N. The two recoveries are what the trackers show as still to be recovered from the contractor of each line."]).font = { italic: true, size: 9, color: { argb: XL.muted } };
+  ws.mergeCells(ws.rowCount, 1, ws.rowCount, cols.length);
+  ws.getRow(ws.rowCount).alignment = { wrapText: true, vertical: "top" };
+  ws.getRow(ws.rowCount).height = 48;
+}
+
 export function periodSummarySheet(wb: ExcelJS.Workbook, d: ReportData) {
   const ps = buildPeriodSummary(d, { name: "" });
   const ws = wb.addWorksheet("Period Summary");
