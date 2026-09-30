@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import { pathToFileURL } from "node:url";
 import path from "node:path";
 /**
  * A PDF read by position rather than by text order: the RSG forms are tables, and the value of a
@@ -37,10 +39,17 @@ export function pdfjsOptions(): Record<string, unknown> {
   const base = path.join(process.cwd(), "node_modules", "pdfjs-dist");
   return { useSystemFonts: true, disableFontFace: true, isEvalSupported: false, standardFontDataUrl: `${base}/standard_fonts/`, cMapUrl: `${base}/cmaps/`, cMapPacked: true, verbosity: 0 };
 }
+/** the pdf.js module with its worker pointed at the file in node_modules, wherever the code runs from */
+async function loadPdfjs() {
+  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const worker = path.join(process.cwd(), "node_modules", "pdfjs-dist", "legacy", "build", "pdf.worker.mjs");
+  if (fs.existsSync(worker)) pdfjs.GlobalWorkerOptions.workerSrc = pathToFileURL(worker).href;
+  return pdfjs;
+}
 
 export async function readPositioned(bytes: Buffer): Promise<PosPage[]> {
   try {
-    const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+    const pdfjs = await loadPdfjs();
     const doc = await pdfjs.getDocument({ data: new Uint8Array(bytes), ...pdfjsOptions() }).promise;
     const pages: PosPage[] = [];
     for (let p = 1; p <= doc.numPages; p++) {
@@ -338,7 +347,7 @@ const apply = (m: Matrix, x: number, y: number) => ({ x: m[0] * x + m[2] * y + m
 export async function readFills(bytes: Buffer, pageNos?: number[]): Promise<Map<number, Fill[]>> {
   const out = new Map<number, Fill[]>();
   try {
-    const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+    const pdfjs = await loadPdfjs();
     const doc = await pdfjs.getDocument({ data: new Uint8Array(bytes), ...pdfjsOptions() }).promise;
     const OPS = pdfjs.OPS as Record<string, number>;
     const FILLS = new Set([OPS.fill, OPS.eoFill, OPS.fillStroke, OPS.eoFillStroke, OPS.closeFillStroke, OPS.closeEOFillStroke]);

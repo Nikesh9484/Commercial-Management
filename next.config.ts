@@ -31,7 +31,9 @@ const nextConfig: NextConfig = {
   // better-sqlite3 is a native Node module; it must not be bundled. The document libraries are kept
   // external too, so one copy is loaded from node_modules and shared by every route that uses it
   // instead of a bundled copy per route – that alone keeps the server well under the 512 MB plan.
-  serverExternalPackages: ["better-sqlite3", "pdf-parse", "mammoth", "pptxgenjs", "exceljs", "pdfkit", "docx", "jszip", "@anthropic-ai/sdk", "@aws-sdk/client-s3"],
+  // pdfjs-dist must load from node_modules as well: bundled, it looks for its worker beside the bundle
+  // chunk, which the build does not always place there, and every PDF then reads as empty.
+  serverExternalPackages: ["better-sqlite3", "pdf-parse", "pdfjs-dist", "pdf-lib", "@pdf-lib/fontkit", "mammoth", "pptxgenjs", "exceljs", "pdfkit", "docx", "jszip", "@anthropic-ai/sdk", "@aws-sdk/client-s3"],
   poweredByHeader: false,
   async headers() {
     return [{ source: "/(.*)", headers: securityHeaders }];

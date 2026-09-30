@@ -321,6 +321,7 @@ export function PackEditor({ type, initial, docs: initialDocs, canManage, templa
 
 function SlotRow({ slot, docs, slots, canManage, busy, onUpload, onMove, onPages, onRemove }: { slot: PackSlot; docs: PackDoc[]; slots: PackSlot[]; canManage: boolean; busy: boolean; onUpload: (files: FileList | null) => void; onMove: (d: PackDoc, slot: string) => void; onPages: (d: PackDoc, pages: string) => void; onRemove: (d: PackDoc) => void }) {
   const input = useRef<HTMLInputElement>(null);
+  const dirInput = useRef<HTMLInputElement>(null);
   const reads = slot.key === REFERENCE_SLOT ? "read for the particulars, figures, wording and signatories" : slot.key === "rfc" || slot.key === "details" ? "read for the subject, scope and justification" : slot.key === "cost" ? "read for the value" : slot.key === "pvo" ? "read for the PVO number, value and title" : null;
   return (
     <li className="rounded border border-line">
@@ -337,8 +338,12 @@ function SlotRow({ slot, docs, slots, canManage, busy, onUpload, onMove, onPages
         {canManage && (
           <>
             <input ref={input} type="file" multiple className="hidden" onChange={(e) => { onUpload(e.target.files); e.target.value = ""; }} />
-            <button className="btn btn-xs btn-secondary" onClick={() => input.current?.click()} disabled={busy}>
-              <Upload size={12} /> Upload
+            <button className="btn btn-xs btn-secondary" onClick={() => input.current?.click()} disabled={busy} title="One or several files of any type into this entry">
+              <Upload size={12} /> Files
+            </button>
+            <input ref={dirInput} type="file" multiple className="hidden" {...({ webkitdirectory: "", directory: "" } as Record<string, string>)} onChange={(e) => { onUpload(e.target.files); e.target.value = ""; }} />
+            <button className="btn btn-xs btn-secondary" onClick={() => dirInput.current?.click()} disabled={busy} title="A whole folder into this entry">
+              <FolderUp size={12} /> Folder
             </button>
           </>
         )}

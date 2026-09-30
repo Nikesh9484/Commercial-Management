@@ -130,7 +130,7 @@ export function DocumentLibrary({ library, info, docs: initial, contracts, contr
 
   async function upload(list: FileList | null) {
     if (!list || !list.length) return;
-    const picked = Array.from(list).filter((f) => !/^(\.|~\$|thumbs\.db$|desktop\.ini$)/i.test(f.name) && /\.(pdf|docx?|dotx|txt|rtf|xlsx|msg|eml|png|jpe?g)$/i.test(f.name));
+    const picked = Array.from(list).filter((f) => !/^(\.|~\$|thumbs\.db$|desktop\.ini$)/i.test(f.name));
     if (!picked.length) return toast("No PDF or Word files were selected.", "error");
     const CHUNK = 256 * 1024;
     let added = 0;
@@ -304,7 +304,7 @@ export function DocumentLibrary({ library, info, docs: initial, contracts, contr
               <button className="btn btn-secondary" onClick={() => dirInput.current?.click()} disabled={!!progress}>
                 <FolderOpen size={16} /> Add a folder
               </button>
-              <input ref={filesInput} type="file" multiple className="hidden" accept=".pdf,.doc,.docx,.dotx,.txt,.rtf,.msg,.eml,.xlsx,.png,.jpg,.jpeg" onChange={(e) => { upload(e.target.files); e.target.value = ""; }} />
+              <input ref={filesInput} type="file" multiple className="hidden" onChange={(e) => { upload(e.target.files); e.target.value = ""; }} />
               <input ref={dirInput} type="file" multiple className="hidden" {...({ webkitdirectory: "", directory: "" } as Record<string, string>)} onChange={(e) => { upload(e.target.files); e.target.value = ""; }} />
             </div>
           </div>

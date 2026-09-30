@@ -270,9 +270,13 @@ function Row({ r, periodId, category, canManage, open, onToggle }: { r: KpiRow; 
                           {mine.length === 0 && <span className="text-[11px] text-amber-700">nothing uploaded</span>}
                           {canManage && (
                             <>
-                              <input ref={(el) => { slotInputs.current[sec] = el; }} type="file" multiple className="hidden" accept=".pdf,.png,.jpg,.jpeg" onChange={(e) => { upload(e.target.files, sec); e.target.value = ""; }} />
-                              <button className="btn btn-xs btn-secondary" onClick={() => slotInputs.current[sec]?.click()} disabled={!!progress}>
-                                <Upload size={12} /> Upload
+                              <input ref={(el) => { slotInputs.current[sec] = el; }} type="file" multiple className="hidden" onChange={(e) => { upload(e.target.files, sec); e.target.value = ""; }} />
+                              <button className="btn btn-xs btn-secondary" onClick={() => slotInputs.current[sec]?.click()} title="One or several files of any type into this part">
+                                <Upload size={12} /> Files
+                              </button>
+                              <input ref={(el) => { slotInputs.current[`${sec}:dir`] = el; }} type="file" multiple className="hidden" {...({ webkitdirectory: "", directory: "" } as Record<string, string>)} onChange={(e) => { upload(e.target.files, sec); e.target.value = ""; }} />
+                              <button className="btn btn-xs btn-secondary" onClick={() => slotInputs.current[`${sec}:dir`]?.click()} title="A whole folder into this part">
+                                <FolderUp size={12} /> Folder
                               </button>
                             </>
                           )}
