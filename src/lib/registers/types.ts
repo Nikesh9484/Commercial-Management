@@ -168,6 +168,7 @@ export const REPORTER_PATHS = [
   "/api/email-report",
   "/api/custom-report",
   "/api/registers",
+  "/api/kpi",
   "/api/cost-report",
   "/api/cashflow",
   "/api/context",

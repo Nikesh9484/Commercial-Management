@@ -32,6 +32,7 @@ const NAMES: Record<string, string> = {
   recovery_report: "Cost_Recovery_Accommodation_Customs",
   uncommitted_ew: "Uncommitted_Costs_and_Early_Warnings",
   aconex_report: "Aconex_Cost_Check",
+  kpi_register: "KPI_F1_Open_VO_Register",
   deck: "Cost_Report_Presentation",
   dashboard: "Commercial_Dashboard",
 };

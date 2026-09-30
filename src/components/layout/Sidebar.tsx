@@ -28,6 +28,7 @@ import {
   SlidersHorizontal,
   Sparkles,
   HandCoins,
+  Target,
   X,
   Palette,
   Users,
@@ -129,6 +130,7 @@ export function Sidebar({ open, onClose, role, project }: { open: boolean; onClo
               {link("/reports", "Reports & downloads", FolderDown)}
               {link("/reports/period-summary", "Period Summary", Sparkles)}
               {link("/reports/uncommitted-ew", "Uncommitted & Early Warnings", Sparkles)}
+              {link("/reports/kpi", "KPI Report – F1 VOs", Target)}
               {link("/reports/builder", "Customise my reports", SlidersHorizontal)}
               <a href="/user-guide.pdf" target="_blank" rel="noopener" className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-blue-100/80 hover:bg-white/10 hover:text-white">
                 <FileText size={18} className="shrink-0" />
@@ -159,6 +161,7 @@ export function Sidebar({ open, onClose, role, project }: { open: boolean; onClo
           {link("/reports", "Reports & downloads", FolderDown)}
           {link("/reports/period-summary", "Period Summary", Sparkles)}
           {link("/reports/uncommitted-ew", "Uncommitted & Early Warnings", Sparkles)}
+              {link("/reports/kpi", "KPI Report – F1 VOs", Target)}
           {link("/reports/builder", "Customise my reports", SlidersHorizontal)}
           <a href="/user-guide.pdf" target="_blank" rel="noopener" className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-blue-100/80 hover:bg-white/10 hover:text-white">
             <FileText size={18} className="shrink-0" />

@@ -20,6 +20,7 @@ import { getRegisterDef } from "../registers";
 import { getAccommodationSummary, getCustomsSummary } from "../recovery/summary";
 import { buildUncommittedTable } from "./uncommitted-ew";
 import { buildAconexReconciliation, ACONEX_MEASURES, measureDecides } from "../recovery/aconex";
+import { kpiRegisterSheet } from "./kpi-excel";
 
 import { XL, MONEY_FMT, titleBlock, headerRow, totalRow, sectionRow, sumFormula, finishWorkbook, setWorkbookLink } from "../xlsx-style";
 import { writeLevel1, writeLevel2, type Level2Ref } from "../cost-report/excel";
@@ -72,6 +73,7 @@ export async function renderSectionsExcel(data: ReportData, keys: string[], link
     else if (k === "recovery_report") recoveryReportSheet(wb, data);
     else if (k === "uncommitted_ew") uncommittedEwSheet(wb, data);
     else if (k === "aconex_report") aconexSheet(wb, data);
+    else if (k === "kpi_register") kpiRegisterSheet(wb, data);
     else if (k === "level1" || k === "level2" || k.toUpperCase() === "A" || k.toUpperCase() === "B") {
       if (!costDone) costPair(wb, data, wantsL1 ? "Level 1 - Executive" : null, wantsL2 ? "Level 2 - Detailed" : null);
       costDone = true;

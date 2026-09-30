@@ -28,6 +28,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
         item("recovery_report", "Cost Recovery – Accommodation & Customs Duty", "What contractors owe RSG: accommodation charges invoiced, recovered through IPCs, withheld and outstanding, and customs duties RSG paid on their imports with the recovery position – per contractor, with the tracker rows"),
         item("aconex_report", "Aconex Cost Check", "The Aconex control account export reconciled line by line against the cost report: budget, commitments, approved and pending changes, estimate at completion and incurred to date, with every difference listed"),
         item("uncommitted_ew", "Uncommitted Costs and Early Warnings (Level 5 layout)", "For this report: every cost report line with its budget, commitments, VOs under process, EOT and other claims, uncommitted scope, early warnings and estimate at completion in the programme-wide consolidated layout, with the early warnings behind column L listed contract by contract – on screen, PDF or Excel ready to paste"),
+        item("kpi_register", "KPI Report – F1 Variation Orders (Open VO Register)", "The head office's monthly KPI on variation orders for this report: Closed KPIs (DVO recorded as Approved) and Open KPIs (PVO or VO recorded, DVO pending) in the Open VO Register layout, with what moved since the previous report – on screen with the supporting documents and PDF packs, or as Excel ready to paste into the register"),
         item("dashboard", "Commercial Dashboard (Excel)", "The whole dashboard in one workbook: headline tiles, native Excel charts and one sheet per module with live formulas over the registers"),
         // the Excel edition is a working copy of the whole app (imports, locking, users): for the people who keep the data
         ...(isEditorRole(user.role) ? [item("excel-app", "Commercial Dashboard – Excel edition (.xlsm)", "Work entirely in Excel: sign in with the same users and roles, import the monthly report and stand-alone workbooks, lock periods, export PDF – loaded with today's data")] : []),
@@ -135,6 +136,15 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
                             <FileDown size={14} /> PDF
                           </a>
                           <a className="btn btn-sm btn-excel" href={`/api/export?section=uncommitted_ew&format=xlsx${pid}`}>
+                            <FileSpreadsheet size={14} /> Excel
+                          </a>
+                        </>
+                      ) : it.section === "kpi_register" ? (
+                        <>
+                          <Link className="btn btn-sm btn-summary" href={`/reports/kpi${period ? `?period=${period.id}` : ""}`}>
+                            <Sparkles size={14} /> Open
+                          </Link>
+                          <a className="btn btn-sm btn-excel" href={`/api/export?section=kpi_register&format=xlsx${pid}`}>
                             <FileSpreadsheet size={14} /> Excel
                           </a>
                         </>
