@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { withUser, readJson } from "@/lib/api";
 import { autoValues } from "@/lib/packs/data";
-import { caseValues, getCase, removeCase, updateCase } from "@/lib/packs/store";
+import { addSlot, caseValues, getCase, removeCase, updateCase } from "@/lib/packs/store";
 import type { PackValues } from "@/lib/packs/shared";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -16,6 +16,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
     const cur = getCase(Number(id));
     if (!cur) return NextResponse.json({ error: "That pack is no longer here." }, { status: 404 });
     const body = await readJson(req);
+    if (body.add_slot) return NextResponse.json({ case: addSlot(cur.id, user) });
     if (body.refresh) {
       const auto = autoValues(cur.pack_type, cur.programme_id, cur.source_id, user);
       const merged: PackValues = { ...caseValues(cur) };

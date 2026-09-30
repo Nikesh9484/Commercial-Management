@@ -5,7 +5,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { getAppContext } from "@/lib/context";
 import { formatDateTime } from "@/lib/format";
 import { listSources } from "@/lib/packs/data";
-import { packRefLabel, packType, PACK_TYPES, type TemplateInspection } from "@/lib/packs/shared";
+import { packRefLabel, packType, PACK_TYPES, slotsFor, type TemplateInspection } from "@/lib/packs/shared";
 import { canManagePacks, countDocs, getTemplate, listCases } from "@/lib/packs/store";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Chip } from "@/components/ui/Chip";
@@ -66,12 +66,19 @@ export default async function PackCategoryPage({ params }: { params: Promise<{ t
             <p className="mt-2 text-xs text-muted">A viewer account can only look at the packs.</p>
           )}
           <div className="mt-3 text-xs text-muted">
-            The compiled PDF takes the {t.short} form first, then {t.slots.length} numbered parts:
+            Upload entries for a {t.short} pack:
             <ol className="mt-1 list-decimal space-y-0.5 pl-5">
-              {t.slots.map((s) => (
+              {slotsFor(t).map((s) => (
                 <li key={s.key}>
                   <b className="text-ink">{s.label}</b> – {s.hint}
                 </li>
+              ))}
+            </ol>
+            <div className="mt-2">More attachment slots can be added on the pack itself.</div>
+            <div className="mt-2">The compiled PDF is made of:</div>
+            <ol className="mt-1 list-decimal space-y-0.5 pl-5">
+              {t.packOrder.map((p) => (
+                <li key={p}>{p}</li>
               ))}
             </ol>
           </div>

@@ -79,10 +79,12 @@ function common(programmeId: number, sur: Surround, user: UserInfo): PackValues 
   const code = s(sur.programme?.code);
   const name = s(sur.programme?.name);
   const team = (db.prepare("SELECT role FROM project_team WHERE programme_id = ? AND lower(name) = lower(?) LIMIT 1").get(programmeId, user.name) as { role?: string } | undefined)?.role ?? "";
-  const programNo = code.match(/(\d{2})$/)?.[1] ?? code.slice(-2);
+  // "1TB01031" → Program 01: the RSG forms carry the programme number after the destination code, and
+  // both Triple Bay projects sit under Program 01 – Marina Village
+  const programNo = code.match(/^1TB(\d{2})/)?.[1] ?? code.slice(-2);
   return {
     destination: "AMAALA Destination",
-    program_name: `Program ${programNo} - ${name.replace(/\s*\(.*?\)\s*$/, "")}`.replace(/^Program  - /, ""),
+    program_name: `Program ${programNo} - Marina Village`,
     program_no: programNo,
     project_name: s(sur.asset?.name) || name,
     project_code: s(sur.asset?.code) || code,
@@ -100,6 +102,41 @@ function common(programmeId: number, sur: Surround, user: UserInfo): PackValues 
   };
 }
 
+export interface ChangeLogRow {
+  description: string;
+  rfc: string;
+  pvo: string;
+  vo: string;
+  dvo: string;
+  pvoValue: number | null;
+  dvoValue: number | null;
+  thisOne: boolean;
+}
+
+/** The change log of a contract as the RSG packs carry it: every change on the same cost report line with its RFC, PVO, VO and DVO refs and values. */
+export function changeLogRows(programmeId: number, costLineId: number | null, contractorId: number | null, thisId: number | null): ChangeLogRow[] {
+  const db = getDb();
+  const rows = (costLineId
+    ? db.prepare("SELECT * FROM changes WHERE programme_id = ? AND cost_line_id = ? ORDER BY date_raised, item_no").all(programmeId, costLineId)
+    : contractorId
+      ? db.prepare("SELECT * FROM changes WHERE programme_id = ? AND contractor_id = ? ORDER BY date_raised, item_no").all(programmeId, contractorId)
+      : []) as Row[];
+  return rows.map((r) => ({
+    description: s(r.description),
+    rfc: s(r.rfc_ref),
+    pvo: s(r.pvo_ref),
+    vo: s(r.vo_ref),
+    dvo: s(r.dvo_ref) || s(r.dvo_avi_ref),
+    pvoValue: n(r.pvo_tracker_amount) ?? n(r.dvo_planned_value),
+    dvoValue: n(r.dvo_actual_value) ?? n(r.dvo_tracker_amount),
+    thisOne: Number(r.id) === thisId,
+  }));
+}
+
+function changeLogText(rows: ChangeLogRow[]): string {
+  return rows.map((r) => `${r.description} – ${[r.rfc, r.pvo, r.vo, r.dvo].map((x) => x || "-").join(" – ")} – PVO ${r.pvoValue === null ? "-" : money(r.pvoValue)} – DVO ${r.dvoValue === null ? "-" : money(r.dvoValue)}${r.thisOne ? " – (this one)" : ""}`).join("\n");
+}
+
 /** The budget position around a change: its cost report line and the budget hold of the same asset. */
 function budgetPosition(programmeId: number, lineId: number | null, assetId: number | null, thisValue: number | null): PackValues {
   const out: PackValues = {};
@@ -108,16 +145,17 @@ function budgetPosition(programmeId: number, lineId: number | null, assetId: num
     const report = computeCostReport(programmeId, periodId ? Number(periodId) : null);
     const line = lineId ? report.lines.find((l) => l.id === lineId) : undefined;
     if (line) {
-      out.approved_contract = money(line.G);
+      out.approved_contract = money(line.I - line.H);
       out.approved_dvos = money(line.H);
       out.approved_pvos = money(line.J);
+      out.budget_to_line = `${line.asset_code}.${line.code}`;
     }
     // the budget hold of the same cost category (construction, professional services…) and asset, else any hold of the asset
     const holds = report.lines.filter((l) => l.is_budget_hold);
     const hold = holds.find((l) => line && l.category === line.category && (!assetId || l.asset_id === assetId)) ?? holds.find((l) => line && l.category === line.category) ?? holds.find((l) => !assetId || l.asset_id === assetId) ?? holds[0];
     if (hold) {
       const available = Math.round((hold.G - hold.H - hold.J) * 100) / 100;
-      out.budget_line = hold.code;
+      out.budget_line = `${hold.asset_code}.${hold.code}`;
       out.budget_available = money(available);
       out.remaining_budget = money(available);
       out.revised_budget = money(available - (thisValue ?? 0));
@@ -162,13 +200,28 @@ function changeValues(type: PackTypeKey, programmeId: number, id: number, user: 
       v.date = s(c.rfc_date) || v.date;
       Object.assign(v, budgetPosition(programmeId, n(c.cost_line_id), n(c.asset_id), n(c.rfc_tracker_amount) ?? pvoValue));
       break;
-    case "pvo":
+    case "pvo": {
       ref = s(c.pvo_ref) || s(c.item_no);
       v.add = money(pvoValue);
       v.total_value = money(pvoValue);
+      v.cost_items = pvoValue === null ? "" : `1 – ${title} – 0 – ${money(pvoValue)}`;
       v.date = s(c.pvo_date) || v.date;
       Object.assign(v, budgetPosition(programmeId, n(c.cost_line_id), n(c.asset_id), pvoValue));
+      const log = changeLogRows(programmeId, n(c.cost_line_id), n(c.contractor_id), id);
+      const approvedDvos = log.reduce((t, r) => t + (r.dvo && r.dvoValue !== null ? r.dvoValue : 0), 0);
+      const pendingPvos = log.reduce((t, r) => t + (r.pvo && !r.dvo && !r.thisOne && r.pvoValue !== null ? r.pvoValue : 0), 0);
+      v.original_contract = money(contractPrice);
+      v.current_revised = contractPrice === null ? "" : money(contractPrice + approvedDvos);
+      v.approved_dvos = v.approved_dvos || money(approvedDvos);
+      v.approved_pvos = money(pendingPvos);
+      v.potential_revised = contractPrice === null ? "" : money(contractPrice + approvedDvos + pendingPvos + (pvoValue ?? 0));
+      v.original_completion = s(sur.contract?.original_completion_date);
+      v.approved_eot = sur.contract?.eot_granted_days === null || sur.contract?.eot_granted_days === undefined ? "" : String(sur.contract.eot_granted_days);
+      v.current_completion = s(sur.contract?.revised_completion_date) || s(sur.contract?.original_completion_date);
+      v.change_log = changeLogText(log);
+      v.eac_included = "Yes";
       break;
+    }
     case "vo":
       ref = s(c.vo_ref) || s(c.item_no);
       v.vo_value = money(voValue);
@@ -191,14 +244,30 @@ function changeValues(type: PackTypeKey, programmeId: number, id: number, user: 
       v.this_eot = timeImpact === null ? "" : String(timeImpact);
       v.total_eot = String((n(sur.contract?.eot_granted_days) ?? 0) + (timeImpact ?? 0));
       v.date = s(c.dvo_date) || s(c.dvo_agreement_date) || v.date;
-      v.description = `${v.dvo_no || "DVO"} - ${title}`;
+      v.pvo_value = money(pvoValue);
+      v.contract_ref = v.contract_no;
+      v.commencement_date = "";
+      v.revised_completion = s(sur.contract?.revised_completion_date) || s(sur.contract?.original_completion_date);
+      v.description = `This ${v.dvo_no || "DVO"} confirms the change associated with the following instruction issued:\n1. Variation Order ${s(c.vo_ref) || "No. -"}${s(c.vo_aconex_ref) ? ` Ref: ${s(c.vo_aconex_ref)}` : ""}${s(c.vo_date) ? ` dated ${s(c.vo_date)}` : ""} for ${title}.`;
+      v.cost_items = dvoValue === null ? "" : `${s(c.vo_ref) || "VO"} – ${title} – 0 – ${money(dvoValue)}`;
+      if (pvoValue !== null && dvoValue !== null) {
+        const diff = Math.round((pvoValue - dvoValue) * 100) / 100;
+        v.movement_note = diff === 0 ? "The DVO value equals the approved PVO value." : `The DVO value is ${diff > 0 ? "lower" : "higher"} than the approved PVO value, with a variance of SAR ${money(Math.abs(diff))}.`;
+      }
+      Object.assign(v, budgetPosition(programmeId, n(c.cost_line_id), n(c.asset_id), dvoValue));
+      v.change_log = changeLogText(changeLogRows(programmeId, n(c.cost_line_id), n(c.contractor_id), id));
       break;
     case "rfa":
       ref = s(c.item_no);
       v.rfa_no = s(c.item_no);
       v.subject = title;
+      v.purpose = title;
       v.amount = money(pvoValue ?? dvoValue);
+      v.submittal_date = v.date;
+      v.contact = user.name;
+      v.funding_source = "";
       Object.assign(v, budgetPosition(programmeId, n(c.cost_line_id), n(c.asset_id), pvoValue));
+      v.budget_remaining = v.budget_available ? `SAR ${money(v.budget_available)} on ${v.budget_line}` : "";
       break;
     default:
       ref = s(c.item_no);
@@ -236,8 +305,16 @@ function claimValues(type: PackTypeKey, programmeId: number, id: number, user: U
   v.amount_claimed = money(c.contractor_cost);
   v.amount_assessed = money(n(c.determination_cost) ?? n(c.employer_cost) ?? n(c.engineer_cost));
   v.revision = "00";
+  v.letter_date = v.date;
+  v.claim_letter_ref = v.submission_ref;
+  v.claim_letter_date = v.submission_date;
+  v.contract_ref = v.contract_no;
+  v.contract_price = money(sur.contract?.original_contract);
+  v.contract_date = "";
+  v.attention = "";
+  v.clauses = type === "eot_ear" ? "Clause 8.4 [Extension of Time]" : "Clause 20.1 [Contractor's Claims]";
+  v.determination_clause = "Clause 3.5 [Determinations]";
   const ref = s(c.claim_no);
-  void type;
   return { values: v, ref, title };
 }
 

@@ -22,7 +22,6 @@ import {
   FolderDown,
   CalendarPlus,
   Library,
-  Wand2,
   BookOpen,
   FileSignature,
   SlidersHorizontal,
@@ -166,8 +165,6 @@ export function Sidebar({ open, onClose, role, project }: { open: boolean; onClo
               {link("/imports/accommodation", "Accommodation invoice tracker", Upload)}
               {link("/imports/customs", "Customs recovery tracker", Upload)}
               {link("/imports/aconex", "Aconex control account export", Upload)}
-              <div className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider text-blue-200/50">Automation</div>
-              {link("/automation/claim-ear", "Claim EAR", Wand2)}
             </>
           )}
           {packsMenu}

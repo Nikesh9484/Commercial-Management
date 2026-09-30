@@ -8,7 +8,8 @@ import { logAudit } from "../audit";
 import { nowIso } from "../format";
 import type { UserInfo } from "../registers/types";
 import { formatPages, keyPages, readPdfPages } from "../kpi/pages";
-import { PACK_STATUSES, packType, type PackCase, type PackDoc, type PackTemplate, type PackTypeKey, type PackValues, type TemplateInspection } from "./shared";
+import { PACK_STATUSES, packType, slotsFor, REFERENCE_SLOT, type PackCase, type PackDoc, type PackTemplate, type PackTypeKey, type PackValues, type TemplateInspection } from "./shared";
+import { extractPdfText, mergeBlank, totalFromCost, valuesFromReference, valuesFromRfc } from "./extract";
 
 export * from "./shared";
 
@@ -53,6 +54,7 @@ export function ensurePackTables(db: Database.Database) {
       status TEXT DEFAULT 'Draft',
       values_json TEXT DEFAULT '{}',
       file_name TEXT DEFAULT '',
+      extra_slots INTEGER DEFAULT 0,
       created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_pack_cases ON pack_cases(programme_id, pack_type);
@@ -75,9 +77,15 @@ export function ensurePackTables(db: Database.Database) {
   `);
 }
 
+let upgraded = false;
 function db() {
   const d = getDb();
   ensurePackTables(d);
+  if (!upgraded) {
+    const cols = new Set((d.prepare("PRAGMA table_info(pack_cases)").all() as { name: string }[]).map((c) => c.name));
+    if (!cols.has("extra_slots")) d.exec("ALTER TABLE pack_cases ADD COLUMN extra_slots INTEGER DEFAULT 0");
+    upgraded = true;
+  }
   return d;
 }
 
@@ -213,6 +221,15 @@ export function updateCase(id: number, patch: { ref?: string; title?: string; re
   return getCase(id)!;
 }
 
+/** Adds one more "Other attachment" slot to the pack. */
+export function addSlot(id: number, user: UserInfo): PackCase {
+  assertManage(user);
+  const cur = getCase(id);
+  if (!cur) throw new ValidationError("That pack is no longer here.");
+  db().prepare("UPDATE pack_cases SET extra_slots = COALESCE(extra_slots, 0) + 1, updated_at = ?, updated_by = ? WHERE id = ?").run(nowIso(), user.name, id);
+  return getCase(id)!;
+}
+
 export function removeCase(id: number, user: UserInfo) {
   assertManage(user);
   const cur = getCase(id);
@@ -241,44 +258,48 @@ export function getDoc(id: number): PackDoc | null {
   return (db().prepare("SELECT * FROM pack_docs WHERE id = ?").get(id) as PackDoc | undefined) ?? null;
 }
 
-/** Which slot a file belongs to, from the folder it came in ("3. Programme/…") or the slot's own words in its name. */
-export function guessSlot(type: PackTypeKey, relPath: string): string {
+/** Which slot a file belongs to, from the folder it came in ("3. RFC/…") or the slot's own words in its name. */
+export function guessSlot(type: PackTypeKey, relPath: string, extra = 0): string {
   const t = packType(type)!;
+  const slots = slotsFor(t, extra);
   const norm = (x: string) => x.replace(/[_\-.]+/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
   const p = relPath.replace(/\\/g, "/");
   const folder = norm(p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
   const name = norm(p.slice(p.lastIndexOf("/") + 1).replace(/\.[a-z0-9]+$/i, ""));
   for (const x of [folder, name]) {
     if (!x) continue;
-    const no = x.match(/^\s*(\d)\b/);
+    const no = x.match(/^\s*(\d{1,2})\b/);
     if (no) {
-      const s = t.slots.find((sl) => sl.no === Number(no[1]));
-      if (s) return s.key;
+      const sl = slots.find((s) => s.no === Number(no[1]));
+      if (sl) return sl.key;
     }
-    for (const s of t.slots) {
-      const words = s.label.toLowerCase().replace(/[()/–-]/g, " ").split(/\s+/).filter((w) => w.length > 3 && !/^(and|the|with|form|this|from)$/.test(w));
-      if (words.some((w) => x.includes(w))) return s.key;
+    for (const sl of slots) {
+      const words = sl.label.toLowerCase().replace(/[()/–\-]/g, " ").split(/\s+/).filter((w) => w.length > 3 && !/^(and|the|with|form|this|from|last|pack|other|attachment|files|folders|used|template)$/.test(w));
+      if (words.some((w) => x.includes(w))) return sl.key;
     }
   }
-  const dvo = /\bdvo\b|determination/.test(name);
-  const approval = /wtran|transmittal|workflow|approval|approved/.test(name);
-  if (approval) return t.slots.find((s) => /approval/i.test(s.key))?.key ?? t.slots[t.slots.length - 1].key;
-  if (dvo) return t.slots.find((s) => /vo|annex/i.test(s.key))?.key ?? t.slots[0].key;
-  return t.slots[0].key;
+  if (/\brfc\b|\bcrf\b|request for change/.test(name) && slots.some((s) => s.key === "rfc")) return "rfc";
+  if (/\bpvo\b/.test(name) && slots.some((s) => s.key === "pvo")) return "pvo";
+  if (/cost|proposal|boq|estimate|rom|price/.test(name) && slots.some((s) => s.key === "cost")) return "cost";
+  if (/drawing|dwg|sketch|layout|plan/.test(name) && slots.some((s) => s.key === "drawings")) return "drawings";
+  if (/approved|reference|template|previous/.test(name) && slots.some((s) => s.key === REFERENCE_SLOT)) return REFERENCE_SLOT;
+  const other = slots.find((s) => s.key.startsWith("other_"));
+  return other?.key ?? slots[0].key;
 }
 
-export async function addDoc(caseId: number, input: { name: string; relPath?: string; bytes: Buffer; mime?: string; slot?: string }, user: UserInfo): Promise<PackDoc> {
+export async function addDoc(caseId: number, input: { name: string; relPath?: string; bytes: Buffer; mime?: string; slot?: string }, user: UserInfo): Promise<PackDoc & { filled: string[] }> {
   assertManage(user);
   const c = getCase(caseId);
   if (!c) throw new ValidationError("That pack is no longer here.");
   const t = packType(c.pack_type)!;
   const d = db();
   const rel = String(input.relPath || input.name).replace(/\\/g, "/").replace(/^\/+/, "");
-  const slot = t.slots.some((s) => s.key === input.slot) ? String(input.slot) : guessSlot(c.pack_type, rel);
+  const slots = slotsFor(t, Number(c.extra_slots ?? 0));
+  const slot = slots.some((s) => s.key === input.slot) ? String(input.slot) : guessSlot(c.pack_type, rel, Number(c.extra_slots ?? 0));
   const read = /\.pdf$/i.test(input.name) ? await readPdfPages(input.bytes) : null;
   const pageCount = read?.count ?? 0;
-  // a compiled pack takes the key pages of Aconex approvals and forms; everything else goes in whole
-  const keyOnly = /approval/.test(slot) || /\b(vo|dvo|pvo|annex)\b/.test(slot);
+  // the approved PVO behind a DVO goes in as its cover pages and workflow approvals only; the reference pack is read, not compiled
+  const keyOnly = slot === "pvo";
   const pages = read && keyOnly ? formatPages(keyPages(read.kinds)) : "";
   const prior = d.prepare("SELECT * FROM pack_docs WHERE case_id = ? AND rel_path = ?").get(caseId, rel) as PackDoc | undefined;
   if (prior) removeDoc(prior.id, user, true);
@@ -292,7 +313,39 @@ export async function addDoc(caseId: number, input: { name: string; relPath?: st
   d.prepare("UPDATE pack_docs SET disk_path = ? WHERE id = ?").run(disk, id);
   d.prepare("UPDATE pack_cases SET updated_at = ?, updated_by = ? WHERE id = ?").run(nowIso(), user.name, caseId);
   logAudit(getDb(), { registerKey: "pack_docs", recordId: id, action: "create", user, summary: `Document packs: ${rel} added to ${t.short} ${c.ref} (${slot})` });
-  return getDoc(id)!;
+  // what the file says fills the fields still blank: the last approved pack, the RFC, the cost proposal
+  const filled = read ? await prefillFrom(c, slot, input.bytes, user) : [];
+  return { ...getDoc(id)!, filled } as PackDoc & { filled: string[] };
+}
+
+async function prefillFrom(c: PackCase, slot: string, bytes: Buffer, user: UserInfo): Promise<string[]> {
+  const t = packType(c.pack_type)!;
+  if (![REFERENCE_SLOT, "rfc", "cost", "details"].includes(slot)) return [];
+  try {
+    const pages = await extractPdfText(bytes);
+    if (!pages.length) return [];
+    let read: PackValues = {};
+    if (slot === REFERENCE_SLOT) read = valuesFromReference(pages, t);
+    else if (slot === "rfc" || slot === "details") read = valuesFromRfc(pages);
+    else if (slot === "cost") {
+      const total = totalFromCost(pages);
+      if (total) {
+        const key = t.fields.some((f) => f.key === "total_value") ? "total_value" : t.fields.some((f) => f.key === "dvo_value") ? "dvo_value" : t.fields.some((f) => f.key === "amount") ? "amount" : "rom_estimate";
+        read = { [key]: total };
+        if (t.fields.some((f) => f.key === "add") && Number(total) >= 0) read.add = total;
+        if (t.fields.some((f) => f.key === "omit") && Number(total) < 0) read.omit = String(-Number(total));
+      }
+    }
+    const cur = getCase(c.id)!;
+    const { values, filled } = mergeBlank(caseValues(cur), read, t);
+    if (filled.length) {
+      db().prepare("UPDATE pack_cases SET values_json = ?, updated_at = ?, updated_by = ? WHERE id = ?").run(JSON.stringify(values), nowIso(), user.name, c.id);
+      logAudit(getDb(), { registerKey: "pack_cases", recordId: c.id, action: "update", user, summary: `Document packs: ${t.short} ${cur.ref} – ${filled.length} field(s) read from the ${slot === REFERENCE_SLOT ? "reference pack" : slot === "cost" ? "cost proposal" : "RFC"} (${filled.join(", ")})` });
+    }
+    return filled;
+  } catch {
+    return [];
+  }
 }
 
 export function updateDoc(id: number, patch: { slot?: string; sort_order?: number; pages?: string }, user: UserInfo): PackDoc {
@@ -301,7 +354,7 @@ export function updateDoc(id: number, patch: { slot?: string; sort_order?: numbe
   if (!cur) throw new ValidationError("That document is no longer here.");
   const c = getCase(cur.case_id);
   const t = c ? packType(c.pack_type) : null;
-  const slot = patch.slot !== undefined && t?.slots.some((s) => s.key === patch.slot) ? String(patch.slot) : cur.slot;
+  const slot = patch.slot !== undefined && t && slotsFor(t, Number(c?.extra_slots ?? 0)).some((s) => s.key === patch.slot) ? String(patch.slot) : cur.slot;
   const order = typeof patch.sort_order === "number" && Number.isFinite(patch.sort_order) ? patch.sort_order : cur.sort_order;
   const pages = patch.pages !== undefined ? String(patch.pages).replace(/all/gi, "").replace(/[^0-9,\-–\s]/g, "").trim().slice(0, 200) : cur.pages;
   db().prepare("UPDATE pack_docs SET slot = ?, sort_order = ?, pages = ? WHERE id = ?").run(slot, order, pages, id);

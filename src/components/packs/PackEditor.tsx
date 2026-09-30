@@ -2,11 +2,11 @@
 
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { FileDown, FileText, FolderUp, RefreshCw, Trash2, Upload } from "lucide-react";
+import { FileDown, FileText, FolderUp, Plus, RefreshCw, Trash2, Upload } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
 import { Chip } from "@/components/ui/Chip";
 import { PAGE_KIND_LABEL, type PageKind } from "@/lib/kpi/pages";
-import { PACK_STATUSES, type PackDoc, type PackSlot, type PackValues } from "@/lib/packs/shared";
+import { PACK_STATUSES, REFERENCE_SLOT, slotsFor, type PackDoc, type PackSlot, type PackValues } from "@/lib/packs/shared";
 
 interface Field {
   key: string;
@@ -24,6 +24,8 @@ interface TypeInfo {
   groups: string[];
   fields: Field[];
   slots: PackSlot[];
+  otherSlots: number;
+  packOrder: string[];
 }
 interface Initial {
   id: number;
@@ -35,6 +37,7 @@ interface Initial {
   values: PackValues;
   sourceId: number | null;
   defaultFileName: string;
+  extraSlots: number;
 }
 
 function toBase64(blob: Blob): Promise<string> {
@@ -56,6 +59,8 @@ export function PackEditor({ type, initial, docs: initialDocs, canManage, templa
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
+  const [extra, setExtra] = useState(initial.extraSlots);
+  const slots = slotsFor({ ...type, source: "changes", sourceLabel: "", description: "", fields: [], groups: type.groups, packOrder: type.packOrder, key: type.key as never }, extra);
   const dirInput = useRef<HTMLInputElement>(null);
   const slotInputs = useRef<Record<string, HTMLInputElement | null>>({});
   const packName = head.fileName.trim() || initial.defaultFileName;
@@ -92,6 +97,7 @@ export function PackEditor({ type, initial, docs: initialDocs, canManage, templa
     if (!picked.length) return;
     const CHUNK = 256 * 1024;
     let added = 0;
+    const filled = new Set<string>();
     for (let n = 0; n < picked.length; n++) {
       const f = picked[n];
       const rel = (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name;
@@ -100,7 +106,7 @@ export function PackEditor({ type, initial, docs: initialDocs, canManage, templa
       for (let i = 0; i < count; i++) {
         setProgress(`${n + 1} of ${picked.length}: ${rel}${count > 1 ? ` (part ${i + 1} of ${count})` : ""}`);
         const data = await toBase64(f.slice(i * CHUNK, (i + 1) * CHUNK));
-        let j: { error?: string; uploadId?: string; doc?: PackDoc } = {};
+        let j: { error?: string; uploadId?: string; doc?: PackDoc & { filled?: string[] } } = {};
         try {
           const res = await fetch("/api/packs/docs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ uploadId, caseId: initial.id, name: f.name, relPath: rel, mime: f.type, size: f.size, index: i, count, data, slot }) });
           j = await res.json().catch(() => ({}));
@@ -115,13 +121,22 @@ export function PackEditor({ type, initial, docs: initialDocs, canManage, templa
         uploadId = j.uploadId ?? uploadId;
         if (j.doc) {
           const doc = j.doc;
+          for (const k of doc.filled ?? []) filled.add(k);
           setDocs((cur) => [...cur.filter((x) => x.rel_path !== doc.rel_path), doc]);
           added++;
         }
       }
     }
     setProgress(null);
-    if (added) toast(`${added} file${added === 1 ? "" : "s"} added to the pack.`);
+    if (added) toast(`${added} file${added === 1 ? "" : "s"} added to the pack.${filled.size ? ` ${filled.size} field${filled.size === 1 ? "" : "s"} read from the file – the page reloads to show them.` : ""}`);
+    if (filled.size) setTimeout(() => window.location.reload(), 1200);
+  }
+
+  async function addSlot() {
+    const res = await fetch(`/api/packs/cases/${initial.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ add_slot: true }) });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) return toast(j.error ?? "Could not add the attachment slot.", "error");
+    setExtra(Number(j.case?.extra_slots ?? extra + 1));
   }
 
   async function patchDoc(doc: PackDoc, body: { slot?: string; pages?: string }) {
@@ -264,9 +279,11 @@ export function PackEditor({ type, initial, docs: initialDocs, canManage, templa
             )}
           </div>
           {progress && <div className="mb-2 text-navy">Uploading {progress}…</div>}
-          <div className="mb-2 text-muted">The compiled pack takes the {type.short} form first, then each part below with its divider. PDF, JPG and PNG files go in; Word and Excel files are kept for reference. Aconex approvals and forms take their key pages only (the pages box shows which; change it if needed).</div>
+          <div className="mb-2 text-muted">
+            The compiled pack is made of: {type.packOrder.join(" · ")}. PDF, JPG and PNG files go in; Word and Excel files are kept for reference. The last approved document in slot {slots.find((s) => s.key === REFERENCE_SLOT)?.no ?? "–"} is read for its wording and signatories, not compiled.
+          </div>
           <ol className="space-y-2">
-            {type.slots.map((slot) => {
+            {slots.map((slot) => {
               const mine = docs.filter((d) => d.slot === slot.key);
               return (
                 <li key={slot.key} className="rounded border border-line">
@@ -298,7 +315,7 @@ export function PackEditor({ type, initial, docs: initialDocs, canManage, templa
                           {canManage && (
                             <>
                               <select className="input h-6 w-44 py-0 text-[11px]" value={d.slot} onChange={(e) => patchDoc(d, { slot: e.target.value })} title="Move to another part of the pack">
-                                {type.slots.map((s2) => (
+                                {slots.map((s2) => (
                                   <option key={s2.key} value={s2.key}>{s2.no}. {s2.label}</option>
                                 ))}
                               </select>
@@ -315,6 +332,11 @@ export function PackEditor({ type, initial, docs: initialDocs, canManage, templa
               );
             })}
           </ol>
+          {canManage && (
+            <button className="btn btn-xs btn-secondary mt-2" onClick={addSlot} title="One more numbered attachment slot">
+              <Plus size={12} /> Add attachment slot
+            </button>
+          )}
         </div>
       </div>
     </div>

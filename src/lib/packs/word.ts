@@ -1,5 +1,5 @@
 import JSZip from "jszip";
-import { AlignmentType, BorderStyle, Document, Footer, Header, Packer, PageNumber, Paragraph, ShadingType, Table, TableCell, TableRow, TextRun, VerticalAlign, WidthType } from "docx";
+import { AlignmentType, BorderStyle, Document, Footer, Header, HeadingLevel, Packer, PageBreak, PageNumber, Paragraph, ShadingType, Table, TableCell, TableOfContents, TableRow, TextRun, VerticalAlign, WidthType } from "docx";
 import { formatDate, formatMoney } from "../format";
 import { fieldForLabel, normLabel, packRefLabel, type PackField, type PackType, type PackValues, type TemplateInspection } from "./shared";
 
@@ -342,6 +342,138 @@ export async function buildDocx(type: PackType, values: PackValues, meta: WordMe
           new Paragraph({ spacing: { after: 200 }, children: [new TextRun({ text: `${packRefLabel(type.short, meta.ref)}${meta.revision ? ` · Rev. ${meta.revision}` : ""}  ·  ${meta.title}`, size: 20, color: BRONZE, font: FONT })] }),
           new Table({ width: { size: W, type: WidthType.DXA }, columnWidths: [label, value, label, value], rows }),
           new Paragraph({ spacing: { before: 200 }, children: [new TextRun({ text: `This ${type.short} is issued in accordance with the terms and conditions of the Contract. Terms defined in the Contract have the same meaning here unless otherwise defined.`, size: 15, color: "6B6F75", font: FONT })] }),
+        ],
+      },
+    ],
+  });
+  return Buffer.from(await Packer.toBuffer(doc));
+}
+
+
+/* ------------------------------------------------------------------ */
+/* the Employer's Assessment Report as a Word document                 */
+
+function para(text: string, opts: { bold?: boolean; size?: number; color?: string; align?: (typeof AlignmentType)[keyof typeof AlignmentType]; after?: number; before?: number; indent?: number } = {}): Paragraph {
+  return new Paragraph({ alignment: opts.align, spacing: { after: opts.after ?? 120, before: opts.before ?? 0 }, indent: opts.indent ? { left: opts.indent } : undefined, children: [new TextRun({ text, bold: opts.bold, size: opts.size ?? 20, color: opts.color, font: FONT })] });
+}
+
+function numbered(no: string, text: string): Paragraph {
+  return new Paragraph({ spacing: { after: 120 }, tabStops: [{ type: "left", position: 900 }], indent: { left: 900, hanging: 900 }, children: [new TextRun({ text: `${no}\t`, font: FONT, size: 20 }), new TextRun({ text, font: FONT, size: 20 })] });
+}
+
+function simpleTable(rows: string[][], widths: number[], header = true): Table {
+  const W = widths.reduce((a, b) => a + b, 0);
+  return new Table({
+    width: { size: W, type: WidthType.DXA },
+    columnWidths: widths,
+    rows: rows.map((r, i) => new TableRow({ children: r.map((c, j) => textCell(c, { width: widths[j], bold: header && i === 0, shade: header && i === 0 ? PALE : undefined, size: 17 })) })),
+  });
+}
+
+/** Sections split on blank lines: short title-case lines become 1.1 headings, the rest 1.1.1 paragraphs. */
+function sectionParagraphs(no: number, text: string): Paragraph[] {
+  const out: Paragraph[] = [];
+  const paras = String(text ?? "").replace(/\r/g, "").split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+  let sub = 0;
+  let n = 0;
+  for (const p of paras) {
+    const line = p.replace(/\n/g, " ");
+    if (line.length <= 70 && !/[.:;]$/.test(line) && /^[A-Z]/.test(line) && line.split(" ").length <= 9) {
+      sub++;
+      n = 0;
+      out.push(new Paragraph({ heading: HeadingLevel.HEADING_2, spacing: { before: 200, after: 120 }, children: [new TextRun({ text: `${no}.${sub}\t${line}`, font: FONT, size: 22, bold: true, color: GRAPHITE })] }));
+    } else if (/^(table|figure) \d+/i.test(line)) out.push(para(line, { size: 17, color: "6B6F75", align: AlignmentType.CENTER }));
+    else {
+      if (!sub) {
+        sub = 1;
+        out.push(new Paragraph({ heading: HeadingLevel.HEADING_2, spacing: { before: 200, after: 120 }, children: [new TextRun({ text: `${no}.1\tOverview`, font: FONT, size: 22, bold: true, color: GRAPHITE })] }));
+      }
+      n++;
+      out.push(numbered(`${no}.${sub}.${n}`, p));
+    }
+  }
+  if (!out.length) out.push(para("[To be completed]", { color: "6B6F75" }));
+  return out;
+}
+
+const lines = (t: string) => String(t ?? "").split("\n").map((l) => l.trim()).filter(Boolean).map((l) => l.split(/\s+[–—-]\s+/).map((x) => x.trim()));
+
+/** The EAR as the issued reports are laid out: cover letter, cover page, revision history, table of contents and the seven numbered sections. */
+export async function buildEarDocx(type: PackType, values: PackValues, meta: WordMeta): Promise<Buffer> {
+  const v = formattedValues(type, values);
+  const isTime = type.key === "eot_ear";
+  const eot = v.eot_no || meta.ref;
+  const W = 9638;
+  const reportTitle = isTime ? "Extension of Time Report" : "Cost Claim Assessment Report";
+  const runHead = `Contract No. ${v.contract_ref || v.contract_no} – ${v.contractor} – ${eot}`;
+  const letter: Paragraph[] = [
+    para("AMAALA Company - C.R: 1010590650 · Building No. 8491, An Nu'aylah 48511-3110, Alwajh, Kingdom of Saudi Arabia", { size: 15, color: "6B6F75", align: AlignmentType.CENTER, after: 0 }),
+    para("CLASSIFICATION: INTERNAL & SENSITIVE", { size: 15, color: "6B6F75", align: AlignmentType.CENTER, after: 300 }),
+    para(`Letter Ref.: ${v.letter_ref || "-"}`, { bold: true, after: 0 }),
+    para(`Date: ${v.letter_date || v.date}`, { after: 240 }),
+    para(v.contractor, { bold: true, after: 0 }),
+    ...(v.contractor_address ? v.contractor_address.split("\n").map((l) => para(l, { after: 0 })) : []),
+    para("", { after: 120 }),
+    para(`Attention: ${v.attention || "-"}`, { after: 0 }),
+    para(`Contract: ${v.contract_title || v.works_package}${v.contract_no ? `, Contract No. ${v.contract_no}` : ""}`, { after: 0 }),
+    para(`Subject: Employer's Assessment Report for ${isTime ? `Extension of Time Claim ${eot}` : `${v.claim_type || "Cost"} Claim ${eot}`}`, { bold: true, after: 0 }),
+    para(`Reference: [1] ${v.claim_letter_ref || "-"}${v.claim_letter_date ? ` dated ${v.claim_letter_date}` : ""} – ${v.title || "Contractor's claim submission"}`, { after: 240 }),
+    para("Dear Sir,"),
+    para(`The Employer refers to the Construction Contract entered into between (i) AMAALA Company (as the 'Employer'); and (ii) ${v.contractor} (as the 'Contractor'), in respect of the ${v.contract_title || v.works_package}, Contract No. ${v.contract_no} ("Contract") for the ${v.project_name} project, Kingdom of Saudi Arabia (the 'Project').`),
+    para("All capitalized terms used in this letter but not otherwise defined herein shall have the same meaning as set out in the Contract."),
+    para(isTime ? `With reference to the Contractor's [Extension of Time Claim No. ${eot}], claim for additional time submitted via the Contractor's letter reference ${v.claim_letter_ref || "-"}${v.claim_letter_date ? ` dated ${v.claim_letter_date}` : ""} above, please find attached the Employer's Assessment Report, which provides detailed comments and explanations in accordance with ${v.clauses || "Clause 8.4"} as to the Contractor's entitlement to Extension of Time.` : `With reference to the Contractor's [Claim No. ${eot}] for additional payment submitted via the Contractor's letter reference ${v.claim_letter_ref || "-"}${v.claim_letter_date ? ` dated ${v.claim_letter_date}` : ""} above, please find attached the Employer's Assessment Report, which provides detailed comments and explanations in accordance with ${v.clauses || "Clause 20.1"} as to the Contractor's entitlement.`),
+    para(`The Contractor is requested to review the Employer's assessment and either provide comments supported by further particulars for the Employer's consideration or confirm its agreement with the entitlement stated. In accordance with ${v.determination_clause || "Clause 3.5 [Determinations]"} of the Conditions of Contract, if an agreement is not reached within twenty (20) Business Days (or such other period as the Parties may agree), the Employer shall make a fair determination in accordance with the Contract, taking due regard of all relevant circumstances.`),
+    para("This notification is issued for the Contractor's information and necessary action.", { after: 360 }),
+    para("Yours faithfully,", { after: 600 }),
+    para("_______________________", { after: 0 }),
+    para(v.signatory || "Employer's Representative", { bold: true, after: 0 }),
+    para("AMAALA Company", { after: 240 }),
+    para(`Attachments: Employer's Assessment Report for ${eot}`, { size: 17, color: "6B6F75" }),
+    new Paragraph({ children: [new PageBreak()] }),
+  ];
+  const hist = lines(values.revision_history ?? "");
+  const histRows = [["Rev.", "Details", "Name", "Position", "Date", "Signature"], ...(hist.length ? hist.map((r) => [v.revision || "00", r[0] ?? "", r[1] ?? "", r[2] ?? "", "", ""]) : [[v.revision || "00", "Prepared by:", v.prepared_by, v.prepared_position, "", ""], [v.revision || "00", "Reviewed by:", v.checked_by, v.checked_position, "", ""], [v.revision || "00", "Approved by:", v.approved_by, v.approved_position, "", ""]])];
+  const sections: [number, string, string][] = [[1, "Executive Summary", values.executive_summary ?? ""], [2, "Project Summary", values.project_summary ?? ""], [3, "Relevant Contract Provisions", values.contract_provisions ?? ""], [4, "The Contractor's Claim", values.contractor_claim ?? ""], [5, "The Employer's Assessment", values.employer_assessment ?? ""], [6, "Cost Assessment", values.cost_assessment ?? ""], [7, "Conclusion and Recommendation", values.conclusion ?? ""]];
+  const projectTable = [["Project Name", v.project_name], ["Contract No.", v.contract_no], ["Contractor", v.contractor], ["Contract Price", v.contract_price ? `SAR ${v.contract_price}` : "-"], ["Contract dated", v.contract_date || "-"], ["Time for Completion", v.completion_date || "-"], ["Previous Extension of Time", v.revised_completion_date ? `Revised Time for Completion ${v.revised_completion_date}` : "-"]];
+  const claimTable = isTime ? [["Claim reference", v.claim_letter_ref || "-"], ["Claim dated", v.claim_letter_date || "-"], ["Notice", `${v.notice_ref || "-"}${v.notice_date ? ` dated ${v.notice_date}` : ""}`], ["Extension of Time claimed", v.days_claimed ? `${v.days_claimed} days` : "-"], ["Extension of Time assessed", v.days_assessed ? `${v.days_assessed} days` : "-"], ["Assessed Time for Completion", v.assessed_completion_date || "-"]] : [["Claim reference", v.claim_letter_ref || "-"], ["Claim dated", v.claim_letter_date || "-"], ["Notice", `${v.notice_ref || "-"}${v.notice_date ? ` dated ${v.notice_date}` : ""}`], ["Amount claimed", v.amount_claimed ? `SAR ${v.amount_claimed}` : "-"], ["Amount assessed", v.amount_assessed ? `SAR ${v.amount_assessed}` : "-"]];
+  const body: (Paragraph | Table)[] = [];
+  for (const [no, title, text] of sections) {
+    body.push(new Paragraph({ heading: HeadingLevel.HEADING_1, pageBreakBefore: true, spacing: { after: 200 }, children: [new TextRun({ text: `${no}.0\t${title}`, font: FONT, size: 26, bold: true, color: GRAPHITE })] }));
+    if (no === 2) body.push(simpleTable(projectTable, [2800, 6838], false), para("", { after: 120 }));
+    if (no === 4) {
+      body.push(simpleTable(claimTable, [2800, 6838], false), para("", { after: 120 }));
+      if (isTime && values.delay_events) body.push(simpleTable([["Delay Event", "Title", "Clause", "Validity (in principle)", "Remarks"], ...lines(values.delay_events).map((r) => [r[0] ?? "", r[1] ?? "", r[2] ?? "", r[3] ?? "", r[4] ?? ""])], [1000, 3000, 1400, 1400, 2838]), para("", { after: 120 }));
+      if (!isTime && values.heads_of_claim) body.push(simpleTable([["Head of claim", "Claimed (SAR)", "Assessed (SAR)", "Basis"], ...lines(values.heads_of_claim).map((r) => [r[0] ?? "", r[1] ?? "", r[2] ?? "", r[3] ?? ""])], [3200, 1600, 1600, 3238]), para("", { after: 120 }));
+    }
+    body.push(...sectionParagraphs(no, text));
+  }
+  const doc = new Document({
+    creator: meta.preparedBy,
+    title: `Employer's Assessment Report for ${eot}`,
+    features: { updateFields: true },
+    styles: { default: { document: { run: { font: FONT, size: 20 } } } },
+    sections: [
+      {
+        properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: 1134, bottom: 1134, left: 1134, right: 1134 } } },
+        children: letter,
+      },
+      {
+        properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: 1134, bottom: 1134, left: 1134, right: 1134 } } },
+        headers: { default: new Header({ children: [new Paragraph({ tabStops: [{ type: "right", position: W }], border: { bottom: { style: BorderStyle.SINGLE, size: 8, color: BRONZE, space: 4 } }, children: [new TextRun({ text: reportTitle, size: 16, color: "6B6F75", font: FONT }), new TextRun({ text: `\t${v.template_rev || "Template Revision Sep-2025"}`, size: 16, color: "6B6F75", font: FONT })] }), new Paragraph({ children: [new TextRun({ text: runHead, size: 16, color: "6B6F75", font: FONT })] })] }) },
+        footers: { default: new Footer({ children: [new Paragraph({ tabStops: [{ type: "right", position: W }], children: [new TextRun({ text: `${runHead} · ${meta.status}${meta.revision ? ` · Rev. ${meta.revision}` : ""}`, size: 15, color: "6B6F75", font: FONT }), new TextRun({ children: ["\tPage ", PageNumber.CURRENT, " of ", PageNumber.TOTAL_PAGES], size: 15, color: "6B6F75", font: FONT })] })] }) },
+        children: [
+          para("", { after: 2400 }),
+          para("AMAALA · COMMERCIAL", { size: 18, color: BRONZE, after: 200 }),
+          para(`Employer's Assessment Report for ${eot}`, { bold: true, size: 44, color: GRAPHITE, after: 600 }),
+          simpleTable([["Contract No. & Title:", `${v.contract_no} - ${v.contract_title || v.works_package}`], ["Project:", `${v.project_name}${v.project_code ? ` (${v.project_code})` : ""}`], ["Contractor:", v.contractor], ["Claim:", v.title || eot], ["Date:", v.date], ["Revision:", `${v.revision || "00"}${v.previous_revision ? ` – supersedes ${v.previous_revision}` : ""}`]], [2800, 6838], false),
+          new Paragraph({ children: [new PageBreak()] }),
+          para("Revision History", { bold: true, size: 26, color: GRAPHITE, after: 200 }),
+          simpleTable(histRows, [700, 1700, 2500, 2838, 950, 950]),
+          new Paragraph({ children: [new PageBreak()] }),
+          para("Table of Contents", { bold: true, size: 26, color: GRAPHITE, after: 200 }),
+          new TableOfContents("Table of Contents", { hyperlink: true, headingStyleRange: "1-2" }),
+          para("(Right-click the table and choose Update Field in Word to refresh the page numbers.)", { size: 15, color: "6B6F75" }),
+          ...body,
         ],
       },
     ],

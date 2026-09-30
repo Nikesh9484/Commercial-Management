@@ -36,8 +36,8 @@ export default async function PackCasePage({ params }: { params: Promise<{ type:
       />
       {programme && ctx.programme && programme.id !== ctx.programme.id && <div className="card border-l-4 border-l-amber-500 p-3 text-xs text-muted">This pack belongs to {programme.name}; the top bar is on {ctx.programme.name}.</div>}
       <PackEditor
-        type={{ key: t.key, label: t.label, short: t.short, formRef: t.formRef, groups: t.groups, fields: t.fields.map((f) => ({ key: f.key, label: f.label, kind: f.kind, group: f.group, auto: !!f.auto, hint: f.hint ?? "" })), slots: t.slots }}
-        initial={{ id: c.id, ref: c.ref, title: c.title, revision: c.revision, status: c.status, fileName: c.file_name, values: caseValues(c), sourceId: c.source_id, defaultFileName: outputFileBase({ ...c, file_name: "" }) }}
+        type={{ key: t.key, label: t.label, short: t.short, formRef: t.formRef, groups: t.groups, fields: t.fields.map((f) => ({ key: f.key, label: f.label, kind: f.kind, group: f.group, auto: !!f.auto, hint: f.hint ?? "" })), slots: t.slots, otherSlots: t.otherSlots, packOrder: t.packOrder }}
+        initial={{ id: c.id, ref: c.ref, title: c.title, revision: c.revision, status: c.status, fileName: c.file_name, values: caseValues(c), sourceId: c.source_id, defaultFileName: outputFileBase({ ...c, file_name: "" }), extraSlots: Number(c.extra_slots ?? 0) }}
         docs={docs}
         canManage={canManagePacks(user)}
         templateName={template?.name ?? null}

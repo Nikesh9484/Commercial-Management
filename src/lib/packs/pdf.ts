@@ -3,7 +3,7 @@ import { PDFDocument as PdfLib, PDFFont, PDFPage, StandardFonts, rgb, type RGB }
 import { formatDate } from "../format";
 import { parsePages } from "../kpi/pages";
 import { formattedValues } from "./word";
-import { packRefLabel, type PackDoc, type PackType, type PackValues } from "./shared";
+import { packRefLabel, type PackType, type PackValues } from "./shared";
 
 /**
  * The PDF outputs of a document pack: the form itself, drawn from the pack's values in the RSG
@@ -158,14 +158,32 @@ const LINE_RGB = rgb(0.84, 0.84, 0.83);
 const PALE_RGB = rgb(0.95, 0.95, 0.94);
 const WHITE = rgb(1, 1, 1);
 
+export interface PartItem {
+  name: string;
+  bytes: Buffer | null;
+  /** pages to take from a PDF ("1-3, 5"); blank = all */
+  pages?: string;
+  mime?: string;
+  note?: string;
+}
+
+export interface PackPart {
+  no: number;
+  label: string;
+  hint: string;
+  /** "annexure" prints ANNEXURE n dividers as the RSG packs do; "part" the numbered parts */
+  style: "annexure" | "part";
+  items: PartItem[];
+}
+
 export interface CompiledInput {
   type: PackType;
   values: PackValues;
   meta: FormMeta;
   fileName: string;
-  /** the form itself, as rendered (or the filled template converted), first in the pack */
-  form: Buffer | null;
-  docs: { doc: PackDoc; bytes: Buffer | null }[];
+  /** the pages that open the pack, in order: the form itself, the index of annexures */
+  front: { name: string; bytes: Buffer }[];
+  parts: PackPart[];
 }
 
 function clean(text: string): string {
@@ -232,10 +250,12 @@ function footer(page: PDFPage, ctx: Ctx, input: CompiledInput, label: string) {
 interface Entry {
   no: number;
   label: string;
-  hint: string;
+  style: "annexure" | "part" | "front";
   docs: { name: string; page: number; pages: number; note?: string }[];
   page: number;
 }
+
+const partTitle = (e: { no: number; label: string; style: "annexure" | "part" | "front" }) => (e.style === "annexure" ? `Annexure ${e.no} – ${e.label}` : e.style === "part" ? `Part ${e.no} – ${e.label}` : e.label);
 
 function coverPage(ctx: Ctx, input: CompiledInput, contents: Entry[], totalPages: number) {
   const page = ctx.pdf.insertPage(0, A4);
@@ -275,8 +295,8 @@ function coverPage(ctx: Ctx, input: CompiledInput, contents: Entry[], totalPages
   for (const c of contents) {
     page.drawRectangle({ x: 40, y: y - 4, width: w - 80, height: 16, color: NAVY });
     page.drawRectangle({ x: 40, y: y - 4, width: 22, height: 16, color: GOLD });
-    text(page, ctx, String(c.no), 51, y, 9.5, { bold: true, color: WHITE, align: "center" });
-    text(page, ctx, fit(c.label, ctx.bold, 9.5, w - 180), 68, y, 9.5, { bold: true, color: WHITE });
+    text(page, ctx, c.style === "front" ? "•" : String(c.no), 51, y, 9.5, { bold: true, color: WHITE, align: "center" });
+    text(page, ctx, fit(partTitle(c), ctx.bold, 9.5, w - 180), 68, y, 9.5, { bold: true, color: WHITE });
     text(page, ctx, `page ${c.page}`, w - 46, y, 9, { color: WHITE, align: "right" });
     y -= 20;
     for (const d of c.docs) {
@@ -293,24 +313,24 @@ function coverPage(ctx: Ctx, input: CompiledInput, contents: Entry[], totalPages
   footer(page, ctx, input, "Cover");
 }
 
-function dividerPage(ctx: Ctx, input: CompiledInput, no: number, label: string, hint: string, docs: { name: string; pages: number; note?: string }[]) {
+function dividerPage(ctx: Ctx, input: CompiledInput, part: PackPart, docs: { name: string; pages: number; note?: string }[]) {
   const page = ctx.pdf.addPage(A4);
   const [w, h] = A4;
   page.drawRectangle({ x: 0, y: 0, width: 34, height: h, color: NAVY });
   page.drawRectangle({ x: 34, y: 0, width: 2.5, height: h, color: GOLD });
   page.drawRectangle({ x: 0, y: h - 150, width: w, height: 150, color: PALE_RGB });
   page.drawRectangle({ x: 0, y: h - 150, width: w, height: 0.8, color: LINE_RGB });
-  text(page, ctx, "DOCUMENT PACK", 70, h - 52, 8.5, { color: MUTED_RGB });
+  text(page, ctx, input.type.label.toUpperCase(), 70, h - 52, 8.5, { color: MUTED_RGB });
   text(page, ctx, fit(`${packRefLabel(input.type.short, input.meta.ref)}  ·  ${input.meta.title}`, ctx.font, 9.5, w - 260), 70, h - 68, 9.5, { color: MUTED_RGB });
   text(page, ctx, `${input.meta.programme.code}  ·  ${formatDate(input.meta.generatedAt)}`, w - 40, h - 52, 8.5, { color: MUTED_RGB, align: "right" });
   page.drawCircle({ x: 112, y: h / 2 + 70, size: 46, color: NAVY });
   page.drawCircle({ x: 112, y: h / 2 + 70, size: 41, color: NAVY, borderColor: GOLD, borderWidth: 1.2 });
-  text(page, ctx, no === 0 ? input.type.short.slice(0, 4) : String(no), 112, h / 2 + (no === 0 ? 62 : 54), no === 0 ? 22 : 44, { bold: true, color: WHITE, align: "center" });
-  text(page, ctx, "PART", 112, h / 2 + 108, 8, { color: rgb(0.78, 0.78, 0.76), align: "center" });
-  text(page, ctx, label, 190, h / 2 + 84, 22, { bold: true, color: NAVY, width: w - 230 });
-  text(page, ctx, hint, 190, h / 2 + 56, 10.5, { color: MUTED_RGB, width: w - 230 });
-  page.drawRectangle({ x: 190, y: h / 2 + 40, width: 60, height: 2, color: GOLD });
-  let y = h / 2 + 18;
+  text(page, ctx, String(part.no), 112, h / 2 + 54, 44, { bold: true, color: WHITE, align: "center" });
+  text(page, ctx, part.style === "annexure" ? "ANNEXURE" : "PART", 112, h / 2 + 108, 8, { color: rgb(0.78, 0.78, 0.76), align: "center" });
+  text(page, ctx, part.style === "annexure" ? part.label.toUpperCase() : part.label, 190, h / 2 + 84, part.style === "annexure" ? 17 : 22, { bold: true, color: NAVY, width: w - 230 });
+  text(page, ctx, part.hint, 190, h / 2 + 46, 10.5, { color: MUTED_RGB, width: w - 230 });
+  page.drawRectangle({ x: 190, y: h / 2 + 30, width: 60, height: 2, color: GOLD });
+  let y = h / 2 + 8;
   text(page, ctx, docs.length === 1 ? "Document in this part" : `${docs.length} documents in this part`, 190, y, 9, { bold: true, color: NAVY });
   y -= 16;
   for (const d of docs) {
@@ -319,7 +339,8 @@ function dividerPage(ctx: Ctx, input: CompiledInput, no: number, label: string, 
     y = text(page, ctx, line, 202, y, 10, { width: w - 242, color: INK_RGB }) - 2;
     if (y < 60) break;
   }
-  footer(page, ctx, input, `Part ${no} – ${label}`);
+  text(page, ctx, "#CLASSIFICATION: INTERNAL SENSITIVE", w / 2 + 17, 52, 8, { color: MUTED_RGB, align: "center" });
+  footer(page, ctx, input, partTitle(part));
 }
 
 function noticePage(ctx: Ctx, input: CompiledInput, name: string, why: string) {
@@ -340,6 +361,54 @@ async function addImage(ctx: Ctx, bytes: Buffer, mime: string, name: string): Pr
   return 1;
 }
 
+interface Loaded {
+  item: PartItem;
+  src: PdfLib | null;
+  image: { bytes: Buffer; mime: string } | null;
+  pages: number;
+  take: number[];
+  note?: string;
+}
+
+async function load(item: PartItem): Promise<Loaded> {
+  if (!item.bytes) return { item, src: null, image: null, pages: 0, take: [], note: item.note ?? "file missing on the server" };
+  const ext = (item.name.match(/\.([a-z0-9]+)$/i)?.[1] ?? "").toLowerCase();
+  const mime = item.mime ?? "";
+  const isPdf = ext ? ext === "pdf" : /pdf/i.test(mime);
+  const isImg = ext ? ["png", "jpg", "jpeg"].includes(ext) : /image\/(png|jpe?g)/i.test(mime);
+  if (isPdf) {
+    try {
+      const src = await PdfLib.load(item.bytes, { ignoreEncryption: true, updateMetadata: false });
+      const take = parsePages(item.pages, src.getPageCount());
+      return { item, src, image: null, pages: take.length, take, note: take.length < src.getPageCount() ? `pages ${item.pages || "all"} of ${src.getPageCount()}` : undefined };
+    } catch (e) {
+      return { item, src: null, image: null, pages: 0, take: [], note: `could not be read as a PDF (${e instanceof Error ? e.message.slice(0, 80) : "error"})` };
+    }
+  }
+  if (isImg) return { item, src: null, image: { bytes: item.bytes, mime }, pages: 1, take: [1] };
+  return { item, src: null, image: null, pages: 0, take: [], note: "only PDF, JPG and PNG files go into the pack – Word and Excel files are listed for reference" };
+}
+
+async function place(ctx: Ctx, input: CompiledInput, l: Loaded): Promise<number> {
+  if (l.src) {
+    const pages = await ctx.pdf.copyPages(l.src, l.take.map((n) => n - 1));
+    for (const p of pages) ctx.pdf.addPage(p);
+    return pages.length;
+  }
+  if (l.image) {
+    try {
+      return await addImage(ctx, l.image.bytes, l.image.mime, l.item.name);
+    } catch {
+      noticePage(ctx, input, l.item.name, "The image could not be read.");
+      l.note = "image could not be read";
+      return 1;
+    }
+  }
+  noticePage(ctx, input, l.item.name, l.note ?? "Not included.");
+  return 1;
+}
+
+/** Cover, the front pages (the form, the index), then a divider and the files of every part. */
 export async function buildCompiledPack(input: CompiledInput): Promise<Buffer> {
   const pdf = await PdfLib.create();
   pdf.setTitle(input.fileName);
@@ -350,66 +419,29 @@ export async function buildCompiledPack(input: CompiledInput): Promise<Buffer> {
   const ctx: Ctx = { pdf, font, bold };
   const contents: Entry[] = [];
   let pageNo = 2;
-  // part 0 – the form itself
-  if (input.form) {
+  for (const f of input.front) {
     try {
-      const src = await PdfLib.load(input.form, { ignoreEncryption: true, updateMetadata: false });
+      const src = await PdfLib.load(f.bytes, { ignoreEncryption: true, updateMetadata: false });
       const n = src.getPageCount();
-      dividerPage(ctx, input, 0, `The ${input.type.short} form`, `${input.type.label} – ${input.type.formRef}`, [{ name: `${packRefLabel(input.type.short, input.meta.ref)}`, pages: n }]);
-      const start = pageNo + 1;
       const pages = await pdf.copyPages(src, src.getPageIndices());
       for (const p of pages) pdf.addPage(p);
-      contents.push({ no: 0, label: `The ${input.type.short} form`, hint: "", docs: [{ name: `${packRefLabel(input.type.short, input.meta.ref)} – ${input.meta.title}`, page: start, pages: n }], page: pageNo });
-      pageNo += 1 + n;
+      contents.push({ no: 0, label: f.name, style: "front", docs: [{ name: f.name, page: pageNo, pages: n }], page: pageNo });
+      pageNo += n;
     } catch {
-      /* the form could not be added; the uploads still go in */
+      /* a front page that could not be read is left out */
     }
   }
-  const loaded: { doc: PackDoc; src: PdfLib | null; image: { bytes: Buffer; mime: string } | null; pages: number; take: number[]; note?: string }[] = [];
-  for (const { doc, bytes } of input.docs) {
-    if (!bytes) {
-      loaded.push({ doc, src: null, image: null, pages: 0, take: [], note: "file missing on the server" });
-      continue;
-    }
-    const ext = (doc.name.match(/\.([a-z0-9]+)$/i)?.[1] ?? "").toLowerCase();
-    const isPdf = ext ? ext === "pdf" : /pdf/i.test(doc.mime);
-    const isImg = ext ? ["png", "jpg", "jpeg"].includes(ext) : /image\/(png|jpe?g)/i.test(doc.mime);
-    if (isPdf) {
-      try {
-        const src = await PdfLib.load(bytes, { ignoreEncryption: true, updateMetadata: false });
-        const take = parsePages(doc.pages, src.getPageCount());
-        loaded.push({ doc, src, image: null, pages: take.length, take, note: take.length < src.getPageCount() ? `pages ${doc.pages || "all"} of ${src.getPageCount()}` : undefined });
-      } catch (e) {
-        loaded.push({ doc, src: null, image: null, pages: 0, take: [], note: `could not be read as a PDF (${e instanceof Error ? e.message.slice(0, 80) : "error"})` });
-      }
-    } else if (isImg) loaded.push({ doc, src: null, image: { bytes, mime: doc.mime }, pages: 1, take: [1] });
-    else loaded.push({ doc, src: null, image: null, pages: 0, take: [], note: "only PDF, JPG and PNG files go into the pack – Word and Excel files are listed for reference" });
-  }
-  for (const slot of input.type.slots) {
-    const inSlot = loaded.filter((l) => l.doc.slot === slot.key);
-    if (!inSlot.length) continue;
-    const entry: Entry = { no: slot.no, label: slot.label, hint: slot.hint, docs: [], page: pageNo };
-    dividerPage(ctx, input, slot.no, slot.label, slot.hint, inSlot.map((l) => ({ name: l.doc.name, pages: l.pages, note: l.note })));
+  for (const part of input.parts) {
+    if (!part.items.length) continue;
+    const loaded: Loaded[] = [];
+    for (const it of part.items) loaded.push(await load(it));
+    const entry: Entry = { no: part.no, label: part.label, style: part.style, docs: [], page: pageNo };
+    dividerPage(ctx, input, part, loaded.map((l) => ({ name: l.item.name, pages: l.pages, note: l.note })));
     pageNo++;
-    for (const l of inSlot) {
+    for (const l of loaded) {
       const start = pageNo;
-      if (l.src) {
-        const pages = await pdf.copyPages(l.src, l.take.map((n) => n - 1));
-        for (const p of pages) pdf.addPage(p);
-        pageNo += pages.length;
-      } else if (l.image) {
-        try {
-          pageNo += await addImage(ctx, l.image.bytes, l.image.mime, l.doc.name);
-        } catch {
-          noticePage(ctx, input, l.doc.name, "The image could not be read.");
-          l.note = "image could not be read";
-          pageNo++;
-        }
-      } else {
-        noticePage(ctx, input, l.doc.name, l.note ?? "Not included.");
-        pageNo++;
-      }
-      entry.docs.push({ name: l.doc.name, page: start, pages: l.pages, note: l.note });
+      pageNo += await place(ctx, input, l);
+      entry.docs.push({ name: l.item.name, page: start, pages: l.pages, note: l.note });
     }
     contents.push(entry);
   }
