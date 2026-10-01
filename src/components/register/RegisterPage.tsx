@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useScopeKey } from "@/components/layout/ScopeContext";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Plus, Search, Download, Upload, Pencil, Trash2, History, ChevronUp, ChevronDown, ChevronsUpDown, RefreshCw, Lock, Unlock, Filter, X, ExternalLink } from "lucide-react";
+import { Plus, Search, Download, Upload, Pencil, Trash2, History, ChevronUp, ChevronDown, ChevronsUpDown, RefreshCw, Lock, Unlock, Filter, X, ExternalLink, Columns3 } from "lucide-react";
 import type { FieldDef, LookupOption, RecordRow, RegisterDef } from "@/lib/registers/types";
 import { formatDate, formatMoney, formatNumber, formatPercent } from "@/lib/format";
 import { Chip } from "@/components/ui/Chip";
@@ -80,6 +80,42 @@ export function RegisterPage({
   const [historyFor, setHistoryFor] = useState<RecordRow | null>(null);
   const [deleting, setDeleting] = useState<RecordRow | null>(null);
   const [importOpen, setImportOpen] = useState(false);
+  // which columns the person keeps on this register's table (remembered in this browser); none set = the register's own choice
+  const [showColumns, setShowColumns] = useState(false);
+  const storedCols = useSyncExternalStore(
+    (onChange) => {
+      window.addEventListener("storage", onChange);
+      window.addEventListener("columns-changed", onChange);
+      return () => {
+        window.removeEventListener("storage", onChange);
+        window.removeEventListener("columns-changed", onChange);
+      };
+    },
+    () => {
+      try {
+        return localStorage.getItem(`columns:${registerKey}`);
+      } catch {
+        return null;
+      }
+    },
+    () => null,
+  );
+  const hiddenCols = useMemo<Set<string> | null>(() => {
+    try {
+      return storedCols ? new Set(JSON.parse(storedCols) as string[]) : null;
+    } catch {
+      return null;
+    }
+  }, [storedCols]);
+  const rememberCols = (next: Set<string> | null) => {
+    try {
+      if (next) localStorage.setItem(`columns:${registerKey}`, JSON.stringify([...next]));
+      else localStorage.removeItem(`columns:${registerKey}`);
+      window.dispatchEvent(new Event("columns-changed"));
+    } catch {
+      /* a browser without storage keeps the register's own columns */
+    }
+  };
 
   const load = useCallback(() => {
     return fetchRegister(registerKey).then(
@@ -108,15 +144,18 @@ export function RegisterPage({
   }, [registerKey, onRows, scopeKey]);
 
   const def = data?.def;
+  // every column the table can show, before the person's own choice
+  const allTableFields = useMemo(() => def?.fields.filter((f) => !["programme_id", "contract_closed"].includes(f.key) && f.type !== "password" && !f.hideInForm && !hideFields.includes(f.key)) ?? [], [def, hideFields]);
   const tableFields = useMemo(() => {
-    // a wide tracker shows every column of the record (scrolled sideways); the others keep their compact set
-    const shown = def?.fields.filter((f) => (def.wideTable ? !["programme_id", "contract_closed"].includes(f.key) : !f.hideInTable) && f.type !== "password" && !hideFields.includes(f.key)) ?? [];
+    // a wide tracker shows every column of the record (scrolled sideways); the others keep their compact set;
+    // a person's own choice of columns (the Columns button) stands over both
+    const shown = def?.fields.filter((f) => (hiddenCols ? !hiddenCols.has(f.key) && !["programme_id", "contract_closed"].includes(f.key) && !f.hideInForm : def.wideTable ? !["programme_id", "contract_closed"].includes(f.key) : !f.hideInTable) && f.type !== "password" && !hideFields.includes(f.key)) ?? [];
     // a field can ask for its place in the table without moving on the record form
     return shown
       .map((f, i) => ({ f, i }))
       .sort((a, b) => (a.f.tableOrder ?? Number.MAX_SAFE_INTEGER) - (b.f.tableOrder ?? Number.MAX_SAFE_INTEGER) || a.i - b.i)
       .map((x) => x.f);
-  }, [def, hideFields]);
+  }, [def, hideFields, hiddenCols]);
   const filterFields = useMemo(() => {
     if (!def) return [];
     const explicit = def.fields.filter((f) => f.filter && !(fixedFilter && f.key in fixedFilter));
@@ -290,6 +329,9 @@ export function RegisterPage({
               <Filter size={16} /> Filters{activeFilterCount ? ` (${activeFilterCount})` : ""}
             </button>
           )}
+          <button className={`btn btn-secondary ${hiddenCols ? "border-accent text-accent" : ""}`} onClick={() => setShowColumns((s) => !s)} title="Choose which columns to keep on the table">
+            <Columns3 size={16} /> Columns
+          </button>
           <button className="btn btn-secondary" onClick={load} title="Refresh">
             <RefreshCw size={16} />
           </button>
@@ -308,6 +350,45 @@ export function RegisterPage({
           )}
         </div>
       </div>
+
+      {showColumns && (
+        <div className="card p-4">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <div className="text-sm font-semibold text-ink">Columns on the table <span className="font-normal text-muted">– tick to keep, untick to hide; remembered on this computer</span></div>
+            <div className="flex flex-wrap gap-2">
+              <button className="btn btn-sm btn-secondary" onClick={() => rememberCols(new Set())}>Show all</button>
+              <button className="btn btn-sm btn-secondary" onClick={() => rememberCols(new Set(allTableFields.filter((f) => f.hideInTable).map((f) => f.key)))}>Compact</button>
+              <button className="btn btn-sm btn-ghost" onClick={() => rememberCols(null)}>Reset</button>
+              <button className="btn btn-sm btn-ghost" onClick={() => setShowColumns(false)} aria-label="Close"><X size={14} /></button>
+            </div>
+          </div>
+          {Object.entries(allTableFields.reduce<Record<string, FieldDef[]>>((g, f) => ((g[f.section ?? "General"] ??= []).push(f), g), {})).map(([section, fields]) => (
+            <div key={section} className="mb-2">
+              <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">{section}</div>
+              <div className="flex flex-wrap gap-x-4 gap-y-1">
+                {fields.map((f) => {
+                  const on = tableFields.some((x) => x.key === f.key);
+                  return (
+                    <label key={f.key} className="inline-flex items-center gap-1.5 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={on}
+                        onChange={(e) => {
+                          const next = new Set(hiddenCols ?? allTableFields.filter((x) => !tableFields.some((t) => t.key === x.key)).map((x) => x.key));
+                          if (e.target.checked) next.delete(f.key);
+                          else next.add(f.key);
+                          rememberCols(next);
+                        }}
+                      />
+                      {f.label}
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {!hideFilterPanel && showFilters && filterFields.length > 0 && (
         <div className="card flex flex-wrap items-end gap-3 p-3">

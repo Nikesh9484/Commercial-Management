@@ -99,21 +99,39 @@ export function buildAconexReconciliation(data: ReportData): AconexReconciliatio
     line.worst = Math.max(0, ...ACONEX_MEASURES.filter((m) => measureDecides(m, line.rowType)).map((m) => Math.abs(line.diff[m.key] ?? 0)));
     return line;
   };
+  // Aconex carries one row per contract; the cost report may split that contract over several lines
+  // (preliminaries, the main works, each provisional-sum allowance – CN.031C02, CN.031C02-2 … -18), so
+  // a contract row is compared with the sum of every line carrying its contract code
+  const accOf = (code: string) => code.match(/\b(\d{3}[A-Z]\d{2})\b/)?.[1]?.toUpperCase() ?? null;
+  const groups = new Map<string, (typeof data.costReport.lines)[number][]>();
+  for (const l of data.costReport.lines) {
+    const acc = accOf(l.code);
+    if (acc && !l.is_budget_hold) groups.set(acc, [...(groups.get(acc) ?? []), l]);
+  }
+  const sumOf = (members: (typeof data.costReport.lines)[number][]): Record<AconexMeasureKey, number | null> => {
+    const out = blankMeasures();
+    for (const m of members) for (const k of Object.keys(out) as AconexMeasureKey[]) out[k] = r2((out[k] ?? 0) + (dashOf(m)[k] ?? 0));
+    return out;
+  };
   for (const r of rows) {
     const lineId = Number(r.cost_line_id);
     const l = lineId ? byLine.get(lineId) : undefined;
-    if (l) usedLine.add(l.id);
+    const acc = String(r.row_type ?? "") === "Budget hold" ? null : accOf(String(r.code ?? ""));
+    const grp = acc ? groups.get(acc) : undefined;
+    const members = grp && grp.length ? grp : l ? [l] : [];
+    for (const m of members) usedLine.add(m.id);
+    const lead = members.find((m) => m.id === l?.id) ?? members[0];
     lines.push(
       finish({
-        status: l ? "matched" : "aconex_only",
-        code: l ? l.code : "",
+        status: lead ? "matched" : "aconex_only",
+        code: lead ? `${lead.code}${members.length > 1 ? ` (+${members.length - 1} lines)` : ""}` : "",
         aconexCode: String(r.code ?? ""),
-        name: l ? l.name : String(r.name ?? r.description ?? ""),
-        contractor: l ? l.contractor : "",
-        category: l ? l.category : String(r.row_type ?? ""),
+        name: lead ? (members.length > 1 ? `${lead.name} – with ${members.length - 1} more line(s) of contract ${acc}` : lead.name) : String(r.name ?? r.description ?? ""),
+        contractor: lead ? lead.contractor : "",
+        category: lead ? lead.category : String(r.row_type ?? ""),
         rowType: String(r.row_type ?? ""),
         aconex: aconexOf(r),
-        dashboard: l ? dashOf(l) : blankMeasures(),
+        dashboard: lead ? sumOf(members) : blankMeasures(),
         diff: blankMeasures(),
         worst: 0,
         differs: [],

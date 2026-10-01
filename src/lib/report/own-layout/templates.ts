@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { getDb } from "../../db";
+import { keepFile, restoreFileSync } from "../../file-store";
 import { nowIso } from "../../format";
 import { ValidationError } from "../../registers/engine";
 import type { UserInfo } from "../../registers/types";
@@ -30,7 +31,7 @@ export interface ReportTemplate {
 
 export function getReportTemplate(programmeId: number): ReportTemplate | null {
   const row = ensure().prepare("SELECT * FROM report_templates WHERE programme_id = ?").get(programmeId) as ReportTemplate | undefined;
-  if (!row || !fs.existsSync(row.path)) return null;
+  if (!row || !(fs.existsSync(row.path) || restoreFileSync(row.path))) return null;
   return row;
 }
 
@@ -47,6 +48,7 @@ export function saveReportTemplate(programmeId: number, name: string, bytes: Buf
   const p = path.join(dir(), `programme-${programmeId}.${ext}`);
   for (const other of ["xlsx", "xlsm"]) if (other !== ext) fs.rmSync(path.join(dir(), `programme-${programmeId}.${other}`), { force: true });
   fs.writeFileSync(p, bytes);
+  keepFile(p);
   db.prepare("INSERT INTO report_templates(programme_id, name, path, size, uploaded_at, uploaded_by) VALUES(?,?,?,?,?,?) ON CONFLICT(programme_id) DO UPDATE SET name = excluded.name, path = excluded.path, size = excluded.size, uploaded_at = excluded.uploaded_at, uploaded_by = excluded.uploaded_by").run(programmeId, name.slice(0, 200), p, bytes.length, nowIso(), user.name);
   return getReportTemplate(programmeId)!;
 }

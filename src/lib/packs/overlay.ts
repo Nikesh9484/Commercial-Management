@@ -25,7 +25,9 @@ const clean = (s: string) =>
     .replace(/\u2026/g, "...")
     .replace(/[\u00A0\t]/g, " ")
     .replace(/\r/g, "")
-    .replace(/[^\x20-\x7E\u00A1-\u00FF\n]/g, "")
+    // list bullets of any shape stay bullets (the standard fonts carry U+2022)
+    .replace(/[\u2022\u25CF\u25AA\u2023\u2043\u25E6\u2219]/g, "\u2022")
+    .replace(/[^\x20-\x7E\u00A1-\u00FF\u2022\n]/g, "")
     .replace(/ +/g, " ")
     .trim();
 const num = (v: unknown) => {
@@ -334,7 +336,8 @@ class Sheet {
       break;
     }
     const stopRow = rows[end];
-    const size = opts.size ?? rows[start + 1]?.cells[0]?.h ?? hit.cell.h ?? 5;
+    // written at the form's own body size – the label's – never at the size of some small run that happened to sit under it
+    const size = opts.size ?? Math.max(hit.cell.h ?? 0, 7);
     const left = opts.left ?? hit.cell.x;
     const right = opts.right ?? this.width - 22;
     const top = hit.row.y - (opts.topGap ?? size * 0.9);
@@ -350,9 +353,10 @@ class Sheet {
     let lead = opts.lead ?? Math.max(size * 1.42, 6.5);
     let lines = this.wrap(text, sz, right - left - 2, opts.bold, cell);
     const fits = () => (lines.length + 0.6) * lead <= top - bottom;
-    while (!fits() && sz > size * 0.72) {
+    // a long text is set smaller rather than cut short: down to about 5 pt before anything is left out
+    while (!fits() && sz > 5) {
       sz -= 0.2;
-      lead = Math.max(sz * 1.35, 5.5);
+      lead = Math.max(sz * 1.22, 5);
       lines = this.wrap(text, sz, right - left - 2, opts.bold, cell);
     }
     const maxLines = Math.max(1, Math.floor((top - bottom - lead * 0.4) / lead));
@@ -401,7 +405,7 @@ class Sheet {
     this.restore(x, y, this.tableRight + 1 - x, h, keep);
   }
   /** a person on a Name / Position / Signature / Date row: written centred under the headings */
-  person(nameRow: Row, labelRow: Row, name: string, position: string, topY: number, bottomY?: number) {
+  person(nameRow: Row, labelRow: Row, name: string, position: string, topY: number, bottomY?: number, opts: { keepSignature?: boolean } = {}) {
     const centre = (re: RegExp) => {
       const c = labelRow.cells.find((k) => re.test(k.s));
       return c ? c.x + c.w / 2 : null;
@@ -418,7 +422,7 @@ class Sheet {
     const posCell = nameRow.cells[1] ?? nameCell;
     if (nc && name) this.text(name, nc, nameRow.y, size, { align: "center", maxWidth: half, bold: nameCell ? !!nameCell.b : true, cell: nameCell });
     if (pc && position) this.text(position, pc, nameRow.y, size, { align: "center", maxWidth: half * 1.15, bold: posCell ? !!posCell.b : true, cell: posCell });
-    this.clearSignature(labelRow, topY, undefined, bottomY);
+    if (!opts.keepSignature) this.clearSignature(labelRow, topY, undefined, bottomY);
   }
   /** where a signatory block starts: under the band above it, or under the labels of the row above */
   blockTop(prev: Row): number {
@@ -476,7 +480,7 @@ const items = (v: unknown) =>
   });
 
 /** every Name / Position / Signature / Date row under a heading, written for this pack's people */
-function signatories(sh: Sheet, from: string | RegExp, to: (string | RegExp)[], names: string[], positions: string[]) {
+function signatories(sh: Sheet, from: string | RegExp, to: (string | RegExp)[], names: string[], positions: string[], opts: { keepFirstSignature?: boolean } = {}) {
   const hit = sh.find(from);
   if (!hit) return;
   const rows = sh.pos.rows;
@@ -488,7 +492,12 @@ function signatories(sh: Sheet, from: string | RegExp, to: (string | RegExp)[], 
     if (to.some((s) => r.cells.some((c) => isLabel(c.s, s)))) break;
     if (r.cells.some((c) => /^name$/i.test(c.s)) && r.cells.some((c) => /^signature$/i.test(c.s))) {
       const nameRow = rows[i - 1] && rows[i - 1] !== prev && rows[i - 1].y - r.y < 14 ? rows[i - 1] : { y: r.y + 6, cells: [] };
-      sh.person(nameRow, r, names[n] ?? "", positions[n] ?? "", sh.blockTop(prev), sh.blockBottom(r, rows[i + 1]));
+      // the person who prepared the pack has signed it (the same person as on the earlier pack); everyone after
+      // signs on approval, so their boxes go out blank
+      const oldName = nameRow.cells.map((c) => c.s).join(" ").toLowerCase();
+      const surname = (names[n] ?? "").trim().split(/\s+/).pop()?.toLowerCase() ?? "";
+      const samePerson = !names[n] || (surname.length > 2 && oldName.includes(surname));
+      sh.person(nameRow, r, names[n] ?? "", positions[n] ?? "", sh.blockTop(prev), sh.blockBottom(r, rows[i + 1]), { keepSignature: !!opts.keepFirstSignature && n === 0 && samePerson });
       n++;
       prev = r;
     }
@@ -673,7 +682,7 @@ export async function overlayPvo(refBytes: Buffer, v: PackValues, opts: { target
     s2.replaceRight("d) Estimated 'time impact' of this variation (Days)", String(impact), { align: "right" });
     s2.replaceRight("e) Other anticipated EOTs", String(others), { align: "right" });
     // signatories: every Name / Position / Signature / Date row under Prepared and Approved
-    signatories(s2, "Prepared/Initiated By", ["Checked by", "Approved by", "Review & Approval"], lines(v.prepared_by), lines(v.prepared_position));
+    signatories(s2, /^Prepared(\s*\/\s*Initiated)?\s*By:?$/i, ["Checked by", "Approved by", "Review & Approval"], lines(v.prepared_by), lines(v.prepared_position), { keepFirstSignature: true });
     signatories(s2, "Checked by (Pre-Approval)", ["Approved by"], lines(v.checked_by), lines(v.checked_position));
     signatories(s2, /^Approved by/, [/^RSG-CM-FRM/], lines(v.approved_by), lines(v.approved_position));
     signatories(s2, /^Review & Approval/, [/^RSG-CM-FRM/], lines(v.approved_by), lines(v.approved_position));

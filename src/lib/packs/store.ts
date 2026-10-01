@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type Database from "better-sqlite3";
 import { getDb } from "../db";
+import { keepFile, dropFile, restoreFileSync } from "../file-store";
 import { AuthError } from "../auth";
 import { isExcelTemplate, readExcelValues } from "./excel";
 import { convertToPdf, convertible } from "./convert";
@@ -123,7 +124,7 @@ export function listTemplates(): Map<PackTypeKey, PackTemplate> {
 
 export function readTemplateBytes(t: PackTemplate): Buffer | null {
   const p = path.join(packDataDir(), t.disk_path);
-  return fs.existsSync(p) ? fs.readFileSync(p) : null;
+  return fs.existsSync(p) || restoreFileSync(p) ? fs.readFileSync(p) : null;
 }
 
 export function saveTemplate(type: PackTypeKey, input: { name: string; bytes: Buffer; mime?: string; inspection: TemplateInspection }, user: UserInfo): PackTemplate {
@@ -138,11 +139,15 @@ export function saveTemplate(type: PackTypeKey, input: { name: string; bytes: Bu
   fs.mkdirSync(dir, { recursive: true });
   const disk = path.join("templates", `${id}-${safeName(input.name)}`);
   fs.writeFileSync(path.join(packDataDir(), disk), input.bytes);
+  keepFile(path.join(packDataDir(), disk));
   d.prepare("UPDATE pack_templates SET disk_path = ? WHERE id = ?").run(disk, id);
   // one template per category: the earlier copies go
   for (const p of prior) {
     d.prepare("DELETE FROM pack_templates WHERE id = ?").run(p.id);
-    if (p.disk_path) fs.rmSync(path.join(packDataDir(), p.disk_path), { force: true });
+    if (p.disk_path) {
+      fs.rmSync(path.join(packDataDir(), p.disk_path), { force: true });
+      dropFile(path.join(packDataDir(), p.disk_path));
+    }
   }
   logAudit(getDb(), { registerKey: "pack_templates", recordId: id, action: "create", user, summary: `Document packs: ${packType(type)!.short} template set to ${input.name} (${input.inspection.placeholders.length} placeholders, ${input.inspection.labels.filter((l) => l.field).length} labels matched)` });
   return d.prepare("SELECT * FROM pack_templates WHERE id = ?").get(id) as PackTemplate;
@@ -154,7 +159,10 @@ export function removeTemplate(id: number, user: UserInfo) {
   const t = d.prepare("SELECT * FROM pack_templates WHERE id = ?").get(id) as PackTemplate | undefined;
   if (!t) return;
   d.prepare("DELETE FROM pack_templates WHERE id = ?").run(id);
-  if (t.disk_path) fs.rmSync(path.join(packDataDir(), t.disk_path), { force: true });
+  if (t.disk_path) {
+    fs.rmSync(path.join(packDataDir(), t.disk_path), { force: true });
+    dropFile(path.join(packDataDir(), t.disk_path));
+  }
   logAudit(getDb(), { registerKey: "pack_templates", recordId: id, action: "delete", user, summary: `Document packs: ${t.pack_type} template ${t.name} removed – the built-in layout is used until a new one is uploaded` });
 }
 
@@ -341,6 +349,7 @@ export async function addDoc(caseId: number, input: { name: string; relPath?: st
   const id = Number(info.lastInsertRowid);
   const disk = path.join(String(caseId), `${id}-${safeName(input.name)}`);
   fs.writeFileSync(path.join(packDataDir(), disk), input.bytes);
+  keepFile(path.join(packDataDir(), disk));
   d.prepare("UPDATE pack_docs SET disk_path = ? WHERE id = ?").run(disk, id);
   d.prepare("UPDATE pack_cases SET updated_at = ?, updated_by = ? WHERE id = ?").run(nowIso(), user.name, caseId);
   logAudit(getDb(), { registerKey: "pack_docs", recordId: id, action: "create", user, summary: `Document packs: ${rel} added to ${t.short} ${c.ref} (${slot})` });
@@ -370,7 +379,7 @@ export async function rebuildValues(caseId: number, user: UserInfo): Promise<{ v
   for (const k of Object.keys(prev)) if (k.startsWith("__narrative") || k.startsWith("__wording") || k === "__manual") values[k] = prev[k];
   const sources: Record<string, string> = {};
   for (const k of Object.keys(values)) if (values[k]) sources[k] = c.source_id ? "register" : "project";
-  const EXTRA = ["acc_table", "cost_subject", "cost_scope", "instruction_ref", "instruction_text", "ei_no", "change_log_rows"];
+  const EXTRA = ["acc_table", "cost_subject", "cost_scope", "instruction_ref", "instruction_text", "ei_no", "change_log_rows", "pvo_no_evo"];
   const apply = (r: Reading, keep: string[] = []) => {
     for (const [k, v] of Object.entries(r.values)) {
       if (!v || keep.includes(k)) continue;
@@ -402,7 +411,7 @@ export async function rebuildValues(caseId: number, user: UserInfo): Promise<{ v
   }
   const readAll = async (slot: string) => {
     // the change behind a PVO or DVO may be an RFC or an RFA – both are read for the scope and reason
-    const want: DocKind[] = slot === REFERENCE_SLOT ? (t.key === "pvo" ? ["pvo"] : t.key === "dvo" ? ["dvo"] : t.key === "rfa" ? ["rfa"] : t.key === "eot_ear" || t.key === "cost_ear" ? ["ear"] : ["pvo", "dvo"]) : slot === "pvo" ? ["pvo"] : slot === "rfc" || slot === "details" ? (t.key === "rfa" ? ["rfc", "ei"] : ["rfc", "rfa", "ei"]) : slot === "cost" ? ["cost"] : [];
+    const want: DocKind[] = slot === REFERENCE_SLOT ? (t.key === "pvo" ? ["pvo"] : t.key === "dvo" ? ["dvo"] : t.key === "rfa" ? ["rfa"] : t.key === "eot_ear" || t.key === "cost_ear" ? ["ear"] : ["pvo", "dvo"]) : slot === "pvo" ? ["pvo", "evo"] : slot === "rfc" || slot === "details" ? (t.key === "rfa" ? ["rfc", "ei"] : ["rfc", "rfa", "ei", "evo"]) : slot === "cost" ? ["cost"] : [];
     // the files in the entry itself first (the entry is the user's word on what the file is), then any file elsewhere that reads as that kind;
     // the forms themselves (an RFC, an EI) come last, so what they state wins over a transmittal or a summary that quotes them
     const inSlot = read.filter((x) => x.doc.slot === slot);
@@ -447,11 +456,13 @@ export async function rebuildValues(caseId: number, user: UserInfo): Promise<{ v
     if (t.key === "pvo") nextNumber("pvo_no", ref, "previous PVO + 1");
     if (t.key === "vo") nextNumber("pvo_no", ref, "previous EVO + 1");
   }
+  let refContractor = "";
   for (const pages of references) {
     if (!pages.length) continue;
     // what names the earlier document itself is not carried over: its number, its date, its title and value are this pack's own
     if (t.key === "pvo") {
       const ref = readReferencePvo(pages);
+      refContractor = ref.values.contractor || refContractor;
       apply(ref, own);
       // the next number after the previous PVO, unless the register already names this one
       if (!values.pvo_no && ref.values.pvo_no && /^\d+$/.test(ref.values.pvo_no)) {
@@ -505,7 +516,7 @@ export async function rebuildValues(caseId: number, user: UserInfo): Promise<{ v
     for (const pages of await readAll(slot)) {
       if (!pages.length) continue;
       const kind = classifyDoc(pages, "rfc");
-      const isEvo = kind === "pvo" && /Emergency Variation Order Assessment/i.test(pages.slice(0, 2).flatMap((p) => p.rows.flatMap((x) => x.cells.map((c) => c.s))).join(" "));
+      const isEvo = kind === "evo";
       const text = changeText(pages);
       if (text) changeTexts.push(text);
       if (kind === "cost" || kind === "dvo" || kind === "ear" || (kind === "pvo" && !isEvo)) continue;
@@ -526,8 +537,15 @@ export async function rebuildValues(caseId: number, user: UserInfo): Promise<{ v
   }
   // 4. the cost assessment: the value – from the cost proposal entry; with nothing there, from the
   //    cost pages inside the RFC / RFA (or, for a DVO, the approved PVO pack)
+  // the request itself priced the change (an EVO): its figure stands; cost pages elsewhere are background
+  const priced = sources.total_value === "EVO" ? ["total_value", "add", "omit", "cost_items", "amount", "rom_estimate", "dvo_value"] : [];
+  if (values.pvo_no_evo && /^\d+$/.test(String(values.pvo_no_evo))) {
+    // the PVO carries the number of the Emergency VO it formalises
+    values.pvo_no = String(values.pvo_no_evo).padStart(3, "0");
+    sources.pvo_no = "EVO";
+  }
   const costDocs = (await readAll("cost")).filter((p) => p.length);
-  if (costDocs.length) for (const pages of costDocs) apply(readCost(pages, values.title || c.title));
+  if (costDocs.length) for (const pages of costDocs) apply(readCost(pages, values.title || c.title), priced);
   else {
     const carriers = t.key === "dvo" ? await readAll("pvo") : [...(await readAll("rfc")), ...(await readAll("details"))];
     for (const pages of carriers) {
@@ -535,15 +553,26 @@ export async function rebuildValues(caseId: number, user: UserInfo): Promise<{ v
       if (!part.cost.length) continue;
       const r = readCost(pages.filter((p) => part.cost.includes(p.no)), values.title || c.title);
       for (const k of Object.keys(r.sources)) r.sources[k] = t.key === "dvo" ? "cost in the approved PVO pack" : "cost in the RFC/RFA";
-      apply(r);
+      apply(r, priced);
       break;
     }
+  }
+  // wording carried over from the earlier pack that names its contractor is reworded for this one
+  // ("…, Elmar to execute the said Variation Work" → "…, Nova to execute …")
+  if (refContractor && values.contractor && sources.contractual_basis && /previous/.test(sources.contractual_basis)) {
+    const was = refContractor.split(/\s+/)[0];
+    const now = values.contractor.split(/\s+/)[0];
+    if (was && now && was.toLowerCase() !== now.toLowerCase() && values.contractual_basis?.includes(was)) values.contractual_basis = values.contractual_basis.split(was).join(now);
   }
   // the figures that follow from the others
   const num = (k: string) => Number(String(values[k] ?? "").replace(/[^0-9.\-]/g, "")) || 0;
   const r2s = (n: number) => String(Math.round(n * 100) / 100);
   if (t.key === "pvo") {
-    if (!values.add && !values.omit && values.total_value) values.add = values.total_value;
+    if (!values.add && !values.omit && values.total_value) {
+      // a negative total is an omission (a recovery of costs, a de-scoping)
+      if (num("total_value") < 0) values.omit = r2s(Math.abs(num("total_value")));
+      else values.add = values.total_value;
+    }
     const orig = num("original_contract");
     if (orig) {
       values.current_revised = r2s(orig + num("approved_dvos"));
@@ -690,7 +719,10 @@ export function removeDoc(id: number, user: UserInfo, quiet = false) {
   const cur = getDoc(id);
   if (!cur) return;
   db().prepare("DELETE FROM pack_docs WHERE id = ?").run(id);
-  if (cur.disk_path) fs.rmSync(path.join(packDataDir(), cur.disk_path), { force: true });
+  if (cur.disk_path) {
+    fs.rmSync(path.join(packDataDir(), cur.disk_path), { force: true });
+    dropFile(path.join(packDataDir(), cur.disk_path));
+  }
   if (!quiet) logAudit(getDb(), { registerKey: "pack_docs", recordId: id, action: "delete", user, summary: `Document packs: ${cur.rel_path} removed from pack #${cur.case_id}` });
 }
 
@@ -703,5 +735,6 @@ export async function removeDocAndRebuild(id: number, user: UserInfo) {
 
 export function readDocBytes(doc: PackDoc): Buffer | null {
   const p = path.join(packDataDir(), doc.disk_path);
-  return fs.existsSync(p) ? fs.readFileSync(p) : null;
+  // a disk wiped by a restart: the file comes back from the backup store
+  return fs.existsSync(p) || restoreFileSync(p) ? fs.readFileSync(p) : null;
 }

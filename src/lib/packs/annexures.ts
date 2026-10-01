@@ -193,12 +193,30 @@ function fallback(v: PackValues): Required<Narrative> {
   const contractRef = String(v.contract_no ?? v.contract_ref ?? "").trim();
   const project = String(v.project_name ?? "").trim();
   const instructionRef = String(v.rfc_ref ?? v.instruction_ref ?? "").trim();
-  const isEi = /EMI|-EI-/i.test(instructionRef);
+  const raised = basisKind(instructionRef);
   const scopeLines = lines(v.scope);
   const scopeFirst = scopeLines[0] ?? title;
+  // the scope as written: a plain sentence runs on, a list keeps its lines
+  const scopeParas = (() => {
+    const out: string[] = [];
+    let run = "";
+    for (const l of scopeLines) {
+      if (/^[•\-–]/.test(l)) {
+        if (run) out.push(run);
+        run = "";
+        out.push(l.replace(/^[-–]\s*/, "• "));
+      } else if (/:$/.test(l)) {
+        if (run) out.push(run);
+        run = "";
+        out.push(l);
+      } else run = run ? `${run} ${l}` : l;
+    }
+    if (run) out.push(run);
+    return out;
+  })();
   return {
     letter_paragraphs: [
-      `We write with reference to the ${v.contract_title ? `${v.contract_title} ` : ""}Contract${contractRef ? ` (Ref No. ${contractRef})` : ""}${v.commencement_date ? ` dated ${longDate(v.commencement_date)}` : ""}${project ? `, for the ${project} at AMAALA` : ""}${instructionRef ? `, and to ${isEi ? "Employer's Instruction" : "Request for Change"} Ref. ${instructionRef}${v.date ? ` dated ${longDate(v.date)}` : ""}` : ""}.`,
+      `We write with reference to the ${v.contract_title ? `${v.contract_title} ` : ""}Contract${contractRef ? ` (Ref No. ${contractRef})` : ""}${v.commencement_date ? ` dated ${longDate(v.commencement_date)}` : ""}${project ? `, for the ${project} at AMAALA` : ""}${instructionRef ? `, and to ${raised.label} Ref. ${instructionRef}${v.date ? ` dated ${longDate(v.date)}` : ""}` : ""}.`,
       `This Variation Order is given pursuant to ${clauseText} of the Contract. ${credit ? `The amount of ${amount}, as detailed in Appendix 01 to the Variation Order VO-${voNo} attached, shall be recovered from the Contractor by a reduction of the Contract Price.` : `The Contractor is instructed to carry out the works described in Appendix 01 to the Variation Order VO-${voNo} attached, for the sum of ${amount}, which shall be added to the Contract Price.`}`,
       "Capitalized terms in this Variation Order and Employer's Instruction shall have the meanings given to them in the Contract unless otherwise indicated.",
       `Should the Contractor have any comments on Appendix 01, it shall submit its detailed particulars, with supporting documents, within 3 days from the date of this instruction in accordance with Contract Sub-Clause 12.1.`,
@@ -207,7 +225,7 @@ function fallback(v: PackValues): Required<Narrative> {
       "The Employer otherwise reserves all rights under the Contract and at Law.",
     ],
     vo_bullets: [
-      `This Variation Order is given pursuant to ${clauseText} of the Contract${instructionRef ? `, further to ${isEi ? "Employer's Instruction" : "Request for Change"} Ref. ${instructionRef}` : ""}. The Contractor is hereby notified that:`,
+      `This Variation Order is given pursuant to ${clauseText} of the Contract${instructionRef ? `, further to ${raised.label} Ref. ${instructionRef}` : ""}. The Contractor is hereby notified that:`,
       `• ${scopeFirst}`,
       ...scopeLines.slice(1, 5).map((l) => (/^[•\-–\d]/.test(l) ? l.replace(/^[-–]\s*/, "• ") : `• ${l}`)),
       `• The ${credit ? "amount to be recovered" : "value of the works"} is ${amount}, as detailed in Appendix 01. ${credit ? "The recovery is effected through a reduction of the Contract Price." : "The Contract Price is adjusted accordingly."}`,
@@ -215,16 +233,16 @@ function fallback(v: PackValues): Required<Narrative> {
       `• This Variation Order has ${num(v.time_impact) ? `a time impact of ${Math.round(num(v.time_impact))} days` : "no impact"} on the Time for Completion.`,
     ],
     executive_summary: [
-      `The Employer has ${isEi ? "issued an Instruction" : "raised a Request for Change"} for ${title}, under the ${v.contract_title ? `${v.contract_title} ` : ""}Contract${contractRef ? ` No. ${contractRef}` : ""} with ${contractor}.`,
-      ...(scopeLines.length ? [scopeLines.join(" ")] : []),
-      ...lines(v.reason).slice(0, 3),
+      `The Employer has ${raised.verb} for ${title}, under the ${v.contract_title ? `${v.contract_title} ` : ""}Contract${contractRef ? ` No. ${contractRef}` : ""} with ${contractor}.`,
+      ...scopeParas,
+      ...lines(v.reason).slice(0, 14),
       `This PVO ${pvoNo} ${credit ? `recovers ${amount} from the Contractor` : `proposes a Variation of ${amount}`}${num(v.time_impact) ? ` with a time impact of ${Math.round(num(v.time_impact))} days` : " with no impact on the Time for Completion"}, to be issued as Variation Order VO-${voNo} upon approval.`,
     ],
     basis_rows: (clauses.length ? clauses : [{ clause: "3.4", title: "Employer's Instructions" }, { clause: "12.1", title: "Employer's Right to Vary" }]).map((c) => ({
       clause: c.clause,
       title: c.title,
       application: /instruction/i.test(c.title)
-        ? `${isEi ? `Employer's Instruction ${instructionRef}` : "The Employer's instruction"} directs the Contractor to ${credit ? "acknowledge the recovery of" : "carry out"} ${scopeFirst.replace(/\.$/, "")}.`
+        ? `${raised.kind === "rfc" ? "The Employer's instruction" : `${raised.label} ${instructionRef}`} directs the Contractor to ${credit ? "acknowledge the recovery of" : "carry out"} ${scopeFirst.replace(/\.$/, "")}.`
         : /vary|variation/i.test(c.title)
           ? `The change is implemented as a Variation adjusting the Contract Price by ${amount}${credit ? " (omission)" : " (addition)"}. Variation Order VO-${voNo} (Annexure 1) is to be issued by the Employer's Representative upon approval of this PVO.`
           : /set-?off|withholding/i.test(c.title)
@@ -238,7 +256,7 @@ function fallback(v: PackValues): Required<Narrative> {
     assessment_basis: credit
       ? `The value of this PVO is the amount paid by the Employer on the Contractor's behalf, as evidenced by the attached records; it is not an estimate. The line-by-line build-up is Appendix 01 to the draft VO (Annexure 1).`
       : `The value of this PVO is the Employer's assessment of the Contractor's cost proposal attached in this Annexure${v.rom_basis ? `, on the basis of ${String(v.rom_basis).toLowerCase()}` : ""}. Rates and quantities have been checked against the proposal and the Contract; the line-by-line build-up is Appendix 01 to the draft VO (Annexure 1).`,
-    assessment_evidence: `${isEi ? "The Employer's Instruction" : "The Request for Change"}${instructionRef ? ` ${instructionRef}` : ""} and the supporting documents are in Annexure 2; the cost proposal${v.cost_subject ? ` (${v.cost_subject})` : ""} and the drawings follow this page.`,
+    assessment_evidence: `The ${raised.label}${instructionRef ? ` ${instructionRef}` : ""} and the supporting documents are in Annexure 2; the cost proposal${v.cost_subject ? ` (${v.cost_subject})` : ""} and the drawings follow this page.`,
     assessment_exclusions: [
       `The ${credit ? "recovery" : "assessment"} is limited to the items listed in Appendix 01; no mark-up beyond the Contract rates has been allowed.`,
       `Time impact: ${num(v.time_impact) ? `${Math.round(num(v.time_impact))} days, as assessed against the programme` : "Nil – the change does not affect the Time for Completion"}.`,
@@ -250,6 +268,14 @@ function fallback(v: PackValues): Required<Narrative> {
         : `Budget transfer required (Option B). This PVO of ${amount} is funded by a transfer from the budget on hold${v.budget_line ? ` – ${v.budget_line}` : ""}${v.budget_available ? ` (current balance SAR ${formatMoney(num(v.budget_available))})` : ""} to the package budget${v.budget_to_line ? ` – ${v.budget_to_line}` : ""}. The approval of this PVO is not an approval of the budget transfer, which requires a separate approval under the relevant sub-DoA.`,
   };
 }
+/** What the change was raised with, from its reference: an RFC, an Employer's Instruction, an Emergency Variation Order or an RFA. */
+export function basisKind(ref: string): { kind: "rfc" | "ei" | "evo" | "rfa"; label: string; verb: string } {
+  if (/EMI|-EI-/i.test(ref)) return { kind: "ei", label: "Employer's Instruction", verb: "issued an Instruction" };
+  if (/VOR-CM|Emergency VO|EVO/i.test(ref)) return { kind: "evo", label: "Emergency Variation Order", verb: "issued an Emergency Variation Order" };
+  if (/-RFA-|^RFA/i.test(ref)) return { kind: "rfa", label: "Request for Approval", verb: "raised a Request for Approval" };
+  return { kind: "rfc", label: "Request for Change", verb: "raised a Request for Change" };
+}
+
 export function narrativeOf(v: PackValues): Required<Narrative> {
   const base = fallback(v);
   let drafted: Narrative = {};
@@ -416,7 +442,7 @@ export async function renderVoForm(v: PackValues): Promise<Buffer> {
   y += th;
   band("Information Provided with this Variation Order");
   const info: [string, string, string, string][] = [["Appendix 01", `Schedule to Variation Order No. ${voNo} – ${v.title ?? ""}`, "0", dmy(v.date)]];
-  if (v.rfc_ref) info.push([String(v.rfc_ref), `${/EMI|-EI-/i.test(String(v.rfc_ref)) ? "Employer's Instruction" : "Request for Change"} – ${v.title ?? ""}`, "0", dmy(v.date)]);
+  if (v.rfc_ref) info.push([String(v.rfc_ref), `${basisKind(String(v.rfc_ref)).label} – ${v.title ?? ""}`, "0", dmy(v.date)]);
   for (const d of lines(v.information_provided)) {
     const p = d.split(/\s+[–-]\s+/);
     if (p.length >= 2) info.push([p[0], p.slice(1, -1).join(" – ") || p[1], "0", p.length > 2 ? p[p.length - 1] : dmy(v.date)]);
@@ -598,10 +624,9 @@ export async function renderAppendix01(v: PackValues): Promise<Buffer> {
 export async function renderExecutiveSummary(v: PackValues): Promise<Buffer> {
   const n = narrativeOf(v);
   const { doc, done } = newDoc("Executive summary");
-  const isEi = /EMI|-EI-/i.test(String(v.rfc_ref ?? ""));
-  doc.fillColor(INK).font("Helvetica-Bold").fontSize(15).text(`Executive Summary – ${isEi ? "Employer's Instruction" : "Request for Change"}`, M, 80, { width: TW, align: "center" });
+  doc.fillColor(INK).font("Helvetica-Bold").fontSize(15).text(`Executive Summary – ${basisKind(String(v.rfc_ref ?? "")).label}`, M, 80, { width: TW, align: "center" });
   doc.y = 120;
-  for (const p of n.executive_summary) para(doc, p, { size: 10.5, align: "justify", gap: 12 });
+  for (const p of n.executive_summary) para(doc, p, { size: 10.5, align: /^[•]/.test(p) || /:$/.test(p) ? "left" : "justify", gap: /^[•]/.test(p) ? 3 : 12, indent: /^[•]/.test(p) ? 14 : 0 });
   doc.end();
   return done;
 }

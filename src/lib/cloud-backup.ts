@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { S3Client, GetObjectCommand, PutObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, GetObjectCommand, PutObjectCommand, HeadObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getDb, restoreBackupIfMissing } from "./db";
 
 /**
@@ -38,6 +38,7 @@ interface Store {
   size(key: string): Promise<number | null>;
   get(key: string): Promise<Buffer | null>;
   put(key: string, body: Buffer): Promise<void>;
+  del(key: string): Promise<void>;
   label: string;
 }
 
@@ -67,7 +68,10 @@ function s3Store(): Store {
       return Buffer.from(await obj.Body!.transformToByteArray());
     },
     async put(key, body) {
-      await s3.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: body, ContentType: "application/x-sqlite3" }));
+      await s3.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: body, ContentType: key.endsWith(".db") ? "application/x-sqlite3" : "application/octet-stream" }));
+    },
+    async del(key) {
+      await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
     },
   };
 }
@@ -111,7 +115,22 @@ function githubStore(): Store {
       });
       if (!r.ok) throw new Error(`GitHub ${r.status} uploading ${key}: ${(await r.text()).slice(0, 200)}`);
     },
+    async del(key) {
+      const existing = await sha(key);
+      if (!existing) return;
+      const r = await fetch(url(key), {
+        method: "DELETE",
+        headers: { ...headers, Accept: "application/vnd.github+json", "Content-Type": "application/json" },
+        body: JSON.stringify({ message: `Remove ${key} ${new Date().toISOString()}`, sha: existing }),
+      });
+      if (!r.ok && r.status !== 404) throw new Error(`GitHub ${r.status} removing ${key}: ${(await r.text()).slice(0, 200)}`);
+    },
   };
+}
+
+/** The backup store, for the uploaded files that live beside the database (see file-store.ts). */
+export function backupStore(): Store | null {
+  return provider() ? store() : null;
 }
 
 function store(): Store {

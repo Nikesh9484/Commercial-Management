@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { keepFile, dropFile, restoreFileSync } from "../file-store";
 import path from "node:path";
 import type Database from "better-sqlite3";
 import { getDb } from "../db";
@@ -170,6 +171,7 @@ export async function addKpiDoc(changeId: number, input: { name: string; relPath
   const id = Number(info.lastInsertRowid);
   const disk = path.join(String(changeId), `${id}-${safeName(input.name)}`);
   fs.writeFileSync(path.join(kpiDataDir(), disk), input.bytes);
+  keepFile(path.join(kpiDataDir(), disk));
   d.prepare("UPDATE kpi_docs SET disk_path = ? WHERE id = ?").run(disk, id);
   logAudit(getDb(), { registerKey: "kpi_docs", recordId: id, action: "create", user, summary: `KPI documents: added ${rel} (${section}${pageCount ? `, pages ${pages || "all"} of ${pageCount}` : ""}) to change #${changeId}` });
   return getKpiDoc(id)!;
@@ -201,13 +203,16 @@ export function removeKpiDoc(id: number, user: UserInfo, quiet = false) {
   const cur = getKpiDoc(id);
   if (!cur) return;
   db().prepare("DELETE FROM kpi_docs WHERE id = ?").run(id);
-  if (cur.disk_path) fs.rmSync(path.join(kpiDataDir(), cur.disk_path), { force: true });
+  if (cur.disk_path) {
+    fs.rmSync(path.join(kpiDataDir(), cur.disk_path), { force: true });
+    dropFile(path.join(kpiDataDir(), cur.disk_path));
+  }
   if (!quiet) logAudit(getDb(), { registerKey: "kpi_docs", recordId: id, action: "delete", user, summary: `KPI documents: removed ${cur.rel_path} from change #${cur.change_id}` });
 }
 
 export function readKpiDocBytes(doc: KpiDoc): Buffer | null {
   const p = path.join(kpiDataDir(), doc.disk_path);
-  return fs.existsSync(p) ? fs.readFileSync(p) : null;
+  return fs.existsSync(p) || restoreFileSync(p) ? fs.readFileSync(p) : null;
 }
 
 export function listKpiItemDetails(changeIds: number[]): Map<number, KpiItemDetails> {

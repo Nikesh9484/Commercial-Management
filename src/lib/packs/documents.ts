@@ -1,7 +1,7 @@
 import { AlignmentType, BorderStyle, Document, Packer, Paragraph, ShadingType, Table, TableCell, TableRow, TextRun, WidthType } from "docx";
 import ExcelJS from "exceljs";
 import { formatMoney } from "../format";
-import { clean, dmy, evoLetter, items, lines, longDate, narrativeOf, num, pvoNoOf, sar, voDescription, voNoOf } from "./annexures";
+import { basisKind, clean, dmy, evoLetter, items, lines, longDate, narrativeOf, num, pvoNoOf, sar, voDescription, voNoOf } from "./annexures";
 import type { ChangeLogRow } from "./data";
 import type { PackType, PackValues } from "./shared";
 
@@ -187,8 +187,7 @@ export async function voFormDocx(v: PackValues, evo: boolean, projectCode = ""):
 
 export async function summaryDocx(v: PackValues): Promise<Buffer> {
   const n = narrativeOf(v);
-  const isEi = /EMI|-EI-/i.test(String(v.rfc_ref ?? ""));
-  return docxOf([{ p: `Executive Summary – ${isEi ? "Employer's Instruction" : "Request for Change"}`, bold: true, size: 13 }, ...n.executive_summary.map((p) => ({ p }))], "Executive summary");
+  return docxOf([{ p: `Executive Summary – ${basisKind(String(v.rfc_ref ?? "")).label}`, bold: true, size: 13 }, ...n.executive_summary.map((p) => ({ p }))], "Executive summary");
 }
 
 export async function basisDocx(v: PackValues): Promise<Buffer> {

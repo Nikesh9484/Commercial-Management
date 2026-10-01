@@ -1,4 +1,4 @@
-import { readPositioned, valueRight, valueBelow, numericRowsAfter, peopleUnder, peopleWithHeadings, moneyOf, findLabel, isLabel, type PosPage } from "./positioned";
+import { readPositioned, valueRight, valueBelow, numericRowsAfter, tableUnder, peopleUnder, peopleWithHeadings, moneyOf, findLabel, isLabel, type PosPage } from "./positioned";
 import { fieldForLabel, REFERENCE_SLOT, type PackType, type PackValues, type TemplateInspection } from "./shared";
 
 /**
@@ -42,12 +42,14 @@ export async function positioned(bytes: Buffer): Promise<PosPage[]> {
   return readPositioned(bytes);
 }
 
-export type DocKind = "pvo" | "dvo" | "rfa" | "ear" | "rfc" | "ei" | "cost" | "unknown";
+export type DocKind = "pvo" | "evo" | "dvo" | "rfa" | "ear" | "rfc" | "ei" | "cost" | "unknown";
 
 /** What a PDF is, from the headings on its first pages – so a file in any entry is read the right way. */
 export function classifyDoc(pages: PosPage[], slotHint: string): DocKind {
   const head = pages.slice(0, 3).flatMap((p) => p.rows.flatMap((r) => r.cells.map((c) => c.s))).join(" ").toLowerCase();
   const all = pages.slice(0, 6).flatMap((p) => p.rows.flatMap((r) => r.cells.map((c) => c.s))).join(" ").toLowerCase();
+  // the Emergency Variation Order assessment is on the PVO form (RSG-CM-FRM-0013) but is the request behind a change, not an earlier PVO
+  if (/emergency variation order assessment/.test(head)) return "evo";
   if (/proposed variation order \(pvo\)|rsg-cm-frm-0013/.test(head)) return "pvo";
   if (/determination of variation order|rsg-cm-frm-0014|rgs-cm-frm-0014|pvo to dvo cost movement/.test(head)) return "dvo";
   if (/request for approval form|rsg-pr-frm-0004|trs-pr-frm-0004/.test(head)) return "rfa";
@@ -589,12 +591,82 @@ export function readEvoForChange(pages: PosPage[]): Reading {
   const form = pages.filter((p) => /Emergency Variation Order Assessment/i.test(p.rows.flatMap((x) => x.cells.map((c) => c.s)).join(" "))).slice(0, 2);
   if (!form.length) return r;
   set(r, "title", valueRight(form, "Title of this Variation"), src);
-  set(r, "scope", valueBelow(form, "Scope of works / services (brief)", ["b) Estimated Cost Impact", "Basis of ROM"]), src);
-  set(r, "reason", valueBelow(form, "Description of Emergency Circumstances", ["Scope of works"]), src);
+  // the whole scope block (what was done, the resources, the closing line) and the whole justification block are the PVO's scope and reason
+  // every line between the heading and the next section – a line of the text that ends with a colon
+  // ("The manpower resources included:") is part of the text, not a label
+  const blockBelow = (label: string | RegExp, stops: (string | RegExp)[]) => {
+    const hit = findLabel(form, label);
+    if (!hit) return "";
+    const rows = hit.page.rows;
+    const lines: string[] = [];
+    const same = hit.row.cells.slice(hit.idx + 1).map((c) => c.s).join(" ").trim();
+    if (same && !stops.some((st) => isLabel(same, st))) lines.push(same);
+    for (let i = rows.indexOf(hit.row) + 1; i < rows.length; i++) {
+      const row = rows[i];
+      if (stops.some((st) => row.cells.some((c) => isLabel(c.s, st)))) break;
+      const t = row.cells.map((c) => c.s).join(" ").trim();
+      if (!t || /^(rsg|trs)-[a-z]{2}-frm|^page \d+ of \d+|^rev\. ?\d|^internal ?: ?confidential/i.test(t)) continue;
+      lines.push(t);
+    }
+    return lines.join("\n").trim();
+  };
+  set(r, "scope", unwrap(blockBelow("Scope of works / services (brief)", ["b) Estimated Cost Impact", "Basis of ROM"])), src);
+  set(r, "reason", unwrap(blockBelow("Description of Emergency Circumstances", ["Scope of works"])), src);
   const text = glued(pages);
   set(r, "rfc_ref", text.match(/\b1TB\d{5}-\d{3}[A-Z]\d{2}-AMA-VOR-[A-Z]{2}-[A-Z0-9]{4}\b/)?.[0] ?? valueRight(form, "RFC/CRF Reference", { notLabels: ["Requesting Department"] }), src);
   set(r, "root_cause", valueRight(form, "Root Cause for this change"), src);
   set(r, "requesting_department", valueRight(form, "Requesting Department"), src);
+  set(r, "pvo_no_evo", valueRight(form, "Proposed Variation Order No", { notLabels: ["Date"] }), src);
+  // the particulars the EVO was raised with: the vendor, the package, the contract and the project codes
+  set(r, "contractor", valueRight(form, "Vendor Name", { notLabels: ["EWBS Code"] }), src);
+  set(r, "ewbs_code", valueRight(form, "EWBS Code"), src);
+  set(r, "works_package", valueRight(form, "Works Package", { notLabels: ["ACC Contract No"] }), src);
+  set(r, "contract_no", valueRight(form, "ACC Contract No"), src);
+  set(r, "development_name", valueRight(form, "Development Name", { notLabels: ["Development No"] }), src);
+  set(r, "development_no", valueRight(form, "Development No"), src);
+  set(r, "program_name", valueRight(form, "Program Name", { notLabels: ["Program No"] }), src);
+  set(r, "program_no", valueRight(form, "Program No"), src);
+  set(r, "project_name", valueRight(form, "Project Name", { notLabels: ["Project Code"] }), src);
+  set(r, "project_code", valueRight(form, "Project Code"), src);
+  // the priced items of the EVO: Reference | Description | Contract Currency | Omit | Add – a recovery of costs is an omission
+  const title = r.values.title ?? "";
+  const recovery = /recover|deduct|credit|back ?charge|omission|descop|de-scop/i.test(title);
+  const rows = tableUnder(form, /^Reference$/, /^Sub-Total$/, [/^Reference$/, /^Description$/, /^Contract Currency$/, /^Omit$/, /^Add$/], /b\) Estimated Cost Impact/).filter((row) => row.some((c) => /[A-Za-z]{3}/.test(c) && !/^SAR$/i.test(c)));
+  const items: string[] = [];
+  let omitSum = 0;
+  let addSum = 0;
+  rows.forEach((row, i) => {
+    const desc = row[1] || row.find((c) => /[A-Za-z]{3}/.test(c) && !/^SAR$/i.test(c)) || title;
+    let omit = moneyOf(row[3] ?? "") ?? 0;
+    let add = moneyOf(row[4] ?? "") ?? 0;
+    // a bracketed figure is a deduction wherever the column reader put it; a recovery of costs always is
+    if (add < 0 || (recovery && add > 0 && !omit)) {
+      omit = Math.abs(add);
+      add = 0;
+    }
+    omit = Math.abs(omit);
+    omitSum += omit;
+    addSum += add;
+    items.push(`${i + 1} – ${desc} – ${omit} – ${add}`);
+  });
+  const totalCell = valueRight(form, "Total Value (in SAR)") || valueRight(form, "Total Value (in Contract Currency)");
+  const total = moneyOf(totalCell);
+  if (!items.length && total !== null) {
+    const neg = total < 0 || recovery;
+    items.push(`1 – ${title} – ${neg ? Math.abs(total) : 0} – ${neg ? 0 : Math.abs(total)}`);
+    if (neg) omitSum = Math.abs(total);
+    else addSum = Math.abs(total);
+  }
+  if (items.length) {
+    set(r, "cost_items", items.join("\n"), src);
+    set(r, "omit", omitSum ? String(Math.round(omitSum * 100) / 100) : "", src);
+    set(r, "add", addSum ? String(Math.round(addSum * 100) / 100) : "", src);
+    set(r, "total_value", String(Math.round((addSum - omitSum) * 100) / 100), src);
+  }
+  // the contract reconciliation the EVO was assessed on
+  set(r, "original_contract", money(valueRight(form, "Original Contract Value", { notLabels: [/^A$/] }).replace(/^A\s+/, "")), src);
+  set(r, "approved_dvos", money(valueRight(form, "Approved DVOs", { notLabels: [/^B$/, /^%/] }).replace(/^B\s+/, "")), src);
+  set(r, "approved_pvos", money(valueRight(form, "Approved PVOs", { notLabels: [/^D$/, /^%/] }).replace(/^D\s+/, "")), src);
   return r;
 }
 
@@ -632,7 +704,13 @@ export function readLabelled(pages: PosPage[], type: PackType): Reading {
       const label = m[1].trim();
       const f = fieldForLabel(type, label);
       if (!f || r.values[f.key]) continue;
-      let value = m[2] ? m[2].trim() : row.cells.slice(1).map((c) => c.s).join(" ").trim();
+      // the cells after the label, up to the next label on the row ("RFC/CRF Reference: | Emergency VO No. 010 | Requesting Department: | Construction")
+      const after: string[] = [];
+      for (const c of row.cells.slice(1)) {
+        if (/^[A-Za-z][^:]{2,60}:$/.test(c.s.trim()) || fieldForLabel(type, c.s.replace(/:$/, "").trim())) break;
+        after.push(c.s);
+      }
+      let value = m[2] ? m[2].trim() : after.join(" ").trim();
       if (!value && f.kind === "long") {
         const lines: string[] = [];
         for (let k = i + 1; k < rows.length && lines.length < 12; k++) {
@@ -855,7 +933,9 @@ function unwrap(text: string): string {
       continue;
     }
     const prev = out[out.length - 1];
-    if (prev && !/[.:;!?]$/.test(prev) && !/^(\d+[.)]|[•·\-–]|[a-z][.)])\s/.test(l) && !/^[A-Z][A-Za-z ]{0,40}:$/.test(l)) out[out.length - 1] = `${prev} ${l}`;
+    // a short list item ("• Supervisors") is a line of its own: the sentence after it is not its continuation
+    const prevIsItem = !!prev && /^(\d+[.)]|[•·\-–]|[a-z][.)])\s/.test(prev) && prev.length < 70;
+    if (prev && !prevIsItem && !/[.:;!?]$/.test(prev) && !/^(\d+[.)]|[•·\-–]|[a-z][.)])\s/.test(l) && !/^[A-Z][A-Za-z ]{0,40}:$/.test(l)) out[out.length - 1] = `${prev} ${l}`;
     else out.push(l);
   }
   return out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
@@ -920,9 +1000,11 @@ export function readCost(pages: PosPage[], title: string): Reading {
   set(r, "dvo_value", String(Math.abs(total)), src);
   set(r, "amount", String(Math.abs(total)), src);
   set(r, "rom_estimate", String(Math.abs(total)), src);
-  if (total < 0) set(r, "omit", String(Math.abs(total)), src);
+  // a bracketed total, or a recovery of costs / back-charge / de-scoping, is an omission from the Contract Price
+  const omission = total < 0 || /recover|deduct|credit|back ?charge|omission|descop|de-scop/i.test(title || "");
+  if (omission) set(r, "omit", String(Math.abs(total)), src);
   else set(r, "add", String(total), src);
-  set(r, "cost_items", `1 – ${title || "As per the attached cost assessment"} – ${total < 0 ? Math.abs(total) : 0} – ${total < 0 ? 0 : total}`, src);
+  set(r, "cost_items", `1 – ${title || "As per the attached cost assessment"} – ${omission ? Math.abs(total) : 0} – ${omission ? 0 : total}`, src);
   const subject = valueRight(pages, /^Subject:?$/i);
   if (subject) set(r, "cost_subject", subject, src);
   const scope = valueRight(pages, /^Scope:?$/i);

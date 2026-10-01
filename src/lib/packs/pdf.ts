@@ -1,5 +1,5 @@
 import PDFDocument from "pdfkit";
-import { PDFDocument as PdfLib, PDFFont, PDFPage, StandardFonts, degrees, rgb, type RGB } from "pdf-lib";
+import { PDFDocument as PdfLib, PDFFont, PDFPage, StandardFonts, degrees, rgb, type RGB, PDFName } from "pdf-lib";
 import { convertToPdf, convertible, isJpeg, isPng } from "./convert";
 import { positioned } from "./extract";
 import type { PosPage } from "./positioned";
@@ -319,6 +319,8 @@ async function copiedIndexPage(ctx: Ctx, ref: RefPages, rows: IndexRow[]): Promi
   if (ref.index === null) return false;
   const pg = ref.pos.find((p) => p.no === ref.index)!;
   const [page] = await ctx.pdf.copyPages(ref.src, [ref.index - 1]);
+  // the approved pack's tick boxes are form widgets drawn above the page: they go, this pack ticks its own
+  page.node.delete(PDFName.of("Annots"));
   ctx.pdf.addPage(page);
   const { width } = page.getSize();
   const found = pg.rows
@@ -336,8 +338,10 @@ async function copiedIndexPage(ctx: Ctx, ref: RefPages, rows: IndexRow[]): Promi
   const [onX, offX] = [Math.min(...boxX), Math.max(...boxX)];
   const step = found.length > 1 ? Math.abs(found[0].y - found[1].y) : 20;
   const tick = (y: number, attached: boolean) => {
-    page.drawRectangle({ x: onX - 18, y: y - 4, width: 34, height: 14, color: WHITE });
-    page.drawRectangle({ x: offX - 10, y: y - 4, width: 30, height: 14, color: WHITE });
+    // the approved pack's own marks go first (a glyph can sit a little off the box), then this pack's
+    const mid = (onX + offX) / 2;
+    page.drawRectangle({ x: onX - 22, y: y - 4.5, width: Math.max(46, mid - 3 - (onX - 22)), height: 15, color: WHITE });
+    page.drawRectangle({ x: mid + 3, y: y - 4.5, width: Math.max(40, offX + 28 - (mid + 3)), height: 15, color: WHITE });
     tickBox(page, onX - 9, y - 0.5, attached);
     tickBox(page, offX, y - 0.5, !attached);
   };

@@ -10,7 +10,7 @@ import { renderAppendix01, renderAssessment, renderBudgetParticularsNova, render
 import { withNarrative } from "./narrative";
 import { changeLogRows, type ChangeLogRow } from "./data";
 import { overlayDvo, overlayPvo, overlayRfa, overlayVoForm } from "./overlay";
-import { packParts, pageSpec, positioned } from "./extract";
+import { packParts, pageSpec, positioned, classifyDoc, type DocKind } from "./extract";
 import { caseValues, getTemplate, listDocs, readDocBytes, readTemplateBytes, type PackCase } from "./store";
 import { ValidationError } from "../registers/engine";
 import { defaultPackFileName, packType, REFERENCE_SLOT, slotsFor, type PackDoc, type PackType, type PackValues } from "./shared";
@@ -184,15 +184,49 @@ async function costAndDrawings(docs: PackDoc[], carrierSlots: string[], carrierL
 }
 const gen = (name: string, bytes: Buffer): PartItem => ({ name, bytes, mime: "application/pdf" });
 
+/**
+ * The files in the "other attachment" entries feed the values; the pack itself follows the approved
+ * packs' six annexures. Of those files, only the basis of the change (an RFC, an EVO, an Employer's
+ * Instruction, an RFA) goes into Annexure 2 and a cost particular into Annexure 4; the rest stay out.
+ */
+async function sortOthers(docs: PackDoc[]): Promise<{ basis: PartItem[]; cost: PartItem[]; left: string[] }> {
+  const out = { basis: [] as PartItem[], cost: [] as PartItem[], left: [] as string[] };
+  for (const d of docs.filter((x) => x.slot.startsWith("other_"))) {
+    const bytes = readDocBytes(d);
+    if (!bytes) {
+      out.left.push(d.name);
+      continue;
+    }
+    let kind: DocKind = "unknown";
+    if (/\.pdf$/i.test(d.name)) {
+      try {
+        kind = classifyDoc(await positioned(bytes), "other");
+      } catch {
+        kind = "unknown";
+      }
+    }
+    const item: PartItem = { name: d.name, bytes, pages: d.pages, mime: d.mime };
+    if (kind === "rfc" || kind === "evo" || kind === "ei" || kind === "rfa") out.basis.push(item);
+    else if (kind === "cost" || /cost|proposal|quotation|submission|summary|invoice|breakdown|boq|rom/i.test(d.name)) out.cost.push(item);
+    else out.left.push(d.name);
+  }
+  return out;
+}
+
 const reason = (e: unknown) => (e instanceof Error ? e.message : String(e)).replace(/\s+/g, " ").trim().slice(0, 600);
 
 /**
  * A page in the document's place when it could not be produced – the pack goes on, the page says
  * what to redo. Nothing in a pack stops the rest of it.
  */
+/** a hook a diagnostic run can set to see the memory each step of a pack takes (nothing in production) */
+const phase = (label: string) => (globalThis as { __packPhase?: (l: string) => void }).__packPhase?.(label);
+
 async function orNotice(name: string, make: () => Promise<Buffer>): Promise<{ bytes: Buffer; problem: string | null }> {
   try {
-    return { bytes: await make(), problem: null };
+    const bytes = await make();
+    phase(name);
+    return { bytes, problem: null };
   } catch (e) {
     console.error(`${name} could not be produced:`, e);
     const why = reason(e);
@@ -234,6 +268,7 @@ async function assemble(c: PackCase, t: PackType, values: PackValues, meta: Form
   const number = (parts: PackPart[], from: number) => parts.map((p, i) => ({ ...p, no: from + i }));
   if (t.key === "pvo") {
     const v = await quiet("narrative", () => withNarrative(c, values), values);
+    const sorted = await sortOthers(docs);
     const ann: PackPart[] = [
       {
         no: 1,
@@ -248,14 +283,15 @@ async function assemble(c: PackCase, t: PackType, values: PackValues, meta: Form
         hint: "The executive summary, the approved instruction or request, and the revise-and-resubmit updates",
         style: "annexure",
         note: instructionNote(v),
-        items: [await sg("Executive summary", () => renderExecutiveSummary(v)), ...itemsOf(docs, "rfc"), ...itemsOf(docs, "resubmit")],
+        // the approved packs have six annexures and nothing after: the basis of the change (an RFC, EVO, EI or RFA put in any entry) is bound here
+        items: [await sg("Executive summary", () => renderExecutiveSummary(v)), ...itemsOf(docs, "rfc"), ...itemsOf(docs, "resubmit"), ...sorted.basis],
       },
       { no: 3, label: "CONTRACTUAL BASIS FOR VARIATION ENTITLEMENT", hint: "The clauses relied on and how each applies", style: "annexure", items: [await sg("Contractual basis", () => renderContractualBasis(v))] },
-      { no: 4, label: "PARTICULARS OF 'ESTIMATED COST & TIME IMPACT'", hint: "The Employer's assessment, the cost proposal and the drawings – uploaded, or the pages inside the RFC / RFA", style: "annexure", items: [await sg("Employer's assessment of cost and time", () => renderAssessment(v)), ...(await quiet("cost proposal and drawings", () => costAndDrawings(docs, ["rfc"], "RFC / RFA"), []))] },
+      { no: 4, label: "PARTICULARS OF 'ESTIMATED COST & TIME IMPACT'", hint: "The Employer's assessment, the cost proposal and the drawings – uploaded, or the pages inside the RFC / RFA", style: "annexure", items: [...sorted.cost, await sg("Employer's assessment of cost and time", () => renderAssessment(v)), ...(await quiet("cost proposal and drawings", () => costAndDrawings(docs, ["rfc"], "RFC / RFA"), []))] },
       { no: 5, label: "BUDGET PARTICULARS / ACC COST WORKSHEET", hint: "Where the budget comes from and where it goes", style: "annexure", items: [await sg("Budget particulars", () => renderBudgetParticularsNova(v))] },
       { no: 6, label: "CHANGE LOG", hint: "Every change on the contract with its RFC, PVO, VO and DVO", style: "annexure", items: [await sg("Change log", () => renderChangeLogNova(v, logRows(c)))] },
     ];
-    return { front: [{ name: "PVO form (RSG-CM-FRM-0013)", bytes: form }], parts: [...ann, ...number(others, 7)], index: { title: "PROPOSED VARIATION ORDER (PVO)" } };
+    return { front: [{ name: "PVO form (RSG-CM-FRM-0013)", bytes: form }], parts: ann, index: { title: "PROPOSED VARIATION ORDER (PVO)" } };
   }
   if (t.key === "dvo") {
     const ann: PackPart[] = [
@@ -339,7 +375,9 @@ export async function renderOutput(c: PackCase, format: OutputFormat, user: User
   if (format === "pdf") return { bytes: form, fileName: safeFileName(base, "pdf"), mime: "application/pdf", note: formNote };
   const docs = listDocs(c.id).filter((d) => d.slot !== REFERENCE_SLOT);
   const { front, parts, index } = await assemble(c, t, values, meta, docs, form);
+  phase("assembled");
   const bytes = await buildCompiledPack({ type: t, values, meta, fileName: base, front, parts, index, references: referenceCandidates(c, t) });
+  phase("compiled");
   return { bytes, fileName: safeFileName(`${base} - Pack`, "pdf"), mime: "application/pdf", note: `${docs.length} supporting documents in ${parts.filter((p) => p.items.length).length} parts${problem ? `; ${formNote}` : ""}` };
 }
 

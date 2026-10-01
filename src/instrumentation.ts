@@ -6,5 +6,8 @@ export async function register() {
     const { repairEarlyWarnings } = await import("./lib/repairs/early-warnings");
     repairEarlyWarnings();
     backup.startBackupLoop();
+    // the uploaded files beside the database: anything the disk lost comes back, anything never sent goes up
+    const files = await import("./lib/file-store");
+    void files.restoreMissingAtStart().then(() => files.uploadUnsentAtStart()).catch((e) => console.error("[files] start-up sync failed:", e));
   }
 }
