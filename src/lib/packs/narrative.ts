@@ -6,6 +6,8 @@ import { aiEnabled, aiKeyPresent } from "../ai-switch";
 import { getDb } from "../db";
 import type { PackCase, PackValues } from "./shared";
 
+export const AI_WORDING_AVAILABLE = () => aiEnabled() && aiKeyPresent();
+
 /**
  * The wording of a PVO pack's annexures – the Employer's letter, the VO particulars, the executive
  * summary, the contractual basis, the assessment and the budget treatment – is written from the
@@ -70,5 +72,58 @@ export async function withNarrative(c: PackCase, values: PackValues): Promise<Pa
   } catch (e) {
     console.error("pack wording could not be drafted – the fixed wording is used:", e);
     return values;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* the change itself, worded for the PVO form                           */
+
+const WordingSchema = z.object({
+  title: z.string().describe("A short title of the variation, as the approved PVOs name them (one line, no reference numbers)"),
+  scope: z.string().describe("Scope of works / services (brief): what the Contractor is to do, as a short paragraph followed by bullet lines starting with '• ' where there are distinct items"),
+  reason: z.string().describe("Reason for the Proposed Variation Order: the justification, then a line 'Benefits:' followed by bullet lines starting with '• ' where benefits apply"),
+  contractual_basis: z.string().describe("Contractual basis for variation entitlement: the sub-clauses relied on and one or two sentences on how they apply, in the voice of the approved PVOs"),
+});
+
+const WORDING_SYSTEM = `You word the change of a Proposed Variation Order (PVO) for the Employer's commercial team on the AMAALA / Triple Bay development (Red Sea Global, Saudi Arabia; FIDIC-based contract; amounts in SAR).
+Write as the approved PVOs read: plain, formal, in the Employer's voice, defined terms capitalised, sub-clauses cited as "Sub-Clause 12.1 [Employer's Right to Vary]". Do not copy the documents' sentences; summarise and reword them.
+Use only the facts in the documents and values given. Never invent references, dates, figures, names or clauses.`;
+
+/**
+ * The title, scope, reason and contractual basis of the change, drafted from the change documents
+ * (the RFC / RFA / EVO / Employer's Instruction, its executive summary and letter) when the AI is on.
+ * Kept with the pack under a hash of what it was drafted from; nothing visible when the switch is off.
+ */
+export async function draftChangeWording(values: PackValues, texts: string): Promise<{ title: string; scope: string; reason: string; contractual_basis: string } | null> {
+  if (!aiEnabled() || !aiKeyPresent() || !texts.trim()) return null;
+  const hash = crypto.createHash("sha1").update(texts).update(String(values.title ?? "")).digest("hex");
+  if (values.__wording && values.__wording_hash === hash) {
+    try {
+      return JSON.parse(values.__wording) as { title: string; scope: string; reason: string; contractual_basis: string };
+    } catch {
+      /* drafted again below */
+    }
+  }
+  try {
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY, maxRetries: 2, timeout: 4 * 60 * 1000 });
+    const facts = ["title", "scope", "reason", "contractual_basis", "contractor", "contract_no", "contract_title", "project_name", "works_package", "rfc_ref", "instruction_ref", "ei_no", "total_value", "cost_scope", "cost_subject"]
+      .filter((k) => String(values[k] ?? "").trim())
+      .map((k) => `${k}: ${String(values[k]).slice(0, 3000)}`)
+      .join("\n");
+    const response = await client.messages.parse({
+      model: PACK_MODEL,
+      max_tokens: 3000,
+      output_config: { effort: "medium", format: zodOutputFormat(WordingSchema) },
+      system: WORDING_SYSTEM,
+      messages: [{ role: "user", content: `Word the change for the PVO form.\n\nVALUES READ SO FAR:\n${facts}\n\nCHANGE DOCUMENTS:\n${texts}` }],
+    });
+    if (response.stop_reason === "refusal" || !response.parsed_output) return null;
+    const out = response.parsed_output;
+    values.__wording = JSON.stringify(out);
+    values.__wording_hash = hash;
+    return out;
+  } catch (e) {
+    console.error("the change could not be worded – the documents' own wording is used:", e);
+    return null;
   }
 }

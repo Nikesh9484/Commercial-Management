@@ -133,7 +133,7 @@ export function changeLogRows(programmeId: number, costLineId: number | null, co
   }));
 }
 
-function changeLogText(rows: ChangeLogRow[]): string {
+export function changeLogText(rows: ChangeLogRow[]): string {
   return rows.map((r) => `${r.description} – ${[r.rfc, r.pvo, r.vo, r.dvo].map((x) => x || "-").join(" – ")} – PVO ${r.pvoValue === null ? "-" : money(r.pvoValue)} – DVO ${r.dvoValue === null ? "-" : money(r.dvoValue)}${r.thisOne ? " – (this one)" : ""}`).join("\n");
 }
 

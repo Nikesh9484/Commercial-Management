@@ -293,6 +293,17 @@ export function PackEditor({ type, initial, docs: initialDocs, canManage, templa
 
         {/* what was read */}
         <div className="space-y-3">
+          {(() => {
+            const missing = type.fields.filter((f) => !(values[f.key] ?? "").trim());
+            if (!missing.length) return null;
+            return (
+              <div className="card border-amber-300 bg-amber-50 p-4 text-xs">
+                <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-amber-800">Not found in the files · {missing.length}</div>
+                <div className="text-amber-900">{missing.map((f) => f.label).join(" · ")}</div>
+                <div className="mt-2 text-muted">Add a file that holds them into any entry (a note, a letter, a form – one line per detail, such as &quot;Contract name: …&quot;), then read again; or type them with the pencil beside the row.</div>
+              </div>
+            );
+          })()}
           {type.groups.map((group) => {
             const fields = type.fields.filter((f) => f.group === group);
             if (!fields.length) return null;

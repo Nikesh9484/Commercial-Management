@@ -12,8 +12,9 @@ import type { UserInfo } from "../registers/types";
 import { formatPages, keyPages, readPdfPages } from "../kpi/pages";
 import type { PosPage } from "./positioned";
 import { PACK_STATUSES, packType, slotsFor, REFERENCE_SLOT, type PackCase, type PackDoc, type PackTemplate, type PackTypeKey, type PackValues, type TemplateInspection } from "./shared";
-import { classifyDoc, packParts, positioned, readApprovedPvoForDvo, readCost, readEi, readReferenceDvo, readReferenceEar, readReferencePvo, readReferenceRfa, readRfaForChange, readRfc, type DocKind, type Reading } from "./extract";
-import { autoValues } from "./data";
+import { classifyDoc, packParts, positioned, readApprovedPvoForDvo, changeText, executiveSummary, readCost, readEi, readEvoForChange, readLabelled, readReferenceDvo, readReferenceEar, readReferencePvo, readReferenceRfa, readRfaForChange, readRfc, type DocKind, type Reading } from "./extract";
+import { autoValues, changeLogText } from "./data";
+import { draftChangeWording } from "./narrative";
 
 export * from "./shared";
 
@@ -366,7 +367,7 @@ export async function rebuildValues(caseId: number, user: UserInfo): Promise<{ v
   const values: PackValues = { ...base.values };
   // the wording drafted for the pack stays with it (it is dropped by itself once its inputs change)
   const prev = caseValues(c);
-  for (const k of Object.keys(prev)) if (k.startsWith("__narrative") || k === "__manual") values[k] = prev[k];
+  for (const k of Object.keys(prev)) if (k.startsWith("__narrative") || k.startsWith("__wording") || k === "__manual") values[k] = prev[k];
   const sources: Record<string, string> = {};
   for (const k of Object.keys(values)) if (values[k]) sources[k] = c.source_id ? "register" : "project";
   const EXTRA = ["acc_table", "cost_subject", "cost_scope", "instruction_ref", "instruction_text", "ei_no", "change_log_rows"];
@@ -497,12 +498,30 @@ export async function rebuildValues(caseId: number, user: UserInfo): Promise<{ v
   // 2. the approved PVO behind a DVO
   if (t.key === "dvo") for (const pages of await readAll("pvo")) if (pages.length) apply(readApprovedPvoForDvo(pages));
   // 3. the RFC (or the RFA details): the change itself
+  // the request behind the change may be an RFC, an RFA, an EVO or an Employer's Instruction; every written
+  // page with it (an executive summary, a letter) is kept as text for the wording of the change
+  const changeTexts: string[] = [];
   for (const slot of ["rfc", "details"]) {
     for (const pages of await readAll(slot)) {
       if (!pages.length) continue;
       const kind = classifyDoc(pages, "rfc");
-      if (kind === "cost" || kind === "pvo" || kind === "dvo" || kind === "ear") continue;
-      apply(kind === "rfa" && t.key !== "rfa" ? readRfaForChange(pages) : kind === "ei" ? readEi(pages) : readRfc(pages));
+      const isEvo = kind === "pvo" && /Emergency Variation Order Assessment/i.test(pages.slice(0, 2).flatMap((p) => p.rows.flatMap((x) => x.cells.map((c) => c.s))).join(" "));
+      const text = changeText(pages);
+      if (text) changeTexts.push(text);
+      if (kind === "cost" || kind === "dvo" || kind === "ear" || (kind === "pvo" && !isEvo)) continue;
+      apply(isEvo ? readEvoForChange(pages) : kind === "rfa" && t.key !== "rfa" ? readRfaForChange(pages) : kind === "ei" ? readEi(pages) : readRfc(pages));
+    }
+  }
+  values.__change_texts = changeTexts.join("\n\n----\n\n").slice(0, 30000);
+  // with no reason stated, the executive summary of the change pack is the reason
+  if (!values.reason && t.fields.some((f) => f.key === "reason")) {
+    for (const x of read.filter((d) => d.doc.slot === "rfc" || d.doc.slot === "details")) {
+      const summary = executiveSummary(x.pages);
+      if (summary) {
+        values.reason = summary;
+        sources.reason = "executive summary";
+        break;
+      }
     }
   }
   // 4. the cost assessment: the value – from the cost proposal entry; with nothing there, from the
@@ -605,6 +624,37 @@ export async function rebuildValues(caseId: number, user: UserInfo): Promise<{ v
     }
   } catch {
     /* no usable log */
+  }
+  // anything still missing: a labelled line in a file put in as an additional attachment ("Contract name: …")
+  for (const x of read.filter((d) => d.doc.slot.startsWith("other_"))) {
+    const extra = readLabelled(x.pages, t);
+    for (const [k, v] of Object.entries(extra.values)) {
+      if (values[k] || !v) continue;
+      values[k] = v;
+      sources[k] = `attachment ${x.doc.name}`.slice(0, 60);
+    }
+  }
+  // the change log of the earlier pack, as text for the page
+  try {
+    const rows = JSON.parse(values.change_log_rows || "[]") as Parameters<typeof changeLogText>[0];
+    if (rows.length) {
+      values.change_log = changeLogText(rows);
+      sources.change_log = sources.change_log_rows ?? "previous pack";
+    }
+  } catch {
+    /* no log */
+  }
+  // the change worded from its documents, when the AI is on
+  if (t.key === "pvo" || t.key === "vo") {
+    const drafted = await draftChangeWording(values, values.__change_texts ?? "");
+    if (drafted) {
+      for (const k of ["title", "scope", "reason", "contractual_basis"] as const) {
+        if (drafted[k]?.trim() && (k !== "contractual_basis" || !values[k])) {
+          values[k] = drafted[k].trim();
+          sources[k] = "worded from the change documents";
+        }
+      }
+    }
   }
   // what was typed in on the pack stays as typed
   const manual = manualValues(values);

@@ -1,5 +1,5 @@
 import { readPositioned, valueRight, valueBelow, numericRowsAfter, peopleUnder, peopleWithHeadings, moneyOf, findLabel, isLabel, type PosPage } from "./positioned";
-import { REFERENCE_SLOT, type PackType, type PackValues, type TemplateInspection } from "./shared";
+import { fieldForLabel, REFERENCE_SLOT, type PackType, type PackValues, type TemplateInspection } from "./shared";
 
 /**
  * What the dashboard reads out of the files uploaded into a pack – no AI, no typing: the last
@@ -53,7 +53,8 @@ export function classifyDoc(pages: PosPage[], slotHint: string): DocKind {
   if (/request for approval form|rsg-pr-frm-0004|trs-pr-frm-0004/.test(head)) return "rfa";
   if (/employer'?s assessment report|extension of time report|revision history/.test(head)) return "ear";
   // the Employer's Instruction form itself – not a transmittal or a letter that merely names one
-  if (/rsg-cm-frm-0007|trs-cm-frm-0007|trs - cm - frm - 0007/.test(head) && /instruction no/.test(head)) return "ei";
+  const whole = pages.slice(0, 12).flatMap((p) => p.rows.flatMap((r) => r.cells.map((c) => c.s))).join(" ").toLowerCase();
+  if (/(rsg|trs)\s*-\s*cm\s*-\s*frm\s*-\s*0007/.test(whole) && /instruction no/.test(whole)) return "ei";
   if (/request for change|change request form|rsg-cm-frm-0011|\brfc\b.*\bform\b|change decision pack|consolidated commercial form/.test(head)) return "rfc";
   if (/grand total|unit price|unite price|\bqty\b|cost proposal|bill of quantit|\bboq\b|rate breakdown/.test(all)) return "cost";
   if (slotHint === "cost" || slotHint === "rfc" || slotHint === "details") return slotHint === "cost" ? "cost" : "rfc";
@@ -548,9 +549,12 @@ const tidy = (t: string) =>
  * The Employer's Instruction (RSG-CM-FRM-0007), when it stands as the change behind a PVO: its
  * subject, instruction text, references and the contract it is under.
  */
-export function readEi(pages: PosPage[]): Reading {
+export function readEi(all: PosPage[]): Reading {
   const r: Reading = { values: {}, sources: {} };
   const src = "Employer's Instruction";
+  // the form itself first; the letter and the summary around it only for what the form does not carry
+  const formPages = all.filter((p) => /(RSG|TRS)\s*-\s*CM\s*-\s*FRM\s*-\s*0007/i.test(p.rows.flatMap((x) => x.cells.map((c) => c.s)).join(" ")) && /Instruction No/i.test(p.rows.flatMap((x) => x.cells.map((c) => c.s)).join(" ")));
+  const pages = formPages.length ? formPages : all;
   const text = glued(pages);
   const refRe = /\b1TB\d{5}-\d{3}[A-Z]\d{2}-AMA-(?:EMI|EI)-[A-Z]{2}-[A-Z0-9]{4}\b/;
   // the Aconex reference beside its label first (it may wrap over two lines), then anywhere in the text
@@ -572,7 +576,98 @@ export function readEi(pages: PosPage[]): Reading {
   set(r, "contractual_basis", basis, src);
   set(r, "employer_rep", peopleUnder(pages, /^Approved By \(Employer/i, [/^RSG-CM-FRM/, /^Received By/i], (x) => POSITION.test(x))[0]?.name, src);
   set(r, "employer_rep_position", peopleUnder(pages, /^Approved By \(Employer/i, [/^RSG-CM-FRM/, /^Received By/i], (x) => POSITION.test(x))[0]?.position, src);
+  const received = peopleUnder(pages, /^Received By/i, [/^RSG\s*-?\s*CM/i, /^Page \d/i], (x) => POSITION.test(x))[0];
+  set(r, "contractor_rep", received?.name, src);
+  set(r, "contractor_rep_position", received?.position, src);
   return r;
+}
+
+/** An Emergency Variation Order put in as the request behind a PVO: its title, scope, the emergency circumstances as the reason, its reference. */
+export function readEvoForChange(pages: PosPage[]): Reading {
+  const r: Reading = { values: {}, sources: {} };
+  const src = "EVO";
+  const form = pages.filter((p) => /Emergency Variation Order Assessment/i.test(p.rows.flatMap((x) => x.cells.map((c) => c.s)).join(" "))).slice(0, 2);
+  if (!form.length) return r;
+  set(r, "title", valueRight(form, "Title of this Variation"), src);
+  set(r, "scope", valueBelow(form, "Scope of works / services (brief)", ["b) Estimated Cost Impact", "Basis of ROM"]), src);
+  set(r, "reason", valueBelow(form, "Description of Emergency Circumstances", ["Scope of works"]), src);
+  const text = glued(pages);
+  set(r, "rfc_ref", text.match(/\b1TB\d{5}-\d{3}[A-Z]\d{2}-AMA-VOR-[A-Z]{2}-[A-Z0-9]{4}\b/)?.[0] ?? valueRight(form, "RFC/CRF Reference", { notLabels: ["Requesting Department"] }), src);
+  set(r, "root_cause", valueRight(form, "Root Cause for this change"), src);
+  set(r, "requesting_department", valueRight(form, "Requesting Department"), src);
+  return r;
+}
+
+/** The written pages of a change document (an executive summary, a letter, a form's narrative), as text for the pack's wording. */
+export function changeText(pages: PosPage[]): string {
+  const keep = pages.filter((p) => {
+    const t = p.rows.flatMap((x) => x.cells.map((c) => c.s)).join(" ");
+    if (/MAIL TYPE|Workflow Transmittal|Workflow Review History/i.test(t)) return false;
+    return /Executive Summary|Subject:?|instructed|Description of Emergency|Scope of works|Benefits|Purpose/i.test(t);
+  });
+  return keep
+    .map((p) => p.rows.map((row) => row.cells.map((c) => c.s).join(" ")).join("\n"))
+    .join("\n\n")
+    .replace(/[ \t]+/g, " ")
+    .slice(0, 12000);
+}
+
+/**
+ * Any document put in to fill a gap: a line that starts with one of the form's labels gives that value
+ * ("Contract Name: Building Envelope …", "Reason for the Proposed Variation Order" followed by a paragraph).
+ */
+export function readLabelled(pages: PosPage[], type: PackType): Reading {
+  const r: Reading = { values: {}, sources: {} };
+  const src = "attachment";
+  for (const p of pages) {
+    const rows = p.rows;
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const first = row.cells[0];
+      if (!first) continue;
+      const labelText = first.s.replace(/\s+/g, " ").trim();
+      // "Label: value" – the colon marks a line written to be read
+      const m = labelText.match(/^([^:]{3,80}):\s*(.*)$/);
+      if (!m) continue;
+      const label = m[1].trim();
+      const f = fieldForLabel(type, label);
+      if (!f || r.values[f.key]) continue;
+      let value = m[2] ? m[2].trim() : row.cells.slice(1).map((c) => c.s).join(" ").trim();
+      if (!value && f.kind === "long") {
+        const lines: string[] = [];
+        for (let k = i + 1; k < rows.length && lines.length < 12; k++) {
+          const t = rows[k].cells.map((c) => c.s).join(" ").trim();
+          if (!t || fieldForLabel(type, t.replace(/:$/, ""))) break;
+          lines.push(t);
+        }
+        value = lines.join("\n");
+      }
+      if (value && !fieldForLabel(type, value.replace(/:$/, ""))) set(r, f.key, value, src);
+    }
+  }
+  return r;
+}
+
+/** The executive summary of a change pack, as the reason for the variation when nothing else states one. */
+export function executiveSummary(pages: PosPage[]): string {
+  const page = pages.find((p) => p.rows.slice(0, 4).some((row) => /^Executive Summary/i.test(row.cells.map((c) => c.s).join(" ").trim())));
+  if (!page) return "";
+  const lines = page.rows.map((row) => row.cells.map((c) => c.s).join(" ").trim()).filter((t) => t && !/^Executive Summary/i.test(t));
+  const paras: string[] = [];
+  let cur = "";
+  for (const l of lines) {
+    if (/^(Cost Recovery Summary|Purpose of|Contractor\s+May)/i.test(l)) break;
+    cur = cur ? `${cur} ${l}` : l;
+    if (/[.:]$/.test(l)) {
+      paras.push(cur);
+      cur = "";
+    }
+  }
+  if (cur) paras.push(cur);
+  let text = tidy(paras.slice(0, 3).join("\n"));
+  // reference codes split over cells ("1TB01006 - 006C45 - AMA - PVO - CM - 0006") are joined back
+  for (let i = 0; i < 6; i++) text = text.replace(/([A-Z0-9]{2,})\s+-\s+(?=[A-Z0-9]{2,})/g, "$1-");
+  return text.slice(0, 1500);
 }
 
 export function readRfc(pages: PosPage[]): Reading {
