@@ -11,7 +11,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import fontkit from "@pdf-lib/fontkit";
-import { PDFDocument, PDFName, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
+import { PDFArray, PDFDict, PDFDocument, PDFName, PDFNumber, PDFRawStream, PDFStream, StandardFonts, decodePDFRawStream, rgb, type PDFContext, type PDFFont, type PDFImage, type PDFPage } from "pdf-lib";
 import { formatDate, formatMoney } from "../format";
 import { voDescription } from "./annexures";
 import { isLabel, readFills, readPositioned, type Cell, type Fill, type PosPage, type Row } from "./positioned";
@@ -121,6 +121,157 @@ class FontSet {
 }
 
 /** One copied form page with the tools to rewrite its cells. */
+/** a 1×1 fully transparent PNG: what a removed picture is swapped for, so the page draws nothing there */
+const BLANK_PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=", "base64");
+
+interface Picture {
+  name: PDFName;
+  /** the XObject dictionary the name is looked up in (the page's, or a form's) */
+  xobjects: PDFDict;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+type Matrix = [number, number, number, number, number, number];
+const mul = (m: Matrix, n: Matrix): Matrix => [m[0] * n[0] + m[1] * n[2], m[0] * n[1] + m[1] * n[3], m[2] * n[0] + m[3] * n[2], m[2] * n[1] + m[3] * n[3], m[4] * n[0] + m[5] * n[2] + n[4], m[4] * n[1] + m[5] * n[3] + n[5]];
+
+/** the operators of a content stream with their operands: enough of the syntax to follow q, Q, cm and Do */
+function* operators(src: string): Generator<{ op: string; args: (string | number)[] }> {
+  let args: (string | number)[] = [];
+  let i = 0;
+  const n = src.length;
+  while (i < n) {
+    const ch = src[i];
+    if (/\s/.test(ch)) {
+      i++;
+      continue;
+    }
+    if (ch === "%") {
+      while (i < n && src[i] !== "\n" && src[i] !== "\r") i++;
+      continue;
+    }
+    if (ch === "/") {
+      let j = i + 1;
+      while (j < n && !/[\s/[\]()<>{}%]/.test(src[j])) j++;
+      args.push(src.slice(i, j));
+      i = j;
+      continue;
+    }
+    if (ch === "(") {
+      let depth = 0;
+      let j = i;
+      for (; j < n; j++) {
+        if (src[j] === "\\") {
+          j++;
+          continue;
+        }
+        if (src[j] === "(") depth++;
+        else if (src[j] === ")" && --depth === 0) break;
+      }
+      i = j + 1;
+      args.push("()");
+      continue;
+    }
+    if (ch === "<") {
+      if (src[i + 1] === "<") {
+        let depth = 0;
+        let j = i;
+        for (; j < n - 1; j++) {
+          if (src[j] === "<" && src[j + 1] === "<") {
+            depth++;
+            j++;
+          } else if (src[j] === ">" && src[j + 1] === ">" && --depth === 0) break;
+        }
+        i = j + 2;
+        args.push("<<>>");
+      } else {
+        const j = src.indexOf(">", i);
+        i = j < 0 ? n : j + 1;
+        args.push("<>");
+      }
+      continue;
+    }
+    if (ch === "[" || ch === "]" || ch === "{" || ch === "}") {
+      i++;
+      continue;
+    }
+    if (/[-+.\d]/.test(ch)) {
+      let j = i + 1;
+      while (j < n && /[-+.\deE]/.test(src[j])) j++;
+      args.push(Number(src.slice(i, j)) || 0);
+      i = j;
+      continue;
+    }
+    let j = i;
+    while (j < n && /[A-Za-z'"*]/.test(src[j])) j++;
+    const op = src.slice(i, j) || ch;
+    i = j > i ? j : i + 1;
+    if (op === "BI") {
+      // an inline image runs to EI
+      const e = src.indexOf("EI", i);
+      i = e < 0 ? n : e + 2;
+      args = [];
+      continue;
+    }
+    yield { op, args };
+    args = [];
+  }
+}
+
+/**
+ * The text of the earlier document's own content streams. The stream this overlay is writing to is
+ * left alone: reading it would fix its bytes as they are now, and nothing drawn after would be saved.
+ */
+function streamText(ctx: PDFContext, obj: unknown): string {
+  if (obj instanceof PDFRawStream) return Buffer.from(decodePDFRawStream(obj).decode()).toString("latin1");
+  if (obj instanceof PDFArray) return obj.asArray().map((r) => streamText(ctx, ctx.lookup(r))).join("\n");
+  return "";
+}
+
+/** every picture drawn on the page (through nested forms too) with where it lands, in page points */
+function picturesOn(ctx: PDFContext, page: PDFPage): Picture[] {
+  const out: Picture[] = [];
+  const walk = (content: string, resources: PDFDict | undefined, base: Matrix, depth: number) => {
+    const xobjects = resources?.lookupMaybe(PDFName.of("XObject"), PDFDict);
+    const stack: Matrix[] = [];
+    let ctm = base;
+    for (const { op, args } of operators(content)) {
+      if (op === "q") stack.push(ctm);
+      else if (op === "Q") ctm = stack.pop() ?? ctm;
+      else if (op === "cm" && args.length >= 6) ctm = mul(args.slice(-6).map(Number) as Matrix, ctm);
+      else if (op === "Do" && typeof args[args.length - 1] === "string" && xobjects) {
+        const name = PDFName.of(String(args[args.length - 1]).slice(1));
+        const xo = xobjects.lookupMaybe(name, PDFStream);
+        if (!xo) continue;
+        const sub = xo.dict.lookupMaybe(PDFName.of("Subtype"), PDFName);
+        if (sub === PDFName.of("Form") && depth < 4) {
+          const m = xo.dict.lookupMaybe(PDFName.of("Matrix"), PDFArray);
+          const fm = m && m.size() === 6 ? (m.asArray().map((v) => (v instanceof PDFNumber ? v.asNumber() : 0)) as Matrix) : ([1, 0, 0, 1, 0, 0] as Matrix);
+          walk(streamText(ctx, xo), xo.dict.lookupMaybe(PDFName.of("Resources"), PDFDict) ?? resources, mul(fm, ctm), depth + 1);
+        } else if (sub === PDFName.of("Image")) {
+          const pts = [
+            [ctm[4], ctm[5]],
+            [ctm[0] + ctm[4], ctm[1] + ctm[5]],
+            [ctm[2] + ctm[4], ctm[3] + ctm[5]],
+            [ctm[0] + ctm[2] + ctm[4], ctm[1] + ctm[3] + ctm[5]],
+          ];
+          const xs = pts.map((q) => q[0]);
+          const ys = pts.map((q) => q[1]);
+          out.push({ name, xobjects, x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) });
+        }
+      }
+    }
+  };
+  try {
+    walk(streamText(ctx, page.node.Contents()), page.node.Resources(), [1, 0, 0, 1, 0, 0], 0);
+  } catch (e) {
+    console.error("could not walk the page's pictures:", e);
+  }
+  return out;
+}
+
 class Sheet {
   readonly width: number;
   readonly height: number;
@@ -131,6 +282,7 @@ class Sheet {
     readonly pos: PosPage,
     readonly fills: Fill[],
     readonly fonts: FontSet,
+    readonly blank: PDFImage | null = null,
   ) {
     this.width = page.getWidth();
     this.height = page.getHeight();
@@ -158,6 +310,29 @@ class Sheet {
    * and its small headings – so only the earlier document's own marks (signatures, stamps,
    * sign tags) are gone.
    */
+  /**
+   * Takes the pictures the test picks (a stamp, a pasted signature) off the page: each is swapped for a
+   * transparent picture, so whatever the earlier document printed under it (the footer, the labels) stays
+   * untouched. A picture that cannot be traced to its name is whited out instead.
+   */
+  removePictures(pick: (p: { x: number; y: number; w: number; h: number }) => boolean) {
+    const found = picturesOn(this.page.doc.context, this.page);
+    const gone: Picture[] = [];
+    for (const p of found) {
+      if (p.w < 3 || p.h < 3 || !pick(p)) continue;
+      if (this.blank) {
+        p.xobjects.set(p.name, this.blank.ref);
+        gone.push(p);
+      }
+    }
+    // a picture the reader saw that is not in the page's own content (an annotation's appearance, an inline
+    // image): whited out, if it is the size of a stamp or a signature – never a picture the size of the form
+    for (const f of this.fills) {
+      if (!f.image || f.w < 3 || f.h < 3 || f.w > this.width * 0.5 || f.h > 150 || !pick(f)) continue;
+      if (gone.some((p) => Math.abs(p.x - f.x) < 2 && Math.abs(p.y - f.y) < 2)) continue;
+      this.restore(f.x - 0.5, f.y - 0.5, f.w + 1, f.h + 1);
+    }
+  }
   restore(x: number, y: number, w: number, h: number, keep?: (f: Fill) => boolean) {
     if (w <= 0 || h <= 0) return;
     this.page.drawRectangle({ x, y, width: w, height: h, color: rgb(1, 1, 1), borderWidth: 0 });
@@ -396,12 +571,23 @@ class Sheet {
     const x = fromX ?? sigC - (sigC - posC) * 0.36;
     const y = bottomY ?? labelRow.y - 6.5;
     if (topY - y < 3) return;
-    const h = topY - y;
-    // what comes back: the shaded bands, the underlines just above the labels, the table's own right border
-    // and any rule that runs across the page – never the frame of a signature picture
     const pics = this.fills.filter((f) => f.image && f.w > 5 && f.h > 5 && f.w < this.width * 0.5 && f.h < 150);
     const framesPicture = (f: Fill) => pics.some((i) => f.x >= i.x - 4 && f.x + f.w <= i.x + i.w + 4 && f.y >= i.y - 4 && f.y + f.h <= i.y + i.h + 4);
-    const keep = (f: Fill) => !framesPicture(f) && ((!f.stroke && f.h > 5 && f.w > 80) || (f.h < 1.5 && f.y > labelRow.y && f.y < labelRow.y + 10) || (f.w < 1.5 && f.h > h * 0.8 && f.x > this.tableRight - 5) || (f.h < 1.5 && f.w > this.width * 0.6));
+    // a signature picture, or the frame drawn around one, that starts in this row but reaches up past the
+    // top of the cleared area (to just under the labels of the row above) would leave its top edge behind
+    let top = topY;
+    for (const f of this.fills) {
+      if (!(f.image || (f.stroke && f.w > 5 && f.h > 5)) || f.x < x - 2 || f.x > this.tableRight) continue;
+      if (f.y >= topY || f.y + f.h <= y) continue;
+      top = Math.max(top, Math.min(f.y + f.h + 0.4, topY + 5.5));
+    }
+    const h = top - y;
+    // what comes back: the shaded bands with the hairlines along their edges, the underlines just above the
+    // labels, any rule that runs across the page and the table's own right border – never the frame of a
+    // signature picture, whether it is drawn as a box or as four hairlines
+    const bands = this.fills.filter((f) => !f.stroke && !f.image && f.h > 5 && f.h < 30 && f.w > 80);
+    const alongBand = (f: Fill) => f.h < 1.5 && bands.some((b) => Math.abs(f.y - b.y) < 2.5 || Math.abs(f.y - (b.y + b.h)) < 2.5);
+    const keep = (f: Fill) => !framesPicture(f) && ((!f.stroke && f.h > 5 && f.w > 80) || alongBand(f) || (f.h < 1.5 && f.y > labelRow.y && f.y < labelRow.y + 10) || (f.w < 1.5 && f.h > h * 0.8 && f.x > this.tableRight - 5) || (f.h < 1.5 && f.w > this.width * 0.6));
     this.restore(x, y, this.tableRight + 1 - x, h, keep);
   }
   /** a person on a Name / Position / Signature / Date row: written centred under the headings */
@@ -420,14 +606,16 @@ class Sheet {
     const half = pc && nc ? (pc - nc) * 0.92 : 130;
     const nameCell = nameRow.cells[0] ?? null;
     const posCell = nameRow.cells[1] ?? nameCell;
-    if (nc && name) this.text(name, nc, nameRow.y, size, { align: "center", maxWidth: half, bold: nameCell ? !!nameCell.b : true, cell: nameCell });
-    if (pc && position) this.text(position, pc, nameRow.y, size, { align: "center", maxWidth: half * 1.15, bold: posCell ? !!posCell.b : true, cell: posCell });
+    // the names on the form are in bold: the embedded face of the earlier pack does not always say so
+    if (nc && name) this.text(name, nc, nameRow.y, size, { align: "center", maxWidth: half, bold: true, cell: nameCell });
+    if (pc && position) this.text(position, pc, nameRow.y, size, { align: "center", maxWidth: half * 1.15, bold: true, cell: posCell });
     if (!opts.keepSignature) this.clearSignature(labelRow, topY, undefined, bottomY);
   }
   /** where a signatory block starts: under the band above it, or under the labels of the row above */
   blockTop(prev: Row): number {
     const band = this.fillAt(this.width * 0.8, prev.y + 1.5);
-    return band && band.h < 30 ? band.y + band.h + 7 : prev.y - 6.5;
+    // just over the band's top edge: any further up would cut into the labels of the row above it
+    return band && band.h < 30 ? band.y + band.h + 1.5 : prev.y - 6.5;
   }
   /** where a signatory block ends: the top edge of the band beneath it (plus a little), or under the labels */
   blockBottom(labelRow: Row, next: Row | undefined): number {
@@ -458,13 +646,14 @@ async function open(refBytes: Buffer, wanted: (pages: PosPage[]) => number[]): P
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
   const fonts = new FontSet(pdf, font, bold);
   await fonts.prepare(nos.map((n) => pages[n - 1]));
+  const blank = await pdf.embedPng(BLANK_PNG);
   const copied = await pdf.copyPages(src, nos.map((n) => n - 1));
   const sheets: Sheet[] = [];
   copied.forEach((pg, i) => {
     // the sign tags, links and stamps of the earlier document are annotations: dropped
     pg.node.delete(PDFName.of("Annots"));
     pdf.addPage(pg);
-    sheets.push(new Sheet(pg, pages[nos[i] - 1], fills.get(nos[i]) ?? [], fonts));
+    sheets.push(new Sheet(pg, pages[nos[i] - 1], fills.get(nos[i]) ?? [], fonts, blank));
   });
   return { l: { pdf, src, pages, fills, fonts }, sheets };
 }
@@ -497,7 +686,16 @@ function signatories(sh: Sheet, from: string | RegExp, to: (string | RegExp)[], 
       const oldName = nameRow.cells.map((c) => c.s).join(" ").toLowerCase();
       const surname = (names[n] ?? "").trim().split(/\s+/).pop()?.toLowerCase() ?? "";
       const samePerson = !names[n] || (surname.length > 2 && oldName.includes(surname));
-      sh.person(nameRow, r, names[n] ?? "", positions[n] ?? "", sh.blockTop(prev), sh.blockBottom(r, rows[i + 1]), { keepSignature: !!opts.keepFirstSignature && n === 0 && samePerson });
+      const keepSignature = !!opts.keepFirstSignature && n === 0 && samePerson;
+      const top = sh.blockTop(prev);
+      const bottom = sh.blockBottom(r, rows[i + 1]);
+      // the signature and any stamp on this row come off the page first (a stamp often spills over the
+      // labels and the band below, where whiting it out would take the form with it)
+      if (!keepSignature) sh.removePictures((p) => p.y + p.h / 2 > bottom - 10 && p.y + p.h / 2 < top + 10 && p.x + p.w / 2 > sh.width * 0.3);
+      // nobody named for this block: the people printed on the earlier pack stay as they are, only the signatures go
+      if (!names.length) {
+        if (!keepSignature) sh.clearSignature(r, top, undefined, bottom);
+      } else sh.person(nameRow, r, names[n] ?? "", positions[n] ?? "", top, bottom, { keepSignature });
       n++;
       prev = r;
     }
@@ -739,6 +937,18 @@ export async function overlayVoForm(refBytes: Buffer, v: PackValues, opts: { pro
       if (revC && parts[2]) s.text(parts[2], revC.x + revC.w / 2, y, size, { align: "center", cell: head.cell });
       if (dateC && parts[3]) s.text(parts[3], dateC.x + dateC.w / 2, y, size, { align: "center", cell: head.cell });
     });
+  }
+  // the draft goes out for approval: the signatures and stamps on the earlier VO, and anything written
+  // under its signatory blocks (a contractor's note), are not carried over – the logo at the top stays
+  const appr = s.find(/^Approved and Issued by/);
+  const limit = appr ? appr.row.y + 4 : s.height * 0.45;
+  s.removePictures((p) => p.y + p.h / 2 < limit);
+  const recv = s.find(/^Received by/);
+  if (recv) {
+    const rows = s.pos.rows;
+    const labels = rows.slice(s.rowIndex(recv.row) + 1).find((r) => r.cells.some((c) => /^name$/i.test(c.s)) && r.cells.some((c) => /^signature$/i.test(c.s)));
+    const floor = labels ? labels.y - 3 : recv.row.y - 30;
+    for (const r of rows) if (r.y < floor) for (const c of r.cells) if (!/^(Variation Order Form|RSG-CM-FRM|Revision|Rev\.|Page \d|Internal|Confidential)/i.test(c.s.trim())) s.replaceCell(c, "", { size: c.h });
   }
   signatories(s, /^Approved and Issued by/, [/^Received by/], [String(v.employer_rep ?? "")], [String(v.employer_rep_position || "Employer's Representative")]);
   signatories(s, /^Received by/, [/^Variation Order Form \(RSG/, /^Page \d/], [String(v.contractor_rep ?? "")], [String(v.contractor_rep_position || "Contractor's Representative")]);

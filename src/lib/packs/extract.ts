@@ -274,8 +274,9 @@ export function readReferencePvo(pages: PosPage[]): Reading {
   const acc = numericRowsAfter(form, "d) Project / Asset Budget position", "Comments", 8, 14).filter((row) => /[A-Za-z]{3}/.test(row[0]));
   if (acc.length) set(r, "acc_table", JSON.stringify(acc.map((row) => [row[0], ...row.slice(1).filter((c) => moneyOf(c) !== null || c === "-").map((c) => money(c) || "0")])), src);
   // the signatories: everything under Prepared, Checked and Approved
-  const prepared = peopleUnder(form, "Prepared/Initiated By", ["Checked by", "Approved by", "Review & Approval"], (s) => POSITION.test(s));
-  const checked = peopleUnder(form, "Checked by (Pre-Approval)", ["Approved by"], (s) => POSITION.test(s));
+  // the heading reads "Prepared/Initiated By:" on one revision of the form and "Prepared By:" on another
+  const prepared = peopleUnder(form, /^Prepared(\s*\/\s*Initiated)?\s*By:?$/i, ["Checked by", "Approved by", "Review & Approval"], (s) => POSITION.test(s));
+  const checked = peopleUnder(form, /^Checked by/i, ["Approved by"], (s) => POSITION.test(s));
   const approved = [...peopleUnder(form, /^Approved by/, [/^RSG-CM-FRM/, "Comments"], (s) => POSITION.test(s)), ...peopleUnder(form, /^Review & Approval/, [/^RSG-CM-FRM/, "Comments"], (s) => POSITION.test(s))];
   if (prepared.length) {
     set(r, "prepared_by", lines(prepared), src);

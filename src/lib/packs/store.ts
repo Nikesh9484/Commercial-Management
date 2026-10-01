@@ -457,6 +457,16 @@ export async function rebuildValues(caseId: number, user: UserInfo): Promise<{ v
     if (t.key === "vo") nextNumber("pvo_no", ref, "previous EVO + 1");
   }
   let refContractor = "";
+  // the signatories of a PVO are the people on the earlier pack, not the account that opened this one:
+  // when a PDF of the earlier pack is there to read, the account name stands aside for whatever it carries
+  if (t.key === "pvo" && references.length) {
+    for (const k of ["prepared_by", "prepared_position"]) {
+      if (/^(project|register)$/.test(sources[k] ?? "")) {
+        delete values[k];
+        delete sources[k];
+      }
+    }
+  }
   for (const pages of references) {
     if (!pages.length) continue;
     // what names the earlier document itself is not carried over: its number, its date, its title and value are this pack's own
