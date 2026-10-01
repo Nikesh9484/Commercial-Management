@@ -1,14 +1,16 @@
 import PDFDocument from "pdfkit";
-import { PDFDocument as PdfLib, PDFFont, PDFPage, StandardFonts, rgb, type RGB } from "pdf-lib";
-import { formatDate } from "../format";
+import { PDFDocument as PdfLib, PDFFont, PDFPage, StandardFonts, degrees, rgb, type RGB } from "pdf-lib";
+import { convertToPdf, convertible, isJpeg, isPng } from "./convert";
+import { positioned } from "./extract";
+import type { PosPage } from "./positioned";
 import { parsePages } from "../kpi/pages";
 import { formattedValues } from "./word";
 import { packRefLabel, type PackType, type PackValues } from "./shared";
 
 /**
  * The PDF outputs of a document pack: the form itself, drawn from the pack's values in the RSG
- * layout (label / value sections, narrative, signature block), and the compiled pack – a cover,
- * the form, then a divider and the uploaded files for every slot – in one PDF.
+ * layout (label / value sections, narrative, signature block), and the compiled pack – the form,
+ * the index of annexures, then a divider and the files of every annexure – in one PDF.
  */
 
 const GRAPHITE = "#33383F";
@@ -135,13 +137,6 @@ export async function renderFormPdf(type: PackType, values: PackValues, meta: Fo
   }
   ensure(24);
   doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(`This ${type.short} is issued in accordance with the terms and conditions of the Contract. Terms defined in the Contract have the same meaning here unless otherwise defined.`, M, doc.y + 4, { width });
-  const range = doc.bufferedPageRange();
-  for (let i = 0; i < range.count; i++) {
-    doc.switchToPage(i);
-    doc.moveTo(M, A4H - 40).lineTo(A4W - M, A4H - 40).lineWidth(0.6).stroke(LINE);
-    doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(`${packRefLabel(type.short, meta.ref)}${meta.revision ? ` Rev. ${meta.revision}` : ""} · ${meta.status} · prepared ${formatDate(meta.generatedAt)} by ${meta.preparedBy} · Commercial Dashboard`, M, A4H - 32, { width: width - 80, lineBreak: false });
-    doc.text(`Page ${i + 1} of ${range.count}`, M + width - 80, A4H - 32, { width: 80, align: "right", lineBreak: false });
-  }
   doc.end();
   return done;
 }
@@ -149,13 +144,21 @@ export async function renderFormPdf(type: PackType, values: PackValues, meta: Fo
 /* ------------------------------------------------------------------ */
 /* the compiled pack                                                   */
 
+/**
+ * The compiled pack follows the approved RSG packs page for page: the form pages, the index of
+ * annexures, then for every annexure its divider page and its documents. The index and the
+ * dividers are the very pages of the approved pack set as the template (or uploaded on the pack),
+ * copied and re-ticked or re-titled where this pack differs; without one they are drawn in the
+ * same layout. There is no cover page – the approved packs have none.
+ */
+
 const A4: [number, number] = [A4W, A4H];
-const NAVY = rgb(0.2, 0.22, 0.25);
-const GOLD = rgb(0.66, 0.52, 0.36);
-const INK_RGB = rgb(0.16, 0.17, 0.19);
+const LETTER: [number, number] = [612, 792];
+const RSG_NAVY = rgb(0.043, 0.133, 0.224);
+const INK_RGB = rgb(0.13, 0.13, 0.13);
 const MUTED_RGB = rgb(0.45, 0.47, 0.5);
-const LINE_RGB = rgb(0.84, 0.84, 0.83);
-const PALE_RGB = rgb(0.95, 0.95, 0.94);
+const LINE_RGB = rgb(0.75, 0.75, 0.75);
+const RED = rgb(0.75, 0.05, 0.05);
 const WHITE = rgb(1, 1, 1);
 
 export interface PartItem {
@@ -174,6 +177,10 @@ export interface PackPart {
   /** "annexure" prints ANNEXURE n dividers as the RSG packs do; "part" the numbered parts */
   style: "annexure" | "part";
   items: PartItem[];
+  /** a line printed in red under the divider's title – Annexure 2 names the approved instruction behind the change */
+  note?: string;
+  /** bound straight after the pages before it, with no divider – the EVO pack is one run of documents */
+  plain?: boolean;
 }
 
 export interface CompiledInput {
@@ -181,15 +188,20 @@ export interface CompiledInput {
   values: PackValues;
   meta: FormMeta;
   fileName: string;
-  /** the pages that open the pack, in order: the form itself, the index of annexures */
+  /** the pages that open the pack, in order: the form itself */
   front: { name: string; bytes: Buffer }[];
   parts: PackPart[];
+  /** the index of annexures after the form pages, headed with this title ("PROPOSED VARIATION ORDER (PVO)") */
+  index?: { title: string } | null;
+  /** the approved packs whose index and divider pages may be reused – the first that holds them is */
+  references?: Buffer[];
 }
 
 function clean(text: string): string {
   return String(text ?? "")
     .replace(/[\r\n\t]+/g, " ")
-    .replace(/[^\x20-\x7E -ÿ–—‘’“”…€]/g, "?")
+    .replace(/[‐-―]/g, "-")
+    .replace(/[^\x20-\x7E -ÿ‘’“”…€]/g, "?")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -225,9 +237,10 @@ interface Ctx {
   pdf: PdfLib;
   font: PDFFont;
   bold: PDFFont;
+  serifBold: PDFFont;
 }
-function text(page: PDFPage, ctx: Ctx, t: string, x: number, y: number, size: number, opts: { bold?: boolean; color?: RGB; width?: number; align?: "left" | "right" | "center" } = {}): number {
-  const font = opts.bold ? ctx.bold : ctx.font;
+function text(page: PDFPage, ctx: Ctx, t: string, x: number, y: number, size: number, opts: { bold?: boolean; font?: PDFFont; color?: RGB; width?: number; align?: "left" | "right" | "center" } = {}): number {
+  const font = opts.font ?? (opts.bold ? ctx.bold : ctx.font);
   const lines = opts.width ? wrap(t, font, size, opts.width) : [clean(t)];
   let yy = y;
   for (const line of lines) {
@@ -238,122 +251,222 @@ function text(page: PDFPage, ctx: Ctx, t: string, x: number, y: number, size: nu
   }
   return yy;
 }
-function footer(page: PDFPage, ctx: Ctx, input: CompiledInput, label: string) {
-  const [w] = A4;
-  page.drawLine({ start: { x: 40, y: 34 }, end: { x: w - 40, y: 34 }, thickness: 0.6, color: LINE_RGB });
-  const right = `Prepared ${formatDate(input.meta.generatedAt)} by ${input.meta.preparedBy} · Commercial Dashboard`;
-  const rightW = ctx.font.widthOfTextAtSize(clean(right), 8);
-  text(page, ctx, fit(`${input.fileName} · ${label}`, ctx.font, 8, w - 80 - rightW - 16), 40, 22, 8, { color: MUTED_RGB });
-  text(page, ctx, right, w - 40, 22, 8, { color: MUTED_RGB, align: "right" });
+const norm = (s: string) => clean(s).toUpperCase().replace(/[^A-Z0-9]+/g, " ").trim();
+const annexureLabel = (p: { no: number; style: "annexure" | "part" }) => (p.style === "annexure" ? `ANNEXURE ${p.no}` : `PART ${p.no}`);
+
+function classification(page: PDFPage, ctx: Ctx) {
+  const { width } = page.getSize();
+  text(page, ctx, "CLASSIFICATION: INTERNAL SENSITIVE", width - 22, 16, 5.5, { color: INK_RGB, align: "right" });
 }
 
-interface Entry {
+/** a tick box as the index of annexures shows it: an empty square, or one with a tick */
+function tickBox(page: PDFPage, x: number, y: number, on: boolean) {
+  const s = 7.5;
+  page.drawRectangle({ x, y, width: s, height: s, borderColor: rgb(0.35, 0.35, 0.35), borderWidth: 0.6, color: WHITE });
+  if (on) {
+    page.drawLine({ start: { x: x + 1.6, y: y + 3.6 }, end: { x: x + 3.1, y: y + 1.7 }, thickness: 0.9, color: INK_RGB });
+    page.drawLine({ start: { x: x + 3.1, y: y + 1.7 }, end: { x: x + 6.2, y: y + 6.2 }, thickness: 0.9, color: INK_RGB });
+  }
+}
+
+/* ---- the pages of the approved pack that are reused ---------------- */
+
+interface RefPages {
+  src: PdfLib;
+  pos: PosPage[];
+  /** the page number of the index of annexures */
+  index: number | null;
+  /** annexure / part number → divider page number */
+  dividers: Map<number, number>;
+}
+
+async function referencePages(bytes: Buffer | null | undefined): Promise<RefPages | null> {
+  if (!bytes) return null;
+  try {
+    const src = await PdfLib.load(bytes, { ignoreEncryption: true, updateMetadata: false });
+    const pos = await positioned(bytes);
+    let index: number | null = null;
+    const dividers = new Map<number, number>();
+    for (const pg of pos) {
+      const cells = pg.rows.flatMap((r) => r.cells.map((c) => c.s.trim()));
+      if (index === null && cells.some((s) => /^INDEX OF ANNEXURES$/i.test(s))) index = pg.no;
+      const body = cells.filter((s) => !/^CLASSIFICATION/i.test(s));
+      const band = body.find((s) => /^(ANNEXURE|PART)\s*\d+$/i.test(s));
+      if (band && body.length <= 12 && !cells.some((s) => /INDEX OF/i.test(s))) {
+        const n = Number(band.match(/\d+/)![0]);
+        if (!dividers.has(n)) dividers.set(n, pg.no);
+      }
+    }
+    if (index === null && !dividers.size) return null;
+    return { src, pos, index, dividers };
+  } catch (e) {
+    console.error("reference pack could not be read for its index and dividers:", e);
+    return null;
+  }
+}
+
+/* ---- the index of annexures --------------------------------------- */
+
+interface IndexRow {
   no: number;
   label: string;
-  style: "annexure" | "part" | "front";
-  docs: { name: string; page: number; pages: number; note?: string }[];
-  page: number;
+  style: "annexure" | "part";
+  attached: boolean;
 }
 
-const partTitle = (e: { no: number; label: string; style: "annexure" | "part" | "front" }) => (e.style === "annexure" ? `Annexure ${e.no} – ${e.label}` : e.style === "part" ? `Part ${e.no} – ${e.label}` : e.label);
-
-function coverPage(ctx: Ctx, input: CompiledInput, contents: Entry[], totalPages: number) {
-  const page = ctx.pdf.insertPage(0, A4);
-  const [w, h] = A4;
-  const shown = formattedValues(input.type, input.values);
-  page.drawRectangle({ x: 0, y: h - 150, width: w, height: 150, color: NAVY });
-  page.drawRectangle({ x: 40, y: h - 118, width: 46, height: 2.5, color: GOLD });
-  text(page, ctx, "AMAALA  ·  COMMERCIAL  ·  DOCUMENT PACK", 40, h - 44, 8.5, { color: rgb(0.78, 0.78, 0.76) });
-  text(page, ctx, fit(input.type.label, ctx.bold, 22, w - 80), 40, h - 80, 22, { bold: true, color: WHITE });
-  text(page, ctx, `${packRefLabel(input.type.short, input.meta.ref)}${input.meta.revision ? ` · Rev. ${input.meta.revision}` : ""} · ${input.meta.status}`, 40, h - 104, 11, { color: rgb(0.85, 0.85, 0.83) });
-  text(page, ctx, `${input.meta.programme.name} (${input.meta.programme.code})${shown.project_name ? `  ·  ${shown.project_name}` : ""}`, 40, h - 136, 9.5, { color: rgb(0.85, 0.85, 0.83) });
-  let y = text(page, ctx, input.meta.title || input.type.label, 40, h - 180, 13, { bold: true, width: w - 80 }) - 6;
-  const rows: [string, string][] = [
-    ["Contract", [shown.contract_no, shown.contract_title].filter(Boolean).join(" · ") || "–"],
-    ["Contractor / Consultant", shown.contractor || "–"],
-    ["Works package", shown.works_package || "–"],
-    ["Reference", packRefLabel(input.type.short, input.meta.ref)],
-    ["Date", shown.date || formatDate(input.meta.generatedAt)],
-  ];
-  for (const k of ["total_value", "vo_value", "dvo_value", "rom_estimate", "amount", "amount_claimed", "amount_assessed", "days_claimed", "days_assessed", "stage1_price", "stage2_price"]) {
-    const f = input.type.fields.find((x) => x.key === k);
-    if (f && shown[k]) rows.push([f.label, shown[k]]);
-  }
-  const labelW = 150;
-  for (const [k, v] of rows) {
-    const lines = wrap(v, ctx.font, 10, w - 80 - labelW - 10);
-    const rowH = Math.max(1, lines.length) * 13.5 + 6;
-    page.drawRectangle({ x: 40, y: y - rowH + 10, width: w - 80, height: rowH, color: PALE_RGB, borderColor: LINE_RGB, borderWidth: 0.5 });
-    page.drawRectangle({ x: 40, y: y - rowH + 10, width: 2, height: rowH, color: GOLD });
-    text(page, ctx, k, 48, y, 9, { bold: true, color: NAVY });
-    text(page, ctx, v, 40 + labelW, y, 10, { width: w - 80 - labelW - 10 });
-    y -= rowH;
-  }
-  y -= 14;
-  text(page, ctx, "Contents", 40, y, 12, { bold: true, color: NAVY });
-  y -= 18;
-  for (const c of contents) {
-    page.drawRectangle({ x: 40, y: y - 4, width: w - 80, height: 16, color: NAVY });
-    page.drawRectangle({ x: 40, y: y - 4, width: 22, height: 16, color: GOLD });
-    text(page, ctx, c.style === "front" ? "•" : String(c.no), 51, y, 9.5, { bold: true, color: WHITE, align: "center" });
-    text(page, ctx, fit(partTitle(c), ctx.bold, 9.5, w - 180), 68, y, 9.5, { bold: true, color: WHITE });
-    text(page, ctx, `page ${c.page}`, w - 46, y, 9, { color: WHITE, align: "right" });
-    y -= 20;
-    for (const d of c.docs) {
-      const line = `${d.name}${d.note ? ` – ${d.note}` : ""}`;
-      text(page, ctx, line, 52, y, 9, { width: w - 170 });
-      text(page, ctx, d.pages ? `p. ${d.page}${d.pages > 1 ? `–${d.page + d.pages - 1}` : ""}` : "not included", w - 46, y, 9, { color: MUTED_RGB, align: "right" });
-      y -= 13.5 * wrap(line, ctx.font, 9, w - 170).length;
-      if (y < 60) break;
+/** The approved pack's own index page: the rows re-ticked, re-worded where this pack differs, extra rows added. */
+async function copiedIndexPage(ctx: Ctx, ref: RefPages, rows: IndexRow[]): Promise<boolean> {
+  if (ref.index === null) return false;
+  const pg = ref.pos.find((p) => p.no === ref.index)!;
+  const [page] = await ctx.pdf.copyPages(ref.src, [ref.index - 1]);
+  ctx.pdf.addPage(page);
+  const { width } = page.getSize();
+  const found = pg.rows
+    .map((r) => {
+      const head = r.cells.find((c) => /^(ANNEXURE|PART)\s*\d+$/i.test(c.s.trim()));
+      if (!head) return null;
+      const boxes = r.cells.filter((c) => /[☑☐☒✓✔]/.test(c.s)).map((c) => c.x);
+      const desc = r.cells.filter((c) => c !== head && !/[☑☐☒✓✔]/.test(c.s));
+      return { no: Number(head.s.match(/\d+/)![0]), y: r.y, x: head.x, boxes, descX: desc[0]?.x ?? head.x + 78, descEnd: Math.max(...desc.map((c) => c.x + c.w), head.x + 78), size: head.h || 7.5 };
+    })
+    .filter((r): r is NonNullable<typeof r> => !!r)
+    .sort((a, b) => b.y - a.y);
+  if (!found.length) return false;
+  const boxX = found.find((r) => r.boxes.length >= 2)?.boxes ?? [width * 0.76, width * 0.89];
+  const [onX, offX] = [Math.min(...boxX), Math.max(...boxX)];
+  const step = found.length > 1 ? Math.abs(found[0].y - found[1].y) : 20;
+  const tick = (y: number, attached: boolean) => {
+    page.drawRectangle({ x: onX - 18, y: y - 4, width: 34, height: 14, color: WHITE });
+    page.drawRectangle({ x: offX - 10, y: y - 4, width: 30, height: 14, color: WHITE });
+    tickBox(page, onX - 9, y - 0.5, attached);
+    tickBox(page, offX, y - 0.5, !attached);
+  };
+  const descWidth = found[0].descEnd - found[0].descX;
+  const leftEdge = found[0].x - 4;
+  const rightEdge = offX + 28;
+  let lastY = found[found.length - 1].y;
+  for (const r of rows) {
+    const hit = found.find((f) => f.no === r.no);
+    if (hit) {
+      tick(hit.y, r.attached);
+      const refDesc = pg.rows.find((x) => x.y === hit.y)?.cells.filter((c) => c.x >= hit.descX - 1 && !/[☑☐☒✓✔]/.test(c.s)).map((c) => c.s).join(" ") ?? "";
+      if (norm(refDesc) !== norm(r.label) && norm(refDesc).replace(/\s*-\s*/g, " ") !== norm(r.label).replace(/\s*-\s*/g, " ")) {
+        page.drawRectangle({ x: hit.descX - 2, y: hit.y - 5, width: onX - 12 - hit.descX, height: 14, color: WHITE });
+        text(page, ctx, fit(r.label.toUpperCase(), ctx.bold, hit.size, onX - 16 - hit.descX), hit.descX, hit.y, hit.size, { bold: true, color: INK_RGB });
+      }
+    } else {
+      // a row the approved pack does not have: drawn under the last one, in the same geometry
+      const y = lastY - step;
+      page.drawRectangle({ x: leftEdge, y: y - 6, width: rightEdge - leftEdge, height: step, borderColor: RSG_NAVY, borderWidth: 0.6, color: WHITE });
+      page.drawLine({ start: { x: found[0].descX - 4, y: y - 6 }, end: { x: found[0].descX - 4, y: y - 6 + step }, thickness: 0.6, color: RSG_NAVY });
+      page.drawLine({ start: { x: onX - 35, y: y - 6 }, end: { x: onX - 35, y: y - 6 + step }, thickness: 0.6, color: RSG_NAVY });
+      page.drawLine({ start: { x: offX - 35, y: y - 6 }, end: { x: offX - 35, y: y - 6 + step }, thickness: 0.6, color: RSG_NAVY });
+      text(page, ctx, annexureLabel(r), found[0].x, y, found[0].size, { bold: true });
+      text(page, ctx, fit(r.label.toUpperCase(), ctx.bold, found[0].size, Math.max(descWidth, onX - 16 - found[0].descX)), found[0].descX, y, found[0].size, { bold: true });
+      tick(y, r.attached);
+      lastY = y;
     }
-    y -= 4;
+  }
+  return true;
+}
+
+/** The index of annexures drawn in the RSG layout, for a pack without an approved pack to copy from. */
+function drawnIndexPage(ctx: Ctx, title: string, rows: IndexRow[]) {
+  const page = ctx.pdf.addPage(LETTER);
+  const [w, h] = LETTER;
+  const x0 = 23;
+  const x1 = w - 21;
+  let y = h - 233;
+  page.drawRectangle({ x: x0, y: y - 31, width: x1 - x0, height: 31, color: RSG_NAVY });
+  text(page, ctx, title, w / 2, y - 21, 13, { bold: true, color: WHITE, align: "center" });
+  y -= 31;
+  page.drawRectangle({ x: x0, y: y - 23, width: x1 - x0, height: 23, borderColor: RSG_NAVY, borderWidth: 0.8, color: WHITE });
+  text(page, ctx, "INDEX OF ANNEXURES", w / 2, y - 16, 10.5, { bold: true, color: INK_RGB, align: "center" });
+  y -= 23;
+  const cols = [x0, 101, 431, 511, x1];
+  page.drawRectangle({ x: x0, y: y - 62, width: x1 - x0, height: 62, color: RSG_NAVY });
+  text(page, ctx, "SECTION", (cols[0] + cols[1]) / 2, y - 34, 6.5, { bold: true, color: WHITE, align: "center" });
+  text(page, ctx, "DESCRIPTION", (cols[1] + cols[2]) / 2, y - 34, 6.5, { bold: true, color: WHITE, align: "center" });
+  page.drawText("ATTACHED", { x: (cols[2] + cols[3]) / 2 + 3, y: y - 48, size: 6.5, font: ctx.bold, color: WHITE, rotate: degrees(90) });
+  page.drawText("NOT", { x: (cols[3] + cols[4]) / 2 - 4, y: y - 40, size: 6.5, font: ctx.bold, color: WHITE, rotate: degrees(90) });
+  page.drawText("APPLICABLE", { x: (cols[3] + cols[4]) / 2 + 5, y: y - 52, size: 6.5, font: ctx.bold, color: WHITE, rotate: degrees(90) });
+  for (let i = 1; i < cols.length - 1; i++) page.drawLine({ start: { x: cols[i], y: y - 62 }, end: { x: cols[i], y }, thickness: 0.6, color: WHITE });
+  y -= 62;
+  for (const r of rows) {
+    const rh = 20;
+    page.drawRectangle({ x: x0, y: y - rh, width: x1 - x0, height: rh, borderColor: RSG_NAVY, borderWidth: 0.6, color: WHITE });
+    for (let i = 1; i < cols.length - 1; i++) page.drawLine({ start: { x: cols[i], y: y - rh }, end: { x: cols[i], y }, thickness: 0.6, color: RSG_NAVY });
+    text(page, ctx, annexureLabel(r), cols[0] + 4, y - 13, 7.5, { bold: true });
+    text(page, ctx, fit(r.label.toUpperCase(), ctx.bold, 7.5, cols[2] - cols[1] - 8), cols[1] + 4, y - 13, 7.5, { bold: true });
+    tickBox(page, (cols[2] + cols[3]) / 2 - 4, y - 14, r.attached);
+    tickBox(page, (cols[3] + cols[4]) / 2 - 4, y - 14, !r.attached);
+    y -= rh;
     if (y < 60) break;
   }
-  text(page, ctx, `${totalPages} pages in all`, w - 46, Math.max(y, 48), 8, { color: MUTED_RGB, align: "right" });
-  footer(page, ctx, input, "Cover");
+  classification(page, ctx);
 }
 
-function dividerPage(ctx: Ctx, input: CompiledInput, part: PackPart, docs: { name: string; pages: number; note?: string }[]) {
-  const page = ctx.pdf.addPage(A4);
-  const [w, h] = A4;
-  page.drawRectangle({ x: 0, y: 0, width: 34, height: h, color: NAVY });
-  page.drawRectangle({ x: 34, y: 0, width: 2.5, height: h, color: GOLD });
-  page.drawRectangle({ x: 0, y: h - 150, width: w, height: 150, color: PALE_RGB });
-  page.drawRectangle({ x: 0, y: h - 150, width: w, height: 0.8, color: LINE_RGB });
-  text(page, ctx, input.type.label.toUpperCase(), 70, h - 52, 8.5, { color: MUTED_RGB });
-  text(page, ctx, fit(`${packRefLabel(input.type.short, input.meta.ref)}  ·  ${input.meta.title}`, ctx.font, 9.5, w - 260), 70, h - 68, 9.5, { color: MUTED_RGB });
-  text(page, ctx, `${input.meta.programme.code}  ·  ${formatDate(input.meta.generatedAt)}`, w - 40, h - 52, 8.5, { color: MUTED_RGB, align: "right" });
-  page.drawCircle({ x: 112, y: h / 2 + 70, size: 46, color: NAVY });
-  page.drawCircle({ x: 112, y: h / 2 + 70, size: 41, color: NAVY, borderColor: GOLD, borderWidth: 1.2 });
-  text(page, ctx, String(part.no), 112, h / 2 + 54, 44, { bold: true, color: WHITE, align: "center" });
-  text(page, ctx, part.style === "annexure" ? "ANNEXURE" : "PART", 112, h / 2 + 108, 8, { color: rgb(0.78, 0.78, 0.76), align: "center" });
-  text(page, ctx, part.style === "annexure" ? part.label.toUpperCase() : part.label, 190, h / 2 + 84, part.style === "annexure" ? 17 : 22, { bold: true, color: NAVY, width: w - 230 });
-  text(page, ctx, part.hint, 190, h / 2 + 46, 10.5, { color: MUTED_RGB, width: w - 230 });
-  page.drawRectangle({ x: 190, y: h / 2 + 30, width: 60, height: 2, color: GOLD });
-  let y = h / 2 + 8;
-  text(page, ctx, docs.length === 1 ? "Document in this part" : `${docs.length} documents in this part`, 190, y, 9, { bold: true, color: NAVY });
-  y -= 16;
-  for (const d of docs) {
-    const line = `${d.name}${d.note ? ` – ${d.note}` : d.pages ? ` (${d.pages} page${d.pages === 1 ? "" : "s"})` : ""}`;
-    page.drawCircle({ x: 194, y: y + 3.5, size: 1.8, color: GOLD });
-    y = text(page, ctx, line, 202, y, 10, { width: w - 242, color: INK_RGB }) - 2;
-    if (y < 60) break;
+/* ---- the divider pages -------------------------------------------- */
+
+/** The approved pack's own divider page for this annexure (or any of its dividers, re-numbered), re-titled where this pack differs. */
+async function copiedDividerPage(ctx: Ctx, ref: RefPages, part: PackPart): Promise<boolean> {
+  const own = ref.dividers.get(part.no);
+  const pageNo = own ?? [...ref.dividers.values()][0];
+  if (!pageNo) return false;
+  const pg = ref.pos.find((p) => p.no === pageNo)!;
+  const [page] = await ctx.pdf.copyPages(ref.src, [pageNo - 1]);
+  ctx.pdf.addPage(page);
+  const { width } = page.getSize();
+  const bandRow = pg.rows.find((r) => r.cells.some((c) => /^(ANNEXURE|PART)\s*\d+$/i.test(c.s.trim())));
+  if (!bandRow) return true;
+  const band = bandRow.cells.find((c) => /^(ANNEXURE|PART)\s*\d+$/i.test(c.s.trim()))!;
+  const titleRow = pg.rows.filter((r) => r.y < bandRow.y && r.y > bandRow.y - 40 && r.cells.some((c) => !/^CLASSIFICATION/i.test(c.s))).sort((a, b) => b.y - a.y)[0];
+  const size = band.h || 8.5;
+  if (!own || norm(band.s) !== norm(annexureLabel(part))) {
+    page.drawRectangle({ x: 25, y: bandRow.y - 4, width: width - 50, height: size + 7, color: RSG_NAVY });
+    text(page, ctx, annexureLabel(part).replace(" ", "  "), width / 2, bandRow.y, size, { bold: true, color: WHITE, align: "center" });
   }
-  text(page, ctx, "#CLASSIFICATION: INTERNAL SENSITIVE", w / 2 + 17, 52, 8, { color: MUTED_RGB, align: "center" });
-  footer(page, ctx, input, partTitle(part));
+  const refTitle = titleRow ? titleRow.cells.map((c) => c.s).join(" ") : "";
+  const titleY = titleRow ? titleRow.y : bandRow.y - 17;
+  if (norm(refTitle) !== norm(part.label)) {
+    page.drawRectangle({ x: 26, y: titleY - 5, width: width - 52, height: size + 9, color: WHITE });
+    text(page, ctx, fit(part.label.toUpperCase(), ctx.bold, size, width - 70), width / 2, titleY, size, { bold: true, color: INK_RGB, align: "center" });
+  }
+  // the red line under the title (the approved instruction behind the change): always this pack's own
+  const noteRows = pg.rows.filter((r) => r.y < titleY - 8 && r.y > titleY - 60 && r.cells.some((c) => !/^CLASSIFICATION/i.test(c.s)));
+  for (const r of noteRows) page.drawRectangle({ x: 30, y: r.y - 5, width: width - 60, height: (r.cells[0]?.h || 10) + 8, color: WHITE });
+  if (part.note) {
+    const y = noteRows.length ? noteRows[0].y : titleY - 32;
+    text(page, ctx, fit(part.note, ctx.serifBold, 10, width - 80), width / 2, y, 10, { font: ctx.serifBold, color: RED, align: "center" });
+  }
+  return true;
 }
 
-function noticePage(ctx: Ctx, input: CompiledInput, name: string, why: string) {
+/** A divider drawn in the RSG layout: the navy band with the annexure number, the title row, the red note. */
+function drawnDividerPage(ctx: Ctx, part: PackPart) {
+  const page = ctx.pdf.addPage(LETTER);
+  const [w, h] = LETTER;
+  const top = h - 333;
+  page.drawRectangle({ x: 23, y: top - 16, width: w - 44, height: 16, color: RSG_NAVY });
+  text(page, ctx, annexureLabel(part).replace(" ", "  "), w / 2, top - 11.5, 8.5, { bold: true, color: WHITE, align: "center" });
+  page.drawRectangle({ x: 23, y: top - 37, width: w - 44, height: 21, borderColor: RSG_NAVY, borderWidth: 0.8, color: WHITE });
+  text(page, ctx, fit(part.label.toUpperCase(), ctx.bold, 8.5, w - 70), w / 2, top - 29, 8.5, { bold: true, color: INK_RGB, align: "center" });
+  if (part.note) text(page, ctx, fit(part.note, ctx.serifBold, 10, w - 80), w / 2, top - 65, 10, { font: ctx.serifBold, color: RED, align: "center" });
+  classification(page, ctx);
+}
+
+/* ---- the documents ------------------------------------------------ */
+
+function noticePage(ctx: Ctx, name: string, why: string) {
   const page = ctx.pdf.addPage(A4);
   const [w, h] = A4;
-  text(page, ctx, name, 40, h - 80, 12, { bold: true, color: NAVY, width: w - 80 });
-  text(page, ctx, why, 40, h - 104, 10, { color: MUTED_RGB, width: w - 80 });
-  footer(page, ctx, input, "Not included");
+  text(page, ctx, name, 48, h - 90, 11, { bold: true, color: INK_RGB, width: w - 96 });
+  text(page, ctx, why, 48, h - 112, 9.5, { color: MUTED_RGB, width: w - 96 });
+  page.drawLine({ start: { x: 48, y: h - 124 }, end: { x: w - 48, y: h - 124 }, thickness: 0.5, color: LINE_RGB });
 }
 
-async function addImage(ctx: Ctx, bytes: Buffer, mime: string, name: string): Promise<number> {
-  const isPng = /\.png$/i.test(name) || (!/\.jpe?g$/i.test(name) && /png/i.test(mime));
-  const img = isPng ? await ctx.pdf.embedPng(bytes) : await ctx.pdf.embedJpg(bytes);
+async function addImage(ctx: Ctx, bytes: Buffer, png: boolean): Promise<number> {
+  const img = png ? await ctx.pdf.embedPng(bytes) : await ctx.pdf.embedJpg(bytes);
   const page = ctx.pdf.addPage(A4);
   const [w, h] = A4;
   const k = Math.min((w - 60) / img.width, (h - 80) / img.height, 1.5);
@@ -364,32 +477,43 @@ async function addImage(ctx: Ctx, bytes: Buffer, mime: string, name: string): Pr
 interface Loaded {
   item: PartItem;
   src: PdfLib | null;
-  image: { bytes: Buffer; mime: string } | null;
+  image: { bytes: Buffer; png: boolean } | null;
   pages: number;
   take: number[];
   note?: string;
 }
 
-async function load(item: PartItem): Promise<Loaded> {
-  if (!item.bytes) return { item, src: null, image: null, pages: 0, take: [], note: item.note ?? "file missing on the server" };
-  const ext = (item.name.match(/\.([a-z0-9]+)$/i)?.[1] ?? "").toLowerCase();
-  const mime = item.mime ?? "";
-  const isPdf = ext ? ext === "pdf" : /pdf/i.test(mime);
-  const isImg = ext ? ["png", "jpg", "jpeg"].includes(ext) : /image\/(png|jpe?g)/i.test(mime);
-  if (isPdf) {
-    try {
-      const src = await PdfLib.load(item.bytes, { ignoreEncryption: true, updateMetadata: false });
-      const take = parsePages(item.pages, src.getPageCount());
-      return { item, src, image: null, pages: take.length, take, note: take.length < src.getPageCount() ? `pages ${item.pages || "all"} of ${src.getPageCount()}` : undefined };
-    } catch (e) {
-      return { item, src: null, image: null, pages: 0, take: [], note: `could not be read as a PDF (${e instanceof Error ? e.message.slice(0, 80) : "error"})` };
-    }
+async function loadPdf(item: PartItem, bytes: Buffer, note?: string): Promise<Loaded> {
+  try {
+    const src = await PdfLib.load(bytes, { ignoreEncryption: true, updateMetadata: false });
+    const take = parsePages(item.pages, src.getPageCount());
+    return { item, src, image: null, pages: take.length, take, note: note ?? (take.length < src.getPageCount() ? `pages ${item.pages || "all"} of ${src.getPageCount()}` : undefined) };
+  } catch (e) {
+    return { item, src: null, image: null, pages: 0, take: [], note: `could not be read as a PDF (${e instanceof Error ? e.message.slice(0, 80) : "error"})` };
   }
-  if (isImg) return { item, src: null, image: { bytes: item.bytes, mime }, pages: 1, take: [1] };
-  return { item, src: null, image: null, pages: 0, take: [], note: "only PDF, JPG and PNG files go into the pack – Word and Excel files are listed for reference" };
 }
 
-async function place(ctx: Ctx, input: CompiledInput, l: Loaded): Promise<number> {
+/** Every file goes into the pack: PDFs as they are, images on a page, mails and Office files converted to pages. */
+async function load(item: PartItem): Promise<Loaded> {
+  if (!item.bytes) return { item, src: null, image: null, pages: 0, take: [], note: item.note ?? "file missing on the server" };
+  const mime = item.mime ?? "";
+  const ext = (item.name.match(/\.([a-z0-9]+)$/i)?.[1] ?? "").toLowerCase();
+  const isPdf = ext ? ext === "pdf" : /pdf/i.test(mime) || item.bytes.subarray(0, 5).toString("latin1") === "%PDF-";
+  if (isPdf) return loadPdf(item, item.bytes, item.note);
+  if (isPng(item.name, mime)) return { item, src: null, image: { bytes: item.bytes, png: true }, pages: 1, take: [1], note: item.note };
+  if (isJpeg(item.name, mime)) return { item, src: null, image: { bytes: item.bytes, png: false }, pages: 1, take: [1], note: item.note };
+  if (convertible(item.name)) {
+    try {
+      const conv = await convertToPdf(item.bytes, item.name);
+      if (conv) return loadPdf({ ...item, pages: "" }, conv.pdf, `${conv.kind} shown as pages`);
+    } catch (e) {
+      console.error("file conversion failed:", item.name, e);
+    }
+  }
+  return { item, src: null, image: null, pages: 0, take: [], note: `this ${ext ? `.${ext} ` : ""}file cannot be shown as pages – it is kept with the pack and listed here` };
+}
+
+async function place(ctx: Ctx, l: Loaded): Promise<number> {
   if (l.src) {
     const pages = await ctx.pdf.copyPages(l.src, l.take.map((n) => n - 1));
     for (const p of pages) ctx.pdf.addPage(p);
@@ -397,18 +521,18 @@ async function place(ctx: Ctx, input: CompiledInput, l: Loaded): Promise<number>
   }
   if (l.image) {
     try {
-      return await addImage(ctx, l.image.bytes, l.image.mime, l.item.name);
+      return await addImage(ctx, l.image.bytes, l.image.png);
     } catch {
-      noticePage(ctx, input, l.item.name, "The image could not be read.");
+      noticePage(ctx, l.item.name, "The image could not be read.");
       l.note = "image could not be read";
       return 1;
     }
   }
-  noticePage(ctx, input, l.item.name, l.note ?? "Not included.");
+  noticePage(ctx, l.item.name, l.note ?? "Not included.");
   return 1;
 }
 
-/** Cover, the front pages (the form, the index), then a divider and the files of every part. */
+/** The form pages, the index of annexures, then a divider and the files of every part – as the approved packs are bound. */
 export async function buildCompiledPack(input: CompiledInput): Promise<Buffer> {
   const pdf = await PdfLib.create();
   pdf.setTitle(input.fileName);
@@ -416,37 +540,38 @@ export async function buildCompiledPack(input: CompiledInput): Promise<Buffer> {
   pdf.setSubject(`${input.type.label} – ${input.meta.ref}`);
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
-  const ctx: Ctx = { pdf, font, bold };
-  const contents: Entry[] = [];
-  let pageNo = 2;
+  const serifBold = await pdf.embedFont(StandardFonts.TimesRomanBold);
+  const ctx: Ctx = { pdf, font, bold, serifBold };
+  let pages = 0;
   for (const f of input.front) {
     try {
       const src = await PdfLib.load(f.bytes, { ignoreEncryption: true, updateMetadata: false });
-      const n = src.getPageCount();
-      const pages = await pdf.copyPages(src, src.getPageIndices());
-      for (const p of pages) pdf.addPage(p);
-      contents.push({ no: 0, label: f.name, style: "front", docs: [{ name: f.name, page: pageNo, pages: n }], page: pageNo });
-      pageNo += n;
-    } catch {
-      /* a front page that could not be read is left out */
+      const copied = await pdf.copyPages(src, src.getPageIndices());
+      for (const p of copied) pdf.addPage(p);
+      pages += copied.length;
+    } catch (e) {
+      console.error("front pages could not be read:", f.name, e);
     }
   }
-  for (const part of input.parts) {
+  let ref: RefPages | null = null;
+  for (const b of input.references ?? []) if (!(ref = await referencePages(b))) continue; else break;
+  const parts = input.parts;
+  if (input.index) {
+    const rows: IndexRow[] = parts.map((p) => ({ no: p.no, label: p.label, style: p.style, attached: p.items.length > 0 }));
+    if (!(ref && (await copiedIndexPage(ctx, ref, rows)))) drawnIndexPage(ctx, input.index.title, rows);
+    pages++;
+  }
+  for (const part of parts) {
     if (!part.items.length) continue;
     const loaded: Loaded[] = [];
     for (const it of part.items) loaded.push(await load(it));
-    const entry: Entry = { no: part.no, label: part.label, style: part.style, docs: [], page: pageNo };
-    dividerPage(ctx, input, part, loaded.map((l) => ({ name: l.item.name, pages: l.pages, note: l.note })));
-    pageNo++;
-    for (const l of loaded) {
-      const start = pageNo;
-      pageNo += await place(ctx, input, l);
-      entry.docs.push({ name: l.item.name, page: start, pages: l.pages, note: l.note });
+    if (!part.plain) {
+      if (!(ref && (await copiedDividerPage(ctx, ref, part)))) drawnDividerPage(ctx, part);
+      pages++;
     }
-    contents.push(entry);
+    for (const l of loaded) pages += await place(ctx, l);
   }
-  if (!contents.length) noticePage(ctx, input, "Nothing to compile yet", "Fill the form and upload the supporting documents into the numbered slots, then create the pack again.");
-  coverPage(ctx, input, contents, pageNo - 1);
+  if (!pages) noticePage(ctx, "Nothing to compile yet", "Upload the documents of the pack into their entries, then create the pack again.");
   return Buffer.from(await pdf.save({ useObjectStreams: true }));
 }
 

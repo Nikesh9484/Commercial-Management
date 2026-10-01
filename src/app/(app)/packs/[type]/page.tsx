@@ -10,6 +10,7 @@ import { canManagePacks, countDocs, getTemplate, listCases } from "@/lib/packs/s
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Chip } from "@/components/ui/Chip";
 import { PackTemplateCard } from "@/components/packs/PackTemplateCard";
+import { PackRowActions } from "@/components/packs/PackRowActions";
 import { NewPackForm } from "@/components/packs/NewPackForm";
 
 export async function generateMetadata({ params }: { params: Promise<{ type: string }> }) {
@@ -144,9 +145,15 @@ export default async function PackCategoryPage({ params }: { params: Promise<{ t
                     <a className="btn btn-xs btn-pdf" href={`/api/packs/output?case=${c.id}&format=pdf`} title="The form as a PDF">
                       <FileDown size={12} /> PDF
                     </a>{" "}
-                    <a className="btn btn-xs btn-primary" href={`/api/packs/output?case=${c.id}&format=pack`} title="Cover, the form, a divider per part and every supporting document in one PDF">
+                    <a className="btn btn-xs btn-primary" href={`/api/packs/output?case=${c.id}&format=pack`} title="The form, the index and every annexure with its documents in one PDF">
                       <FileDown size={12} /> Pack
                     </a>
+                    {canManage && (
+                      <>
+                        {" "}
+                        <PackRowActions id={c.id} label={c.ref ? packRefLabel(t.short, c.ref) : `${t.short} #${c.id}`} files={docCounts.get(c.id) ?? 0} />
+                      </>
+                    )}
                   </td>
                 </tr>
               ))}

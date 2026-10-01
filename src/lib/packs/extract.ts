@@ -1,4 +1,4 @@
-import { readPositioned, valueRight, valueBelow, numericRowsAfter, peopleUnder, peopleWithHeadings, moneyOf, findLabel, type PosPage } from "./positioned";
+import { readPositioned, valueRight, valueBelow, numericRowsAfter, peopleUnder, peopleWithHeadings, moneyOf, findLabel, isLabel, type PosPage } from "./positioned";
 import { REFERENCE_SLOT, type PackType, type PackValues, type TemplateInspection } from "./shared";
 
 /**
@@ -52,7 +52,7 @@ export function classifyDoc(pages: PosPage[], slotHint: string): DocKind {
   if (/determination of variation order|rsg-cm-frm-0014|rgs-cm-frm-0014|pvo to dvo cost movement/.test(head)) return "dvo";
   if (/request for approval form|rsg-pr-frm-0004|trs-pr-frm-0004/.test(head)) return "rfa";
   if (/employer'?s assessment report|extension of time report|revision history/.test(head)) return "ear";
-  if (/request for change|change request form|rsg-cm-frm-0011|\brfc\b.*\bform\b/.test(head)) return "rfc";
+  if (/request for change|change request form|rsg-cm-frm-0011|\brfc\b.*\bform\b|change decision pack|consolidated commercial form|employer.?s instruction \(ei\)|rsg-cm-frm-0007/.test(head)) return "rfc";
   if (/grand total|unit price|unite price|\bqty\b|cost proposal|bill of quantit|\bboq\b|rate breakdown/.test(all)) return "cost";
   if (slotHint === "cost" || slotHint === "rfc" || slotHint === "details") return slotHint === "cost" ? "cost" : "rfc";
   return "unknown";
@@ -93,7 +93,14 @@ const GENERAL: [string, string, (string | RegExp)[]?][] = [
 export function readReferencePvo(pages: PosPage[]): Reading {
   const r: Reading = { values: {}, sources: {} };
   const src = "previous PVO";
-  const form = pages.slice(0, Math.min(3, pages.length));
+  // only the form pages are read: a pack that starts at its index of annexures gives nothing here
+  const isForm = (p: PosPage) => {
+    const t = p.rows.flatMap((r) => r.cells.map((c) => c.s)).join(" ");
+    return /Proposed Variation Order \(PVO\)|Emergency Variation Order Assessment/i.test(t) && /RSG-CM-FRM-0013|1\) General Information/i.test(t) && !/INDEX OF ANNEXURES/i.test(t);
+  };
+  const firstForm = pages.findIndex(isForm);
+  if (firstForm < 0) return r;
+  const form = pages.slice(firstForm, Math.min(firstForm + 3, pages.length));
   for (const [key, label, not] of GENERAL) set(r, key, valueRight(form, label, { notLabels: not }), src);
   if (!r.values.destination) {
     const d = findLabel(form, "Destination");
@@ -114,7 +121,9 @@ export function readReferencePvo(pages: PosPage[]): Reading {
   set(r, "approved_dvos", money(valueRight(form, /^Approved DVOs$/)), src);
   set(r, "approved_pvos", money(valueRight(form, /^Approved PVOs$/)), src);
   set(r, "current_revised", money(valueRight(form, "Current Revised Contract Value")), src);
-  set(r, "total_value", money(valueRight(form, "Total Value (in SAR)") || valueRight(form, "This Proposed Variation Order (PVO)")), src);
+  set(r, "total_value", money(valueRight(form, "Total Value (in SAR)") || valueRight(form, "This Proposed Variation Order (PVO)") || valueRight(form, "This Variation Order (ROM)")), src);
+  set(r, "emergency_circumstances", valueBelow(form, "Description of Emergency Circumstances", ["Scope of works", "b) Estimated Cost"]), src);
+  set(r, "rom_basis", valueRight(form, "Basis of ROM Estimate", { notLabels: [/^…/] }).replace(/[….]{3,}.*$/, "").trim(), src);
   set(r, "other_contracts", money(valueRight(form, "Sub-Total (SAR)")), src);
   set(r, "original_completion", dateOf(valueRight(form, "a) Original Contract Completion Date")), src);
   set(r, "approved_eot", (valueRight(form, "b) Approved EOTs (Days)") || "").replace(/\.00$/, ""), src);
@@ -167,9 +176,9 @@ export function readReferencePvo(pages: PosPage[]): Reading {
   const acc = numericRowsAfter(form, "d) Project / Asset Budget position", "Comments", 8, 14).filter((row) => /[A-Za-z]{3}/.test(row[0]));
   if (acc.length) set(r, "acc_table", JSON.stringify(acc.map((row) => [row[0], ...row.slice(1).filter((c) => moneyOf(c) !== null || c === "-").map((c) => money(c) || "0")])), src);
   // the signatories: everything under Prepared, Checked and Approved
-  const prepared = peopleUnder(form, "Prepared/Initiated By", ["Checked by", "Approved by"], (s) => POSITION.test(s));
+  const prepared = peopleUnder(form, "Prepared/Initiated By", ["Checked by", "Approved by", "Review & Approval"], (s) => POSITION.test(s));
   const checked = peopleUnder(form, "Checked by (Pre-Approval)", ["Approved by"], (s) => POSITION.test(s));
-  const approved = peopleUnder(form, /^Approved by/, [/^RSG-CM-FRM/, "Comments"], (s) => POSITION.test(s));
+  const approved = [...peopleUnder(form, /^Approved by/, [/^RSG-CM-FRM/, "Comments"], (s) => POSITION.test(s)), ...peopleUnder(form, /^Review & Approval/, [/^RSG-CM-FRM/, "Comments"], (s) => POSITION.test(s))];
   if (prepared.length) {
     set(r, "prepared_by", lines(prepared), src);
     set(r, "prepared_position", positions(prepared), src);
@@ -188,10 +197,20 @@ export function readReferencePvo(pages: PosPage[]): Reading {
     set(r, "employer_rep", erep.name, src);
     set(r, "employer_rep_position", erep.position, src);
   }
-  const crep = peopleUnder(pages, /^Received by \((Consultant\/)?Contractor'?s Representative\)/i, [/^Approved/i, /^RSG-CM-FRM/], (x) => POSITION.test(x))[0];
+  const crep = peopleUnder(pages, /^Received by/i, [/^Approved/i, /^RSG-CM-FRM/, /^Page \d/i, /^Variation Order Form \(RSG/i], (x) => POSITION.test(x))[0];
   if (crep) {
     set(r, "contractor_rep", crep.name, src);
     set(r, "contractor_rep_position", crep.position, src);
+  }
+  // the Variation Order page of an EVO pack: the instruction reference, the clauses and the description
+  const voPage = pages.find((p) => /RSG-CM-FRM-0034/.test(p.rows.flatMap((x) => x.cells.map((c) => c.s)).join(" ")));
+  if (voPage) {
+    const ref = voPage.rows.flatMap((x) => x.cells).find((c) => /^VO-\d+/i.test(c.s.trim()));
+    set(r, "instruction_ref", ref?.s.trim(), src);
+    const desc = valueBelow([voPage], /^Description$/, ["Time Impact (Contract Level)"], 40);
+    const clause = desc.match(/pursuant to (.*?\])/i)?.[1];
+    set(r, "clauses", clause, src);
+    set(r, "contractor_address", "", src);
   }
   return r;
 }
@@ -374,10 +393,120 @@ export function readReferenceEar(pages: PosPage[]): Reading {
 const RFC_STOPS = [/^(reason|scope|justification|contractual basis|estimated|cost|time impact|budget|root cause|prepared|checked|approved|attachments?|general information|particulars|description|title)/i, /^\d\)\s/, /^[a-e]\)\s/];
 
 /** The RFC: the change's title, scope, reason, contractual basis and root cause, from whichever RSG headings the form uses. */
+/** every cell of the pages in one string, with references split over cells or rows put back together */
+function glued(pages: PosPage[]): string {
+  return pages
+    .flatMap((p) => p.rows.flatMap((row) => row.cells.map((c) => c.s)))
+    .join(" ")
+    .replace(/\s*-\s*/g, "-")
+    .replace(/(\d{5})-\s+/g, "$1-");
+}
+/** the value beside a label together with the wrapped lines just beneath it in the same column */
+function valueRightWrapped(pages: PosPage[], label: string | RegExp, notLabels: (string | RegExp)[] = []): string {
+  const hit = findLabel(pages, label);
+  if (!hit) return "";
+  const rows = hit.page.rows;
+  const labelX = hit.cell.x;
+  const right = hit.cell.x + hit.cell.w;
+  const near = rows.filter((row) => Math.abs(row.y - hit.row.y) <= 40);
+  const isLabelish = (t: string) => /^[A-Z][A-Za-z.\/'’ ]{2,34}:?$/.test(t) && !/^\(/.test(t);
+  // the rows that carry a label in the same column: a value line belongs to the nearest of them
+  const labelRows = rows.filter((row) => row.cells.some((c) => Math.abs(c.x - labelX) < 4 && isLabelish(c.s)));
+  const starts = near.flatMap((row) => row.cells).filter((c) => c.x >= right - 2 && c.x < right + 330 && !notLabels.some((l) => isLabel(c.s, l)));
+  if (!starts.length) return "";
+  const colX = Math.min(...starts.map((c) => c.x));
+  // the next label column to the right bounds the value column
+  const nextCol = Math.min(colX + 330, ...near.flatMap((row) => row.cells).filter((c) => c.x > colX + 40 && isLabelish(c.s) && c.w < 130).map((c) => c.x));
+  const parts: { y: number; s: string }[] = [];
+  for (const row of near) {
+    const cell = row.cells.find((c) => Math.abs(c.x - colX) < 4);
+    if (!cell) continue;
+    let nearest = labelRows[0];
+    for (const lr of labelRows) if (Math.abs(lr.y - row.y) < Math.abs((nearest?.y ?? 1e9) - row.y)) nearest = lr;
+    if (nearest !== hit.row) continue;
+    const after = row.cells.filter((c) => c.x >= colX - 1 && c.x < nextCol - 2 && !notLabels.some((l) => isLabel(c.s, l)));
+    parts.push({ y: row.y, s: after.map((c) => c.s).join(" ") });
+  }
+  return tidy(parts.sort((a, b) => b.y - a.y).map((p) => p.s).join(" "));
+}
+/** spaces that pdf.js leaves around hyphens and brackets inside a run are taken out */
+const tidy = (t: string) =>
+  t
+    .replace(/\s+/g, " ")
+    .replace(/\[\s+/g, "[")
+    .replace(/\s+\]/g, "]")
+    .replace(/\(\s+/g, "(")
+    .replace(/\s+\)/g, ")")
+    // "Sub - Clause", "Set - off", "1TB01006 - 006C58" are one token split by pdf.js; "MH3 - Northern" is a real dash
+    .replace(/\b(Sub|Set|Back|Re|Pre|Non|Co|Semi|Multi)\s+-\s+(\w)/g, "$1-$2")
+    .replace(/\b([A-Z0-9]{2,}\d[A-Z0-9]*)\s+-\s+([A-Z0-9]{2,})\b/g, "$1-$2")
+    .replace(/\bSub-?\s?Clause/g, "Sub-Clause")
+    .trim();
+
+/**
+ * The Employer's Instruction (RSG-CM-FRM-0007), when it stands as the change behind a PVO: its
+ * subject, instruction text, references and the contract it is under.
+ */
+export function readEi(pages: PosPage[]): Reading {
+  const r: Reading = { values: {}, sources: {} };
+  const src = "Employer's Instruction";
+  const text = glued(pages);
+  set(r, "rfc_ref", text.match(/\b1TB\d{5}-\d{3}[A-Z]\d{2}-AMA-(?:EMI|EI)-[A-Z]{2}-[A-Z0-9]{4}\b/)?.[0], src);
+  set(r, "instruction_ref", r.values.rfc_ref, src);
+  const no = valueRightWrapped(pages, /^Instruction No\.?$/i, ["Date Issue"]);
+  set(r, "ei_no", no.match(/\d{2,4}/)?.[0], src);
+  set(r, "title", valueRightWrapped(pages, /^Subject:?$/i), src);
+  set(r, "contract_title", valueRightWrapped(pages, /^Contract Name$/i, ["Contract No"]), src);
+  set(r, "contractor", valueRightWrapped(pages, /^Contractor\/Consultant$/i, ["Aconex Ref"]), src);
+  set(r, "contract_no", text.match(/\b1TB\d{2}-\d{3}[A-Z]\d{2}-\d{4}\b/)?.[0], src);
+  set(r, "project_name", valueRightWrapped(pages, /^Project Name$/i, ["Project Code"]), src);
+  set(r, "date", dateOf(text.match(/\b\d{1,2}-[A-Za-z]{3}-\d{2,4}\b/)?.[0] ?? ""), src);
+  const instruction = unwrap(valueBelow(pages, /^You are hereby instructed/i, [/^Supplementary Information/i, /^Approved By/i], 30)).split(/\n/).map(tidy).join("\n");
+  set(r, "scope", instruction, src);
+  set(r, "instruction_text", instruction, src);
+  const basis = instruction.replace(/\n/g, " ").match(/Pursuant to .*?of the Contract/i)?.[0] ?? "";
+  set(r, "contractual_basis", basis, src);
+  set(r, "employer_rep", peopleUnder(pages, /^Approved By \(Employer/i, [/^RSG-CM-FRM/, /^Received By/i], (x) => POSITION.test(x))[0]?.name, src);
+  set(r, "employer_rep_position", peopleUnder(pages, /^Approved By \(Employer/i, [/^RSG-CM-FRM/, /^Received By/i], (x) => POSITION.test(x))[0]?.position, src);
+  return r;
+}
+
 export function readRfc(pages: PosPage[]): Reading {
+  if (/employer.?s instruction \(ei\)|rsg-cm-frm-0007/i.test(pages.slice(0, 2).flatMap((p) => p.rows.flatMap((row) => row.cells.map((c) => c.s))).join(" "))) return readEi(pages);
   const r: Reading = { values: {}, sources: {} };
   const src = "RFC";
   const flat = pages.flatMap((p) => p.rows.map((row) => row.cells.map((c) => c.s).join(" ")));
+  // the Aconex change decision pack: the consolidated commercial form carries the change in labelled cells
+  const text = glued(pages);
+  const aconexRef = text.match(/\b1TB\d{5}-AMA\d{5}-RFC-\d{6}\b/)?.[0];
+  if (aconexRef) {
+    set(r, "rfc_ref", aconexRef, src);
+    set(r, "title", valueRightWrapped(pages, /^Title of Change Request$/i) || valueRight(pages, /^Title of change request$/i), src);
+    const details = unwrap(valueBelow(pages, /^Details of change request$/i, [/^List the benefits/i, /^Attachments:?$/i, /^Please specify/i, /^Self-declaration/i], 60).replace(/^Describe the change being requested[^\n]*\n?/i, ""));
+    set(r, "scope", details, src);
+    const benefits = unwrap(valueBelow(pages, /^Benefits:?$/i, [/^Consequences:?$/i, /^Initiator/i], 20));
+    const consequences = unwrap(valueBelow(pages, /^Consequences:?$/i, [/^Initiator/i, /^n\/a$/i, /^Please specify/i], 20));
+    set(r, "reason", [benefits && `Benefits: ${benefits}`, consequences && `Consequences: ${consequences}`].filter(Boolean).join("\n"), src);
+    set(r, "root_cause", valueRightWrapped(pages, /^Root cause of change$/i), src);
+    const budget = valueRight(pages, /^Budgetary Check$/i);
+    if (budget) set(r, "eac_included", /not included/i.test(budget) ? "No" : /included/i.test(budget) ? "Yes" : budget, src);
+    set(r, "contract_title", valueRightWrapped(pages, /^Contract Name$/i), src);
+    set(r, "requesting_department", valueRight(pages, /^Initiating Department$/i), src);
+    set(r, "project_name", valueRight(pages, /^Project Name$/i, { notLabels: ["Root cause of change"] }).replace(/^TB-/, ""), src);
+    set(r, "date", dateOf(valueRight(pages, /^Requested on$/i)), src);
+    for (const pg of pages) for (const row of pg.rows) {
+      const cells = row.cells.map((c) => c.s);
+      if (/^Cost$/i.test(cells[0] ?? "")) {
+        const n = cells.map((c) => moneyOf(c)).find((x): x is number => x !== null && x > 0);
+        if (n) set(r, "rom_estimate", String(n), src);
+      }
+      if (/^Time to implement change$/i.test(cells[0] ?? "")) {
+        const d = cells.slice(1).find((c) => /^\d+$/.test(c));
+        if (d) set(r, "time_impact", d, src);
+      }
+    }
+    return r;
+  }
   const ref = flat.map((l) => l.match(/\b(1TB\d{5}-\d{3}[A-Z]\d{2}-AMA-(?:RFC|CRF|VOR|EMI|EI)-[A-Z]{2}-\d{4})\b/)?.[1]).find(Boolean);
   set(r, "rfc_ref", ref ?? valueRight(pages, /^(RFC|CRF) (No|Reference|Ref)\.?:?$/i), src);
   set(r, "title", valueRight(pages, /^(Title( of (this|the) (change|variation|request))?|Subject|Change Title|RFC Title):?$/i) || valueBelow(pages, /^(Title( of (this|the) (change|variation|request))?|Subject|Change Title):?$/i, RFC_STOPS, 2), src);
@@ -513,6 +642,8 @@ export function readCost(pages: PosPage[], title: string): Reading {
   set(r, "cost_items", `1 – ${title || "As per the attached cost assessment"} – ${total < 0 ? Math.abs(total) : 0} – ${total < 0 ? 0 : total}`, src);
   const subject = valueRight(pages, /^Subject:?$/i);
   if (subject) set(r, "cost_subject", subject, src);
+  const scope = valueRight(pages, /^Scope:?$/i);
+  if (scope && /[A-Za-z]{3}/.test(scope)) set(r, "cost_scope", scope, src);
   return r;
 }
 

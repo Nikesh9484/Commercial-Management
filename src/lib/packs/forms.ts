@@ -1,5 +1,5 @@
 import PDFDocument from "pdfkit";
-import { formatDate, formatMoney } from "../format";
+import { formatMoney } from "../format";
 import { formattedValues } from "./word";
 import { packRefLabel, type PackType, type PackValues } from "./shared";
 import type { ChangeLogRow } from "./data";
@@ -62,7 +62,6 @@ interface Ctx {
   /** drawn on every page added while `headerOn` – also the pages PDFKit adds itself when a text runs over */
   header: (doc: Doc) => void;
   headerOn: boolean;
-  footerLeft: string;
 }
 
 const num = (s: string | undefined) => {
@@ -81,19 +80,9 @@ function newDoc(meta: FormMeta, title: string): { doc: Doc; done: Promise<Buffer
   return { doc, done };
 }
 
-function finish(ctx: Ctx, footerRight?: (i: number, n: number) => string) {
-  const { doc } = ctx;
+function finish(ctx: Ctx) {
   ctx.headerOn = false;
-  const range = doc.bufferedPageRange();
-  for (let i = 0; i < range.count; i++) {
-    doc.switchToPage(i);
-    // the footer sits below the text area: the bottom margin is lifted so PDFKit does not open a new page for it
-    doc.page.margins.bottom = 0;
-    doc.moveTo(M, H - 30).lineTo(W - M, H - 30).lineWidth(0.5).stroke(LINE);
-    doc.fillColor(MUTED).font("Helvetica").fontSize(7).text(ctx.footerLeft, M, H - 24, { width: TW - 120, lineBreak: false });
-    doc.text(footerRight ? footerRight(i + 1, range.count) : `Page ${i + 1} of ${range.count}`, W - M - 120, H - 24, { width: 120, align: "right", lineBreak: false });
-  }
-  doc.end();
+  ctx.doc.end();
 }
 
 /** The RSG form header: form ref and revision left, classification and page right, the form title beneath. */
@@ -265,7 +254,7 @@ function personLines(text: string): string[][] {
 }
 
 function ctxFor(doc: Doc, type: PackType, values: PackValues, meta: FormMeta, header: (doc: Doc) => void): Ctx {
-  const ctx: Ctx = { doc, type, v: formattedValues(type, values), raw: values, meta, header, headerOn: true, footerLeft: `${packRefLabel(type.short, meta.ref)}${meta.revision ? ` Rev. ${meta.revision}` : ""} · ${meta.status} · prepared ${formatDate(meta.generatedAt)} by ${meta.preparedBy} · Commercial Dashboard` };
+  const ctx: Ctx = { doc, type, v: formattedValues(type, values), raw: values, meta, header, headerOn: true };
   doc.on("pageAdded", () => {
     if (ctx.headerOn) ctx.header(doc);
     else doc.y = 60;
@@ -563,7 +552,6 @@ export async function renderEarReport(type: PackType, values: PackValues, meta: 
     d.y = 58;
   };
   const ctx = ctxFor(doc, type, values, meta, header);
-  ctx.footerLeft = `${runHead} · ${meta.status}${meta.revision ? ` · Rev. ${meta.revision}` : ""}`;
   let page = 1;
   // the cover letter (Aconex LTR)
   if (opts.withLetter) {
@@ -703,7 +691,7 @@ export async function renderEarReport(type: PackType, values: PackValues, meta: 
     y += 16;
   });
   doc.switchToPage(doc.bufferedPageRange().count - 1);
-  finish(ctx, (i, n) => `Page ${i} of ${n}`);
+  finish(ctx);
   void page;
   return done;
 }
@@ -726,7 +714,7 @@ export async function renderIndexPage(type: PackType, meta: FormMeta, entries: {
   table(ctx, ["SECTION", "DESCRIPTION", "ATTACHED", "NOT APPLICABLE"], entries.map((e) => [`ANNEXURE ${e.no}`, e.title.toUpperCase(), e.attached ? "✓" : "", e.attached ? "" : "✓"]), [0.18, 0.58, 0.12, 0.12], { size: 8.5, align: ["left", "left", "center", "center"] });
   doc.y += 20;
   doc.fillColor(MUTED).font("Helvetica").fontSize(8).text("#CLASSIFICATION: INTERNAL SENSITIVE", M, doc.y, { width: TW, align: "center" });
-  finish(ctx, () => "");
+  finish(ctx);
   return done;
 }
 
@@ -804,7 +792,7 @@ export async function renderBudgetParticulars(type: PackType, values: PackValues
   }
   doc.y += 20;
   doc.fillColor(MUTED).font("Helvetica").fontSize(8).text("#CLASSIFICATION: INTERNAL SENSITIVE", M, doc.y, { width: TW, align: "center" });
-  finish(ctx, () => "");
+  finish(ctx);
   return done;
 }
 
@@ -827,7 +815,7 @@ export async function renderChangeLog(type: PackType, values: PackValues, meta: 
   table(ctx, ["Sr", "Description", "RFC", "PVO", "VO", "DVO", "PVO value (SAR)", "DVO value (SAR)"], [["", "Original Contract", "", "", "", "", sar(original), ""], ...body, ["", `This ${type.short}`, "", "", "", "", sar(thisValue), ""], ["", "Total", "", "", "", "", sar(original + totalPvo), sar(totalDvo)]], [0.05, 0.31, 0.09, 0.09, 0.09, 0.09, 0.14, 0.14], { size: 7, align: ["left", "left", "left", "left", "left", "left", "right", "right"], boldLast: true });
   doc.y += 16;
   doc.fillColor(MUTED).font("Helvetica").fontSize(8).text("Classification: Internal", M, doc.y, { width: TW, align: "center" });
-  finish(ctx, () => "");
+  finish(ctx);
   return done;
 }
 
@@ -847,6 +835,6 @@ export async function renderBasisPage(type: PackType, values: PackValues, meta: 
   doc.fillColor(MUTED).font("Helvetica").fontSize(8).text("The relevant pages of the Conditions of Contract follow, where attached.", M, doc.y);
   doc.y += 20;
   doc.text("#CLASSIFICATION: INTERNAL SENSITIVE", M, doc.y, { width: TW, align: "center" });
-  finish(ctx, () => "");
+  finish(ctx);
   return done;
 }

@@ -338,12 +338,16 @@ export async function rebuildValues(caseId: number, user: UserInfo): Promise<{ v
   const docs = listDocs(caseId);
   const base = autoValues(c.pack_type, c.programme_id, c.source_id, user);
   const values: PackValues = { ...base.values };
+  // the wording drafted for the pack stays with it (it is dropped by itself once its inputs change)
+  const prev = caseValues(c);
+  for (const k of Object.keys(prev)) if (k.startsWith("__narrative")) values[k] = prev[k];
   const sources: Record<string, string> = {};
   for (const k of Object.keys(values)) if (values[k]) sources[k] = c.source_id ? "register" : "project";
+  const EXTRA = ["acc_table", "cost_subject", "cost_scope", "instruction_ref", "instruction_text", "ei_no"];
   const apply = (r: Reading, keep: string[] = []) => {
     for (const [k, v] of Object.entries(r.values)) {
       if (!v || keep.includes(k)) continue;
-      if (k !== "acc_table" && k !== "cost_subject" && !t.fields.some((f) => f.key === k)) continue;
+      if (!EXTRA.includes(k) && !t.fields.some((f) => f.key === k)) continue;
       values[k] = v;
       sources[k] = r.sources[k];
     }
@@ -367,16 +371,21 @@ export async function rebuildValues(caseId: number, user: UserInfo): Promise<{ v
   };
   // 1. the template – the last approved document of the same kind: the one uploaded on this pack,
   //    or, when there is none, the PDF set as the category's template
+  //    The PDF set as the category's template (the last approved pack) is read first; a pack
+  //    uploaded on this case is read after it and overrides what it carries.
   let references = (await readAll(REFERENCE_SLOT)).filter((p) => p.length);
-  if (!references.length) {
+  {
     const tpl = getTemplate(t.key);
     const bytes = tpl && /\.pdf$/i.test(tpl.name) ? readTemplateBytes(tpl) : null;
-    if (bytes) references = [await positioned(bytes)];
+    if (bytes) {
+      const pages = await positioned(bytes);
+      if (pages.length) references = [pages, ...references];
+    }
   }
   for (const pages of references) {
     if (!pages.length) continue;
     // what names the earlier document itself is not carried over: its number, its date, its title and value are this pack's own
-    const own = ["pvo_no", "dvo_no", "rfa_no", "date", "title", "scope", "reason", "total_value", "dvo_value", "add", "omit", "cost_items", "rfc_ref", "eac_explanation", "letter_ref", "report_ref", "claim_no", "eot_no"];
+    const own = ["pvo_no", "dvo_no", "rfa_no", "date", "title", "scope", "reason", "total_value", "dvo_value", "add", "omit", "cost_items", "rfc_ref", "eac_explanation", "letter_ref", "report_ref", "claim_no", "eot_no", "emergency_circumstances", "instruction_ref", "description", "information_provided"];
     if (t.key === "pvo") {
       const ref = readReferencePvo(pages);
       apply(ref, own);
@@ -408,8 +417,20 @@ export async function rebuildValues(caseId: number, user: UserInfo): Promise<{ v
     }
     else if (t.key === "rfa") apply(readReferenceRfa(pages), own);
     else if (t.key === "eot_ear" || t.key === "cost_ear") apply(readReferenceEar(pages), own);
-    else apply(readReferencePvo(pages), own);
+    else {
+      const ref = readReferencePvo(pages);
+      apply(ref, own);
+      if (t.key === "vo" && !values.pvo_no && ref.values.pvo_no && /^\d+$/.test(ref.values.pvo_no)) {
+        values.pvo_no = String(Number(ref.values.pvo_no) + 1).padStart(3, "0");
+        sources.pvo_no = "previous EVO + 1";
+      }
+    }
   }
+  if (t.key === "vo" && values.pvo_no) {
+    if (!values.rfc_ref) values.rfc_ref = `Emergency VO No. ${values.pvo_no}`;
+    if (!values.instruction_ref) values.instruction_ref = `VO-${values.pvo_no}`;
+  }
+
   // 2. the approved PVO behind a DVO
   if (t.key === "dvo") for (const pages of await readAll("pvo")) if (pages.length) apply(readApprovedPvoForDvo(pages));
   // 3. the RFC (or the RFA details): the change itself
@@ -464,9 +485,26 @@ export async function rebuildValues(caseId: number, user: UserInfo): Promise<{ v
     if (!values.add && values.dvo_value) values.add = values.dvo_value;
     if (!values.description && values.dvo_no) values.description = `This ${values.dvo_no} confirms the change associated with the following instruction issued:\n1. Variation Order ${values.vo_no || "No. -"}${values.instruction_ref ? ` Ref: ${values.instruction_ref}` : ""} for ${values.title || c.title}.`;
   }
+  if (t.key === "vo" && !values.scope) {
+    // an EVO has no RFC behind it: the scope is what the ROM prices, as its subject and scope lines name it
+    const scope = [values.cost_scope, values.cost_subject].filter((x) => x && x !== values.title && !/rough order of magnitude|^rom\b|cost proposal|quotation|price proposal/i.test(x)).join("\n");
+    if (scope) {
+      values.scope = scope;
+      sources.scope = "cost assessment";
+    }
+  }
+  // the title: from the change itself, else the cost letter's scope or subject line
+  if (!values.title) {
+    const fallback = values.cost_scope || values.cost_subject || "";
+    if (fallback) {
+      values.title = fallback;
+      sources.title = sources.cost_scope || sources.cost_subject || "cost assessment";
+    }
+  }
   values.__sources = JSON.stringify(sources);
   const ref = t.key === "pvo" ? values.pvo_no || c.ref : t.key === "dvo" ? values.dvo_no || c.ref : t.key === "rfa" ? values.rfa_no || c.ref : c.ref;
-  const title = values.title || c.title;
+  const generic = !c.title || c.title === t.label || c.title === t.short;
+  const title = values.title || (generic ? "" : c.title) || c.title;
   db().prepare("UPDATE pack_cases SET values_json = ?, ref = ?, title = ?, updated_at = ?, updated_by = ? WHERE id = ?").run(JSON.stringify(values), String(ref ?? "").slice(0, 80), String(title ?? "").slice(0, 300), nowIso(), user.name, caseId);
   return { values, sources };
 }

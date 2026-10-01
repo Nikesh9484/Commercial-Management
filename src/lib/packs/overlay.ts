@@ -13,6 +13,7 @@ import path from "node:path";
 import fontkit from "@pdf-lib/fontkit";
 import { PDFDocument, PDFName, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 import { formatDate, formatMoney } from "../format";
+import { voDescription } from "./annexures";
 import { isLabel, readFills, readPositioned, type Cell, type Fill, type PosPage, type Row } from "./positioned";
 import type { PackValues } from "./shared";
 
@@ -474,6 +475,26 @@ const items = (v: unknown) =>
     return { ref: "", desc: l, omit: 0, add: 0 };
   });
 
+/** every Name / Position / Signature / Date row under a heading, written for this pack's people */
+function signatories(sh: Sheet, from: string | RegExp, to: (string | RegExp)[], names: string[], positions: string[]) {
+  const hit = sh.find(from);
+  if (!hit) return;
+  const rows = sh.pos.rows;
+  const start = sh.rowIndex(hit.row);
+  let n = 0;
+  let prev = hit.row;
+  for (let i = start + 1; i < rows.length; i++) {
+    const r = rows[i];
+    if (to.some((s) => r.cells.some((c) => isLabel(c.s, s)))) break;
+    if (r.cells.some((c) => /^name$/i.test(c.s)) && r.cells.some((c) => /^signature$/i.test(c.s))) {
+      const nameRow = rows[i - 1] && rows[i - 1] !== prev && rows[i - 1].y - r.y < 14 ? rows[i - 1] : { y: r.y + 6, cells: [] };
+      sh.person(nameRow, r, names[n] ?? "", positions[n] ?? "", sh.blockTop(prev), sh.blockBottom(r, rows[i + 1]));
+      n++;
+      prev = r;
+    }
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* PVO – RSG-CM-FRM-0013                                               */
 
@@ -484,7 +505,7 @@ export interface AccOverlayRow {
 
 export async function overlayPvo(refBytes: Buffer, v: PackValues, opts: { targetCategory?: string } = {}): Promise<Buffer | null> {
   const o = await open(refBytes, (pages) => {
-    const nos = pages.filter((p) => /RSG-CM-FRM-0013/i.test(pageText(p)) && /Proposed Variation Order \(PVO\)/i.test(pageText(p))).map((p) => p.no);
+    const nos = pages.filter((p) => /RSG-CM-FRM-0013/i.test(pageText(p)) && /Proposed Variation Order \(PVO\)|Emergency Variation Order Assessment/i.test(pageText(p))).map((p) => p.no);
     return nos.slice(0, 2);
   });
   if (!o) return null;
@@ -493,8 +514,9 @@ export async function overlayPvo(refBytes: Buffer, v: PackValues, opts: { target
   const orig = num(v.original_contract);
   const dvos = num(v.approved_dvos);
   const pvos = num(v.approved_pvos);
-  const current = num(v.current_revised) || orig + dvos;
-  const potential = num(v.potential_revised) || current + pvos + total;
+  // the reconciliation is worked out from its parts, so figures from different sources cannot disagree on the form
+  const current = orig ? orig + dvos : num(v.current_revised);
+  const potential = current + pvos + total;
   const other = num(v.other_contracts);
   if (s1) {
     const gen: [string, string | RegExp, string | undefined, (string | RegExp)[]][] = [
@@ -520,11 +542,12 @@ export async function overlayPvo(refBytes: Buffer, v: PackValues, opts: { target
     const eacLine = String(v.eac_explanation ?? "").trim() || (v.budget_line && v.budget_available ? `Current budget available under the construction budget on Hold - ${v.budget_line} = ${formatMoney(num(v.budget_available))}` : "");
     s1.block("Explain if the topic was included within the EAC", ["Root Cause for this change"], eacLine, { topGap: 4, bottomGap: 4 });
     if (v.root_cause) s1.replaceRight("Root Cause for this change", v.root_cause, { align: "center", bold: true, maxDx: 600 });
+    if (s1.find("Description of Emergency Circumstances")) s1.block("Description of Emergency Circumstances", ["Scope of works / services (brief)"], v.emergency_circumstances ?? "", { topGap: 4, bottomGap: 4 });
     s1.block("Scope of works / services (brief)", ["Contractual basis for variation entitlement", "b) Estimated Cost Impact"], v.scope ?? "", { firstBold: true });
     s1.block("Contractual basis for variation entitlement", ["b) Estimated Cost Impact", "Basis of ROM Estimate"], v.contractual_basis ?? "", { topGap: 4, bottomGap: 4 });
     // the items table: the rows between the column headings and the sub-total
     const header = s1.find(/^Reference$/);
-    const dataRows = s1.rowsBetween(/^Reference$/, /^Sub-Total$/).filter((r) => r.cells.length >= 1 && r.cells.every((c) => isNumeric(c.s) || c.x > 60));
+    const dataRows = s1.rowsBetween(/^Reference$/, /^Sub-Total$/).filter((r) => r.cells.length >= 1 && r.cells.every((c) => isNumeric(c.s) || c.x > 40));
     if (header && dataRows.length) {
       const H = header.row.cells;
       const col = (re: RegExp) => H.find((c) => re.test(c.s));
@@ -575,10 +598,10 @@ export async function overlayPvo(refBytes: Buffer, v: PackValues, opts: { target
     s1.replaceRight("Current Revised Contract Value", mny(current), { align: "right", bold: true });
     s1.replaceRight(/^Approved PVOs$/, mny(pvos), { align: "right" });
     s1.replaceRight(/^Approved PVOs$/, pct(pvos, orig), { last: true, align: "right" });
-    s1.replaceRight("This Proposed Variation Order (PVO)", mny(total), { align: "right", bold: true });
-    s1.replaceRight("This Proposed Variation Order (PVO)", pct(total, orig), { last: true, align: "right" });
-    s1.replaceRight("Potential Revised Contract Value (After this PVO)", mny(potential), { align: "right", bold: true });
-    s1.replaceRight("Potential Revised Contract Value (After this PVO)", pct(potential - orig, orig), { last: true, align: "right" });
+    s1.replaceRight(/^This (Proposed Variation Order \(PVO\)|Variation Order \(ROM\))$/, mny(total), { align: "right", bold: true });
+    s1.replaceRight(/^This (Proposed Variation Order \(PVO\)|Variation Order \(ROM\))$/, pct(total, orig), { last: true, align: "right" });
+    s1.replaceRight(/^Potential Revised Contract Value \(After this (PVO|VO)\)$/, mny(potential), { align: "right", bold: true });
+    s1.replaceRight(/^Potential Revised Contract Value \(After this (PVO|VO)\)$/, pct(potential - orig, orig), { last: true, align: "right" });
     s1.replaceRight("Overall 'Estimated Commercial Impact' due to this Change", mny(total + other), { last: true, align: "right", bold: true });
   }
   if (s2) {
@@ -650,28 +673,66 @@ export async function overlayPvo(refBytes: Buffer, v: PackValues, opts: { target
     s2.replaceRight("d) Estimated 'time impact' of this variation (Days)", String(impact), { align: "right" });
     s2.replaceRight("e) Other anticipated EOTs", String(others), { align: "right" });
     // signatories: every Name / Position / Signature / Date row under Prepared and Approved
-    const people = (from: string | RegExp, to: (string | RegExp)[], names: string[], positions: string[]) => {
-      const hit = s2.find(from);
-      if (!hit) return;
-      const rows = s2.pos.rows;
-      const start = s2.rowIndex(hit.row);
-      let n = 0;
-      let prev = hit.row;
-      for (let i = start + 1; i < rows.length; i++) {
-        const r = rows[i];
-        if (to.some((s) => r.cells.some((c) => isLabel(c.s, s)))) break;
-        if (r.cells.some((c) => /^name$/i.test(c.s)) && r.cells.some((c) => /^signature$/i.test(c.s))) {
-          const nameRow = rows[i - 1] && rows[i - 1] !== prev && rows[i - 1].y - r.y < 14 ? rows[i - 1] : { y: r.y + 6, cells: [] };
-          s2.person(nameRow, r, names[n] ?? "", positions[n] ?? "", s2.blockTop(prev), s2.blockBottom(r, rows[i + 1]));
-          n++;
-          prev = r;
-        }
-      }
-    };
-    people("Prepared/Initiated By", ["Checked by", "Approved by"], lines(v.prepared_by), lines(v.prepared_position));
-    people("Checked by (Pre-Approval)", ["Approved by"], lines(v.checked_by), lines(v.checked_position));
-    people(/^Approved by/, [/^RSG-CM-FRM/], lines(v.approved_by), lines(v.approved_position));
+    signatories(s2, "Prepared/Initiated By", ["Checked by", "Approved by", "Review & Approval"], lines(v.prepared_by), lines(v.prepared_position));
+    signatories(s2, "Checked by (Pre-Approval)", ["Approved by"], lines(v.checked_by), lines(v.checked_position));
+    signatories(s2, /^Approved by/, [/^RSG-CM-FRM/], lines(v.approved_by), lines(v.approved_position));
+    signatories(s2, /^Review & Approval/, [/^RSG-CM-FRM/], lines(v.approved_by), lines(v.approved_position));
   }
+  return Buffer.from(await o.l.pdf.save({ useObjectStreams: true }));
+}
+
+/* ------------------------------------------------------------------ */
+/* the Variation Order issued under the Emergency Protocol – RSG-CM-FRM-0034 */
+
+/** The Variation Order page of the last issued EVO pack with this pack's particulars, description, documents and representatives. */
+export async function overlayVoForm(refBytes: Buffer, v: PackValues, opts: { projectCode?: string } = {}): Promise<Buffer | null> {
+  const o = await open(refBytes, (pages) => {
+    const p = pages.find((x) => /Variation Order Form/i.test(pageText(x)) && /RSG-CM-FRM-0034/i.test(pageText(x)));
+    return p ? [p.no] : [];
+  });
+  if (!o) return null;
+  const s = o.sheets[0];
+  const no = String(v.pvo_no ?? v.vo_no ?? "").replace(/\D/g, "").padStart(3, "0");
+  s.replaceRight(/^Variation Order No\.?$/, no.replace(/^0+(\d)/, "$1"), { notLabels: [/^Date$/], align: "left" });
+  if (v.date) s.replaceRight(/^Date$/, dmy(String(v.date)), { align: "left" });
+  const projectLine = [v.program_name, v.development_name].filter(Boolean).join(" - ") || String(v.project_name ?? "");
+  if (projectLine) s.replaceRight(/^Project Name$/, projectLine, { notLabels: [/^Project Code$/], align: "left" });
+  if (opts.projectCode) s.replaceRight(/^Project Code$/, opts.projectCode, { align: "left" });
+  if (v.contract_title || v.project_name) s.replaceRight(/^Contract Name$/, String(v.contract_title || v.project_name), { notLabels: [/^Contract No\.?$/], align: "left" });
+  if (v.contract_no) s.replaceRight(/^Contract No\.?$/, String(v.contract_no), { align: "left" });
+  if (v.works_package) s.replaceRight(/^Works Package$/, String(v.works_package), { notLabels: [/^Contractor\/Consultant$/], align: "left" });
+  if (v.contractor) s.replaceRight(/^Contractor\/Consultant$/, String(v.contractor), { align: "left" });
+  s.block(/^Variation Title:?$/, [/^Instruction Reference$/], String(v.title ?? ""), { topGap: 3, bottomGap: 3 });
+  const ref = s.pos.rows.flatMap((r) => r.cells).find((c) => /^VO-\d+/i.test(c.s.trim()));
+  if (ref) s.replaceCell(ref, `VO-${no}`, { align: "left", bold: true });
+  const desc = s.find(/^Description$/);
+  if (desc) s.block(/^Description$/, [/^Time Impact \(Contract Level\)$/], voDescription(v), { left: desc.cell.x, topGap: 6, bottomGap: 6 });
+  const impact = Math.round(num(v.time_impact));
+  s.replaceRight(/^Estimated 'time impact' of this variation \(Days\)$/, impact ? String(impact) : "TBA", { align: "left" });
+  // the documents provided with the Variation Order: the rows of the table under its headings
+  const head = s.find(/^Document Ref\. No\.$/);
+  if (head) {
+    const stop = s.find(/^Approved and Issued by/);
+    const band = s.pos.rows.filter((r) => r.y < head.row.y - 2 && (!stop || r.y > stop.row.y + 12));
+    for (const r of band) for (const c of r.cells) s.replaceCell(c, "", { size: c.h });
+    const cols = head.row.cells;
+    const titleX = cols.find((c) => /Document Title/i.test(c.s))?.x ?? head.cell.x + 108;
+    const revC = cols.find((c) => /Rev\. No/i.test(c.s));
+    const dateC = cols.find((c) => /Rev\. Date/i.test(c.s));
+    const size = head.cell.h || 7;
+    const step = size * 1.75;
+    const docsOf = lines(v.information_provided).map((l) => l.split(/\s+[–-]\s+/));
+    const rows: string[][] = docsOf.length ? docsOf : [["Appendix 01", v.title ? `Schedule to Variation Order No. ${no} - ${v.title}` : "", "0", v.date ? dmy(String(v.date)) : ""]];
+    rows.slice(0, 5).forEach((parts, i) => {
+      const y = head.row.y - step * (i + 1);
+      if (parts[0]) s.text(parts[0], head.cell.x, y, size, { maxWidth: titleX - head.cell.x - 4, cell: head.cell });
+      if (parts[1]) s.text(parts[1], titleX, y, size, { maxWidth: (revC ? revC.x : s.width - 120) - titleX - 4, cell: head.cell });
+      if (revC && parts[2]) s.text(parts[2], revC.x + revC.w / 2, y, size, { align: "center", cell: head.cell });
+      if (dateC && parts[3]) s.text(parts[3], dateC.x + dateC.w / 2, y, size, { align: "center", cell: head.cell });
+    });
+  }
+  signatories(s, /^Approved and Issued by/, [/^Received by/], [String(v.employer_rep ?? "")], [String(v.employer_rep_position || "Employer's Representative")]);
+  signatories(s, /^Received by/, [/^Variation Order Form \(RSG/, /^Page \d/], [String(v.contractor_rep ?? "")], [String(v.contractor_rep_position || "Contractor's Representative")]);
   return Buffer.from(await o.l.pdf.save({ useObjectStreams: true }));
 }
 

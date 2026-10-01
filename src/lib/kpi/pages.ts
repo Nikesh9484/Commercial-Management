@@ -33,6 +33,7 @@ export function classifyPage(raw: string): PageKind {
   if (/mail type\s*(variation order|employers? instruction|transmittal|general correspondence|letter)/.test(t)) return "mail";
   if (/mail type\s*acknowledgement/.test(t)) return "acknowledgement";
   if (/determination of variation order|rsg-cm-frm-0014|rsg-cm-frm-0027|rgs-cm-frm-0014/.test(t)) return "dvo_form";
+  if (/index of annexures/.test(t)) return "other";
   if (/proposed variation order \(pvo\)|emergency variation order assessment|rsg-cm-frm-0013.*page \d of \d.*variation/.test(t)) return "pvo_form";
   if (/variation order form/.test(t)) return "vo_form";
   if (/employer'?s? instruction \(ei\)|employer instruction \(ei\)|rsg-cm-frm-0007|rsg-cm-frm-0003/.test(t)) return "ei_form";

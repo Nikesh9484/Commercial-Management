@@ -222,14 +222,31 @@ function changeValues(type: PackTypeKey, programmeId: number, id: number, user: 
       v.eac_included = "Yes";
       break;
     }
-    case "vo":
+    case "vo": {
       ref = s(c.vo_ref) || s(c.item_no);
-      v.vo_value = money(voValue);
-      v.instruction_ref = s(c.vo_aconex_ref) || s(c.ei_ref);
-      v.instruction = title;
-      v.clauses = "Sub-Clause 13.1 [Employer's Right to Vary] & 3.4 [Employer's Instruction]";
-      v.date = s(c.vo_date) || v.date;
+      const no = (s(c.vo_ref).match(/\d+/)?.[0] ?? "").padStart(3, "0");
+      if (no !== "000") v.pvo_no = no;
+      v.add = money(voValue);
+      v.total_value = money(voValue);
+      v.cost_items = voValue === null ? "" : `(a) – ${title} – 0 – ${money(voValue)}`;
+      v.rfc_ref = no !== "000" ? `Emergency VO No. ${no}` : "";
+      v.instruction_ref = no !== "000" ? `VO-${no}` : "";
+      v.clauses = "Contract Clause 12 [Variations and Adjustments]";
+      v.date = s(c.vo_date) || s(c.ei_date) || v.date;
+      Object.assign(v, budgetPosition(programmeId, n(c.cost_line_id), n(c.asset_id), voValue));
+      const log = changeLogRows(programmeId, n(c.cost_line_id), n(c.contractor_id), id);
+      const approvedDvos = log.reduce((t, r) => t + (r.dvo && r.dvoValue !== null ? r.dvoValue : 0), 0);
+      const pendingPvos = log.reduce((t, r) => t + (r.pvo && !r.dvo && !r.thisOne && r.pvoValue !== null ? r.pvoValue : 0), 0);
+      v.original_contract = money(contractPrice);
+      v.current_revised = contractPrice === null ? "" : money(contractPrice + approvedDvos);
+      v.approved_dvos = v.approved_dvos || money(approvedDvos);
+      v.approved_pvos = money(pendingPvos);
+      v.potential_revised = contractPrice === null ? "" : money(contractPrice + approvedDvos + pendingPvos + (voValue ?? 0));
+      v.original_completion = s(sur.contract?.original_completion_date);
+      v.approved_eot = sur.contract?.eot_granted_days === null || sur.contract?.eot_granted_days === undefined ? "" : String(sur.contract.eot_granted_days);
+      v.current_completion = s(sur.contract?.revised_completion_date) || s(sur.contract?.original_completion_date);
       break;
+    }
     case "dvo":
       ref = s(c.dvo_avi_ref) || s(c.dvo_ref) || s(c.item_no);
       v.add = money(dvoValue);

@@ -5,9 +5,11 @@ import type { UserInfo } from "../registers/types";
 import { buildDocx, buildEarDocx, fillTemplate } from "./word";
 import { fillExcelTemplate, isExcelTemplate } from "./excel";
 import { buildCompiledPack, renderFormPdf, safeFileName, type FormMeta, type PackPart, type PartItem } from "./pdf";
-import { renderBasisPage, renderBudgetParticulars, renderChangeLog, renderDraftVo, renderDvoForm, renderEarReport, renderIndexPage, renderPvoForm, renderRfaForm, type AccRow } from "./forms";
+import { renderBudgetParticulars, renderChangeLog, renderDvoForm, renderEarReport, renderPvoForm, renderRfaForm, type AccRow } from "./forms";
+import { renderAppendix01, renderAssessment, renderBudgetParticularsNova, renderChangeLogNova, renderContractualBasis, renderEmployerLetter, renderExecutiveSummary, renderVoForm, renderVoFormEmergency } from "./annexures";
+import { withNarrative } from "./narrative";
 import { changeLogRows, type ChangeLogRow } from "./data";
-import { overlayDvo, overlayPvo, overlayRfa } from "./overlay";
+import { overlayDvo, overlayPvo, overlayRfa, overlayVoForm } from "./overlay";
 import { packParts, pageSpec, positioned } from "./extract";
 import { caseValues, getTemplate, listDocs, readDocBytes, readTemplateBytes, type PackCase } from "./store";
 import { ValidationError } from "../registers/engine";
@@ -69,15 +71,24 @@ function logRows(c: PackCase): ChangeLogRow[] {
   return [];
 }
 
-/** The uploaded template of the pack: the last approved document of the same kind, as a PDF. */
-function referenceBytes(c: PackCase, t: PackType): Buffer | null {
+/**
+ * The approved documents whose pages can carry this pack: the one uploaded on the case first, then the
+ * PDF set as the category's template. The first that holds the form pages is used.
+ */
+function referenceCandidates(c: PackCase, t: PackType): Buffer[] {
+  const out: Buffer[] = [];
   const docs = listDocs(c.id).filter((d) => /\.pdf$/i.test(d.name));
   const inSlot = docs.find((d) => d.slot === REFERENCE_SLOT) ?? (t.key === "dvo" ? undefined : docs.find((d) => d.slot === "pvo"));
   const d = inSlot ?? docs.find((d) => (t.key === "pvo" && /pvo/i.test(d.name) && !/dvo/i.test(d.name)) || (t.key === "dvo" && /dvo/i.test(d.name)) || (t.key === "rfa" && /rfa/i.test(d.name)));
-  if (d) return readDocBytes(d);
-  // nothing on the pack itself: the PDF set as the category's template, when there is one
+  const b = d ? readDocBytes(d) : null;
+  if (b) out.push(b);
   const tpl = getTemplate(t.key);
-  return tpl && /\.pdf$/i.test(tpl.name) ? readTemplateBytes(tpl) : null;
+  const tb = tpl && /\.pdf$/i.test(tpl.name) ? readTemplateBytes(tpl) : null;
+  if (tb) out.push(tb);
+  return out;
+}
+function referenceBytes(c: PackCase, t: PackType): Buffer | null {
+  return referenceCandidates(c, t)[0] ?? null;
 }
 
 /** The category of the cost line behind the pack (the ACC table row this PVO sits on). */
@@ -98,11 +109,11 @@ function lineCategory(c: PackCase): string {
  * by the dashboard in the RSG layout.
  */
 export async function renderDocumentPdf(c: PackCase, t: PackType, values: PackValues, meta: FormMeta): Promise<Buffer> {
-  const ref = ["pvo", "dvo", "rfa"].includes(t.key) ? referenceBytes(c, t) : null;
-  if (ref) {
+  if (t.key === "vo") values = await withNarrative(c, values);
+  for (const ref of ["pvo", "vo", "dvo", "rfa"].includes(t.key) ? referenceCandidates(c, t) : []) {
     try {
       const out =
-        t.key === "pvo"
+        t.key === "pvo" || t.key === "vo"
           ? await overlayPvo(ref, values, { targetCategory: lineCategory(c) })
           : t.key === "dvo"
             ? await overlayDvo(ref, values)
@@ -115,11 +126,12 @@ export async function renderDocumentPdf(c: PackCase, t: PackType, values: PackVa
               );
       if (out) return out;
     } catch (e) {
-      console.error("pack overlay failed, drawing the form instead:", e);
+      console.error("pack overlay failed, trying the next template:", e);
     }
   }
   switch (t.key) {
     case "pvo":
+    case "vo":
       return renderPvoForm(t, values, meta, { acc: accRows(c, values), changeLog: logRows(c) });
     case "dvo":
       return renderDvoForm(t, values, meta);
@@ -165,41 +177,89 @@ async function costAndDrawings(docs: PackDoc[], carrierSlots: string[], carrierL
 }
 const gen = (name: string, bytes: Buffer): PartItem => ({ name, bytes, mime: "application/pdf" });
 
+/** The red line under the Annexure 2 divider: the approved instruction or request behind the change. */
+function instructionNote(values: PackValues): string {
+  const ref = String(values.instruction_ref || values.rfc_ref || "").trim();
+  const ei = String(values.ei_no ?? "").replace(/\D/g, "");
+  if (/VOR-CM|^Emergency VO/i.test(ref)) return `APPROVED Emergency Variation Order${ref.match(/\d{3,4}$/) ? ` No ${ref.match(/\d{3,4}$/)![0].replace(/^0+(\d\d)/, "$1")}` : ""} Ref: ${ref}`;
+  if (/EMI|-EI-/i.test(ref) || ei) return `APPROVED Employer's Instruction (EI)${ei ? ` No ${ei.padStart(3, "0")}` : ""}${ref ? ` Ref: ${ref}` : ""}`;
+  if (/RFA/i.test(ref)) return `APPROVED Request for Approval (RFA) Ref: ${ref}`;
+  return ref ? `APPROVED Request for Change (RFC) Ref: ${ref}` : "";
+}
+
+interface Assembly {
+  front: { name: string; bytes: Buffer }[];
+  parts: PackPart[];
+  index: { title: string } | null;
+}
+
 /** The pack of one category: what opens it and its annexures or parts, in the order the approved packs follow. */
-async function assemble(c: PackCase, t: PackType, values: PackValues, meta: FormMeta, docs: PackDoc[], form: Buffer): Promise<{ front: { name: string; bytes: Buffer }[]; parts: PackPart[] }> {
+async function assemble(c: PackCase, t: PackType, values: PackValues, meta: FormMeta, docs: PackDoc[], form: Buffer): Promise<Assembly> {
   const others: PackPart[] = slotsFor(t, Number(c.extra_slots ?? 0))
     .filter((s) => s.key.startsWith("other_"))
     .map((s) => ({ no: 0, label: s.label, hint: s.hint, style: "part" as const, items: itemsOf(docs, s.key) }))
     .filter((p) => p.items.length);
   const number = (parts: PackPart[], from: number) => parts.map((p, i) => ({ ...p, no: from + i }));
   if (t.key === "pvo") {
+    const v = await withNarrative(c, values);
     const ann: PackPart[] = [
-      { no: 1, label: "Draft Variation Order (VO) – to be signed by the ER upon approval of the PVO", hint: "The Employer's Instruction letter and the Variation Order form, drafted from this PVO", style: "annexure", items: [gen("Draft VO and Employer's Instruction letter", await renderDraftVo(t, values, meta))] },
-      { no: 2, label: "Change assessment pack", hint: "The Request for Change and the revise-and-resubmit updates", style: "annexure", items: [...itemsOf(docs, "rfc"), ...itemsOf(docs, "resubmit")] },
-      { no: 3, label: "Contractual basis for variation entitlement", hint: "The clause relied on, with the contract pages where attached", style: "annexure", items: [gen("Contractual basis", await renderBasisPage(t, values, meta))] },
-      { no: 4, label: "Particulars of 'estimated cost & time impact'", hint: "The cost proposal and the drawings – uploaded, or the pages inside the RFC / RFA", style: "annexure", items: await costAndDrawings(docs, ["rfc"], "RFC / RFA") },
-      { no: 5, label: "Budget particulars / ACC cost worksheet", hint: "Where the budget comes from and where it goes", style: "annexure", items: [gen("Budget particulars", await renderBudgetParticulars(t, values, meta))] },
-      { no: 6, label: "Change log", hint: "Every change on the contract with its RFC, PVO, VO and DVO", style: "annexure", items: [gen("Change log", await renderChangeLog(t, values, meta, logRows(c)))] },
+      {
+        no: 1,
+        label: "DRAFT VARIATION ORDER (VO) - To be signed by the ER upon approval of the PVO",
+        hint: "The Employer's letter, the Variation Order form and its Appendix 01, drafted from this PVO",
+        style: "annexure",
+        items: [gen("Employer's letter – Variation Order", await renderEmployerLetter(v)), gen("Variation Order (AMA-CM-FRM-0013)", await renderVoForm(v)), gen("Appendix 01 – particulars of the Variation", await renderAppendix01(v))],
+      },
+      {
+        no: 2,
+        label: "CHANGE ASSESSMENT PACK",
+        hint: "The executive summary, the approved instruction or request, and the revise-and-resubmit updates",
+        style: "annexure",
+        note: instructionNote(v),
+        items: [gen("Executive summary", await renderExecutiveSummary(v)), ...itemsOf(docs, "rfc"), ...itemsOf(docs, "resubmit")],
+      },
+      { no: 3, label: "CONTRACTUAL BASIS FOR VARIATION ENTITLEMENT", hint: "The clauses relied on and how each applies", style: "annexure", items: [gen("Contractual basis", await renderContractualBasis(v))] },
+      { no: 4, label: "PARTICULARS OF 'ESTIMATED COST & TIME IMPACT'", hint: "The Employer's assessment, the cost proposal and the drawings – uploaded, or the pages inside the RFC / RFA", style: "annexure", items: [gen("Employer's assessment of cost and time", await renderAssessment(v)), ...(await costAndDrawings(docs, ["rfc"], "RFC / RFA"))] },
+      { no: 5, label: "BUDGET PARTICULARS / ACC COST WORKSHEET", hint: "Where the budget comes from and where it goes", style: "annexure", items: [gen("Budget particulars", await renderBudgetParticularsNova(v))] },
+      { no: 6, label: "CHANGE LOG", hint: "Every change on the contract with its RFC, PVO, VO and DVO", style: "annexure", items: [gen("Change log", await renderChangeLogNova(v, logRows(c)))] },
     ];
-    const index = await renderIndexPage(t, meta, ann.map((a) => ({ no: a.no, title: a.label, attached: a.items.length > 0 })), values);
-    return { front: [{ name: "PVO form (RSG-CM-FRM-0013)", bytes: form }, { name: "Index of annexures", bytes: index }], parts: [...ann, ...number(others, 7)] };
+    return { front: [{ name: "PVO form (RSG-CM-FRM-0013)", bytes: form }], parts: [...ann, ...number(others, 7)], index: { title: "PROPOSED VARIATION ORDER (PVO)" } };
   }
   if (t.key === "dvo") {
     const ann: PackPart[] = [
-      { no: 1, label: "Approved PVO & VO – cover page + WF approvals only", hint: "The approved PVO with its workflow approvals, and the revise-and-resubmit updates", style: "annexure", items: [...itemsOf(docs, "pvo"), ...itemsOf(docs, "resubmit")] },
-      { no: 2, label: "Cost impact – Employer's assessment and determination", hint: "The cost proposal and the drawings behind the determined value – uploaded, or the pages inside the approved PVO pack", style: "annexure", items: await costAndDrawings(docs, ["pvo"], "approved PVO pack") },
-      { no: 3, label: "Budget particulars", hint: "Where the budget comes from and where it goes", style: "annexure", items: [gen("Budget particulars", await renderBudgetParticulars(t, values, meta))] },
-      { no: 4, label: "Change log", hint: "Every change on the contract with its RFC, PVO, VO and DVO", style: "annexure", items: [gen("Change log", await renderChangeLog(t, values, meta, logRows(c)))] },
+      { no: 1, label: "APPROVED PVO & VO – COVER PAGE + WF APPROVALS ONLY", hint: "The approved PVO with its workflow approvals, and the revise-and-resubmit updates", style: "annexure", items: [...itemsOf(docs, "pvo"), ...itemsOf(docs, "resubmit")] },
+      { no: 2, label: "COST IMPACT – EMPLOYER'S ASSESSMENT AND DETERMINATION", hint: "The cost proposal and the drawings behind the determined value – uploaded, or the pages inside the approved PVO pack", style: "annexure", items: await costAndDrawings(docs, ["pvo"], "approved PVO pack") },
+      { no: 3, label: "BUDGET PARTICULARS", hint: "Where the budget comes from and where it goes", style: "annexure", items: [gen("Budget particulars", await renderBudgetParticulars(t, values, meta))] },
+      { no: 4, label: "CHANGE LOG", hint: "Every change on the contract with its RFC, PVO, VO and DVO", style: "annexure", items: [gen("Change log", await renderChangeLog(t, values, meta, logRows(c)))] },
     ];
-    const index = await renderIndexPage(t, meta, ann.map((a) => ({ no: a.no, title: a.label, attached: a.items.length > 0 })), values);
-    return { front: [{ name: "PVO to DVO movement summary, DVO form (RSG-CM-FRM-0014) and review & recommendation (RSG-CM-FRM-0027)", bytes: form }, { name: "Index of annexures", bytes: index }], parts: [...ann, ...number(others, 5)] };
+    return { front: [{ name: "PVO to DVO movement summary, DVO form (RSG-CM-FRM-0014) and review & recommendation (RSG-CM-FRM-0027)", bytes: form }], parts: [...ann, ...number(others, 5)], index: { title: "DETERMINED VARIATION ORDER (DVO)" } };
+  }
+  if (t.key === "vo") {
+    values = await withNarrative(c, values);
+    // the issued EVO packs are one run: the assessment form, the ROM and what supports it, the Employer's letter, the Variation Order, the drawings
+    let voPage: Buffer | null = null;
+    for (const ref of referenceCandidates(c, t)) {
+      try {
+        voPage = await overlayVoForm(ref, values, { projectCode: meta.programme.code });
+      } catch (e) {
+        console.error("VO page overlay failed, trying the next template:", e);
+      }
+      if (voPage) break;
+    }
+    const parts: PackPart[] = [
+      { no: 1, label: "ROM / cost proposal and supporting documents", hint: "", style: "part", plain: true, items: [...itemsOf(docs, "cost"), ...itemsOf(docs, "supporting")] },
+      { no: 2, label: "Employer's letter", hint: "", style: "part", plain: true, items: [gen("Employer's letter – Variation Order", await renderEmployerLetter(values, { evo: true }))] },
+      { no: 3, label: "Variation Order", hint: "", style: "part", plain: true, items: [gen("Variation Order (RSG-CM-FRM-0034)", voPage ?? (await renderVoFormEmergency(values, meta.programme.code)))] },
+      { no: 4, label: "Drawings", hint: "", style: "part", plain: true, items: itemsOf(docs, "drawings") },
+    ];
+    return { front: [{ name: "Emergency Variation Order Assessment form", bytes: form }], parts: [...parts, ...number(others, 5).map((p) => ({ ...p, plain: true }))], index: null };
   }
   if (t.key === "rfa") {
     const parts: PackPart[] = [
       { no: 1, label: "Details of the RFA", hint: "The brief, the options and the background papers", style: "part", items: itemsOf(docs, "details") },
       { no: 2, label: "Cost details", hint: "The estimate, the funding agreement or the budget position", style: "part", items: itemsOf(docs, "cost") },
     ];
-    return { front: [{ name: "RFA form (RSG-PR-FRM-0004)", bytes: form }], parts: [...parts, ...number(others, 3)] };
+    return { front: [{ name: "RFA form (RSG-PR-FRM-0004)", bytes: form }], parts: [...parts, ...number(others, 3)], index: null };
   }
   if (t.key === "eot_ear" || t.key === "cost_ear") {
     const parts: PackPart[] = [
@@ -207,13 +267,13 @@ async function assemble(c: PackCase, t: PackType, values: PackValues, meta: Form
       { no: 2, label: "Previous assessments and awards", hint: "Earlier assessments or awards on this contract", style: "part", items: itemsOf(docs, "previous") },
       { no: 3, label: "Reference from another asset or package", hint: "A reference from another contract, for consistency", style: "part", items: itemsOf(docs, "other_asset") },
     ];
-    return { front: [{ name: "Cover letter and Employer's Assessment Report", bytes: form }], parts: [...parts, ...number(others, 4)] };
+    return { front: [{ name: "Cover letter and Employer's Assessment Report", bytes: form }], parts: [...parts, ...number(others, 4)], index: null };
   }
   // RFC, VO, Stage 2: the form, then every slot as a numbered part
   const parts: PackPart[] = slotsFor(t, Number(c.extra_slots ?? 0))
     .filter((s) => s.key !== REFERENCE_SLOT)
     .map((s) => ({ no: s.no, label: s.label, hint: s.hint, style: "part" as const, items: itemsOf(docs, s.key) }));
-  return { front: [{ name: `${t.short} form`, bytes: form }], parts };
+  return { front: [{ name: `${t.short} form`, bytes: form }], parts, index: null };
 }
 
 export async function renderOutput(c: PackCase, format: OutputFormat, user: UserInfo): Promise<{ bytes: Buffer; fileName: string; mime: string; note: string }> {
@@ -240,7 +300,7 @@ export async function renderOutput(c: PackCase, format: OutputFormat, user: User
   const form = await renderDocumentPdf(c, t, values, meta);
   if (format === "pdf") return { bytes: form, fileName: safeFileName(base, "pdf"), mime: "application/pdf", note: referenceBytes(c, t) ? "written onto the uploaded template's form pages" : "document drawn by the dashboard in the RSG layout" };
   const docs = listDocs(c.id).filter((d) => d.slot !== REFERENCE_SLOT);
-  const { front, parts } = await assemble(c, t, values, meta, docs, form);
-  const bytes = await buildCompiledPack({ type: t, values, meta, fileName: base, front, parts });
+  const { front, parts, index } = await assemble(c, t, values, meta, docs, form);
+  const bytes = await buildCompiledPack({ type: t, values, meta, fileName: base, front, parts, index, references: referenceCandidates(c, t) });
   return { bytes, fileName: safeFileName(`${base} - Pack`, "pdf"), mime: "application/pdf", note: `${docs.length} supporting documents in ${parts.filter((p) => p.items.length).length} parts` };
 }

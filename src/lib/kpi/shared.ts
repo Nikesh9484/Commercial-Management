@@ -60,9 +60,9 @@ export const KPI_SECTIONS = ["dvo_approval", "dvo_front", "pvo_vo_approval", "pv
 export type KpiSection = (typeof KPI_SECTIONS)[number];
 export const KPI_SECTION_LABEL: Record<KpiSection, string> = {
   dvo_approval: "DVO – Aconex approval",
-  dvo_front: "DVO – front page",
+  dvo_front: "DVO",
   pvo_vo_approval: "PVO and VO – Aconex approval",
-  pvo_vo_front: "PVO and VO – front pages",
+  pvo_vo_front: "PVO and VO",
   vo_issued: "VO issued – Aconex reference",
   vo_letter: "Letter + VO issued",
 };

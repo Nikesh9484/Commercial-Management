@@ -66,6 +66,7 @@ interface XRow {
 interface XSheet {
   path: string;
   name: string;
+  hidden: boolean;
   xml: string;
   rows: Map<number, XRow>;
   /** merged ranges: top-left ref -> {r1,c1,r2,c2} */
@@ -84,6 +85,7 @@ async function readWorkbook(zip: JSZip): Promise<{ sheets: XSheet[]; strings: st
   if (ssXml) for (const si of ssXml.match(/<si>[\s\S]*?<\/si>/g) ?? []) strings.push(unesc((si.match(/<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/g) ?? []).map((t) => t.replace(/^<t(?:\s[^>]*)?>|<\/t>$/g, "")).join("")));
   const sheets: XSheet[] = [];
   for (const m of wbXml.matchAll(/<sheet\s[^>]*?name="([^"]+)"[^>]*?r:id="([^"]+)"[^>]*\/?>/g)) {
+    const hidden = /\sstate="(hidden|veryHidden)"/.test(m[0]);
     const target = rels.get(m[2]);
     if (!target) continue;
     const path = target.startsWith("/") ? target.slice(1) : `xl/${target.replace(/^\.\//, "")}`;
@@ -122,7 +124,7 @@ async function readWorkbook(zip: JSZip): Promise<{ sheets: XSheet[]; strings: st
       const b = parseRef(mm[2]);
       merges.push({ r1: a.r, c1: a.c, r2: b.r, c2: b.c });
     }
-    sheets.push({ path, name: unesc(m[1]), xml, rows, merges });
+    sheets.push({ path, name: unesc(m[1]), hidden, xml, rows, merges });
   }
   return { sheets, strings };
 }
@@ -139,7 +141,6 @@ const rightOf = (s: XSheet, r: number, c: number) => (mergeAt(s, r, c)?.c2 ?? c)
 /** the row just under the range the cell belongs to */
 const below = (s: XSheet, r: number, c: number) => (mergeAt(s, r, c)?.r2 ?? r) + 1;
 
-const isBlank = (t: string) => !t.replace(/[\s.…_\-–—:]/g, "");
 /** a cell whose wording is a heading or a label of the form, not a value */
 function looksLikeLabel(type: PackType, t: string): boolean {
   const s = t.trim();
@@ -211,6 +212,8 @@ function plan(type: PackType, sheets: XSheet[], values: PackValues | null): { ed
   const placeholders = new Set<string>();
   const taken = new Set<string>();
   const byKey = new Map(type.fields.map((f) => [f.key, f]));
+  /** fields already placed beside their first label: a later cell with the same wording (a column heading, a legend) is left alone */
+  const placed = new Set<string>();
   const put = (sheet: XSheet, r: number, c: number, value: string | number) => {
     const a = anchor(sheet, r, c);
     const key = `${sheet.path}!${a.r}:${a.c}`;
@@ -224,8 +227,16 @@ function plan(type: PackType, sheets: XSheet[], values: PackValues | null): { ed
   const valueOf = (f: PackField, target: XCell | undefined) => (values ? cellValue(f, values[f.key] ?? "", target) : "");
 
   for (const sheet of sheets) {
+    if (sheet.hidden) continue;
     const rowNos = [...sheet.rows.keys()].sort((a, b) => a - b);
     const cells = rowNos.flatMap((r) => sheet.rows.get(r)!.cells);
+    // a row of three or more labels is a table heading, not a run of label / value pairs
+    const headerRows = new Set(
+      rowNos.filter((r) => {
+        const ls = sheet.rows.get(r)!.cells.filter((c) => looksLikeLabel(type, c.text) && c.text.trim().length < 60);
+        return ls.length >= 3 && !ls.some((c) => /:$/.test(c.text.trim()));
+      }),
+    );
     // 1. {{placeholders}}
     for (const cell of cells) {
       if (!/\{\{/.test(cell.text)) continue;
@@ -263,11 +274,19 @@ function plan(type: PackType, sheets: XSheet[], values: PackValues | null): { ed
         const its = items(values.cost_items);
         dataRows.forEach((r, i) => {
           const it = its[i];
-          if (cDesc) put(sheet, r, cDesc, it?.desc ?? "");
-          if (cRef) put(sheet, r, cRef, it?.ref ?? (i === 0 ? String(values.instruction_ref ?? "") : ""));
-          if (cOmit) put(sheet, r, cOmit, it ? (it.omit || "") : "");
-          if (cAdd) put(sheet, r, cAdd, it ? (it.add || "") : "");
-          if (cCur && it) put(sheet, r, cCur, "SAR");
+          const held = (c: number | undefined) => (c ? cellAt(sheet, r, c) : undefined);
+          if (it) {
+            if (cDesc) put(sheet, r, cDesc, it.desc);
+            if (cRef) put(sheet, r, cRef, it.ref || held(cRef)?.text.trim() || String(i + 1));
+            if (cOmit) put(sheet, r, cOmit, it.omit || (held(cOmit)?.numeric ? 0 : held(cOmit)?.text.trim() || "-"));
+            if (cAdd) put(sheet, r, cAdd, it.add || (held(cAdd)?.numeric ? 0 : held(cAdd)?.text.trim() || "-"));
+            if (cCur) put(sheet, r, cCur, "SAR");
+          } else if (held(cDesc)?.text.trim()) {
+            // a row the previous pack used and this one does not: emptied, its dashes kept
+            if (cDesc) put(sheet, r, cDesc, "");
+            if (cOmit && held(cOmit)?.numeric) put(sheet, r, cOmit, "-");
+            if (cAdd && held(cAdd)?.numeric) put(sheet, r, cAdd, "-");
+          }
         });
       }
     }
@@ -342,12 +361,41 @@ function plan(type: PackType, sheets: XSheet[], values: PackValues | null): { ed
       put(sheet, nameAt.r, nameAt.c, name);
       if (posAt) put(sheet, posAt.r, posAt.c, position);
     }
+    // 3b. the budget transfer table: the From (budget hold) and To (this contract) rows, by column heading
+    const trHeader = rowNos.find((r) => {
+      const t = sheet.rows.get(r)!.cells.map((c) => normLabel(c.text));
+      return t.some((x) => x === "control account") && t.some((x) => x === "transfer amount");
+    });
+    if (trHeader && values) {
+      const H = sheet.rows.get(trHeader)!.cells;
+      const col = (re: RegExp) => H.find((c) => re.test(normLabel(c.text)))?.c;
+      const cAsset = col(/^project ?\/ ?asset$/);
+      const cAcc = col(/^control account$/);
+      const cWp = col(/^work ?package$/);
+      const cCur = col(/^current budget$/);
+      for (const r of rowNos.filter((x) => x > trHeader && x <= trHeader + 4)) {
+        const first = sheet.rows.get(r)!.cells.find((c) => c.text.trim())?.text.trim().toLowerCase();
+        if (first === "from") {
+          if (cAcc && values.budget_line) put(sheet, r, cAcc, String(values.budget_line));
+          if (cWp && values.budget_line) put(sheet, r, cWp, "Budget Hold");
+          if (cCur && num(values.budget_available) !== null) put(sheet, r, cCur, num(values.budget_available)!);
+        } else if (first === "to") {
+          if (cAsset && values.project_name) put(sheet, r, cAsset, String(values.project_name));
+          if (cAcc && values.budget_to_line) put(sheet, r, cAcc, String(values.budget_to_line));
+          if (cWp && values.works_package) put(sheet, r, cWp, String(values.works_package));
+        }
+      }
+    }
     // 4. label cells: the cell to the right, or beneath for a paragraph, takes the value
     for (const cell of cells) {
       const label = cell.text.replace(/\s+/g, " ").trim();
       if (!label || label.length > 90 || /\{\{/.test(label)) continue;
+      if (headerRows.has(cell.r)) continue;
+      // the signature blocks are filled from their Name / Position rows above
+      if (/^(name|position|signature|date|from|to)$/i.test(label) || /^(prepared|checked|approved|review|reviewed|recommended|initiated)\b|^(prepared|initiated)\/|by:$/i.test(label)) continue;
       const f = fieldForLabel(type, label);
-      if (!f) continue;
+      // the basis of the ROM is a row of tick boxes on the workbook, the change log and the ACC table are the workbook's own tabs
+      if (!f || placed.has(f.key) || ["change_log", "acc_table", "rom_basis"].includes(f.key)) continue;
       const key = normLabel(label);
       let right = { r: cell.r, c: rightOf(sheet, cell.r, cell.c) };
       // a code letter between the label and its figure ("A", "C = A+B") is stepped over
@@ -363,15 +411,18 @@ function plan(type: PackType, sheets: XSheet[], values: PackValues | null): { ed
       const underCell = cellAt(sheet, under.r, under.c);
       // a paragraph goes beneath its heading when there is room there; a one-line value beside its label
       let target: { r: number; c: number } | null = null;
-      if (f.kind === "long" && underCell && ok(under) && (!rightCell || isBlank(rightCell.text) === false || !ok(right))) target = under;
-      if (!target && rightCell && ok(right)) target = right;
-      if (!target && underCell && ok(under)) target = under;
+      // a one-line value sits beside its label; a paragraph beneath its heading when the heading spans the row
+      if (rightCell && ok(right)) target = right;
+      else if ((f.kind === "long" || (rightCell && looksLikeLabel(type, rightCell.text))) && underCell && ok(under)) target = under;
       if (!target) continue;
       if (!seenLabel.has(key)) {
         seenLabel.add(key);
         labels.push({ label, field: f.key });
       }
-      if (values && values[f.key]) put(sheet, target.r, target.c, valueOf(f, cellAt(sheet, target.r, target.c)));
+      if (values && values[f.key]) {
+        placed.add(f.key);
+        put(sheet, target.r, target.c, valueOf(f, cellAt(sheet, target.r, target.c)));
+      }
     }
   }
   return { edits, labels, placeholders };

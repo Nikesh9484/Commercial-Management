@@ -135,7 +135,10 @@ export function PackEditor({ type, initial, docs: initialDocs, canManage, templa
         const data = await toBase64(f.slice(i * CHUNK, (i + 1) * CHUNK));
         let j: { error?: string; uploadId?: string; doc?: PackDoc & { filled?: string[] } } = {};
         try {
-          const res = await fetch("/api/packs/docs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ uploadId, caseId: initial.id, name: f.name, relPath: rel, mime: f.type, size: f.size, index: i, count, data, slot }) });
+          const body = JSON.stringify({ uploadId, caseId: initial.id, name: f.name, relPath: rel, mime: f.type, size: f.size, index: i, count, data, slot });
+          const send = () => fetch("/api/packs/docs", { method: "POST", headers: { "Content-Type": "application/json" }, body });
+          // a connection the server closed while it was busy with another file is retried once
+          const res = await send().catch(() => new Promise<Response>((r) => setTimeout(r, 1500)).then(send));
           j = await res.json().catch(() => ({}));
           if (!res.ok) {
             toast(`${rel}: ${j.error ?? "upload failed"}`, "error");
@@ -264,7 +267,7 @@ export function PackEditor({ type, initial, docs: initialDocs, canManage, templa
           <div className="mb-2 text-muted">Everything in the {type.short} is read from these files. The compiled pack is made of: {type.packOrder.join(" · ")}.</div>
           <ol className="space-y-2">
             {slots.map((slot) => (
-              <SlotRow key={slot.key} slot={slot} docs={docs.filter((d) => d.slot === slot.key)} slots={slots} canManage={canManage} busy={false} onUpload={(files) => upload(files, slot.key)} onMove={(d, s) => patchDoc(d, { slot: s })} onPages={(d, p) => patchDoc(d, { pages: p })} onRemove={removeDoc} />
+              <SlotRow key={slot.key} typeKey={type.key} slot={slot} docs={docs.filter((d) => d.slot === slot.key)} slots={slots} canManage={canManage} busy={false} onUpload={(files) => upload(files, slot.key)} onMove={(d, s) => patchDoc(d, { slot: s })} onPages={(d, p) => patchDoc(d, { pages: p })} onRemove={removeDoc} />
             ))}
           </ol>
           {canManage && (
@@ -319,7 +322,17 @@ export function PackEditor({ type, initial, docs: initialDocs, canManage, templa
   );
 }
 
-function SlotRow({ slot, docs, slots, canManage, busy, onUpload, onMove, onPages, onRemove }: { slot: PackSlot; docs: PackDoc[]; slots: PackSlot[]; canManage: boolean; busy: boolean; onUpload: (files: FileList | null) => void; onMove: (d: PackDoc, slot: string) => void; onPages: (d: PackDoc, pages: string) => void; onRemove: (d: PackDoc) => void }) {
+/** whether a reference pack carries the form pages of its kind (a pack that starts at the index of annexures does not) */
+function hasFormPages(d: PackDoc, typeKey: string): boolean {
+  try {
+    const kinds = JSON.parse(d.page_kinds || "[]") as string[];
+    return !["pvo", "dvo"].includes(typeKey) || kinds.includes(`${typeKey}_form`);
+  } catch {
+    return true;
+  }
+}
+
+function SlotRow({ typeKey, slot, docs, slots, canManage, busy, onUpload, onMove, onPages, onRemove }: { typeKey: string; slot: PackSlot; docs: PackDoc[]; slots: PackSlot[]; canManage: boolean; busy: boolean; onUpload: (files: FileList | null) => void; onMove: (d: PackDoc, slot: string) => void; onPages: (d: PackDoc, pages: string) => void; onRemove: (d: PackDoc) => void }) {
   const input = useRef<HTMLInputElement>(null);
   const dirInput = useRef<HTMLInputElement>(null);
   const reads = slot.key === REFERENCE_SLOT ? "read for the particulars, figures, wording and signatories" : slot.key === "rfc" || slot.key === "details" ? "read for the subject, scope and justification" : slot.key === "cost" ? "read for the value" : slot.key === "pvo" ? "read for the PVO number, value and title" : null;
@@ -356,6 +369,7 @@ function SlotRow({ slot, docs, slots, canManage, busy, onUpload, onMove, onPages
                 {d.name}
               </a>
               <span className="text-muted">{(d.size / 1024 / 1024).toFixed(1)} MB{d.page_count ? ` · ${d.page_count} p.` : ""}</span>
+              {slot.key === "reference" && d.page_count > 0 && !hasFormPages(d, typeKey) && <span className="text-[11px] text-amber-700">no form pages in this file – its index and dividers are used; the form pages come from the category&apos;s PDF template</span>}
               {d.page_count > 0 && slot.key === "pvo" && <PagesPicker doc={d} canManage={canManage} onSave={(p) => onPages(d, p)} />}
               {canManage && (
                 <>
