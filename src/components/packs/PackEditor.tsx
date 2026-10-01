@@ -65,7 +65,14 @@ function shown(f: Field, v: string | undefined): string {
  * from them (with the file each value came from), then the outputs. Nothing is typed – a wrong or
  * missing value is fixed by uploading the right file and reading again.
  */
-export function PackEditor({ type, initial, docs: initialDocs, canManage, templateName }: { type: TypeInfo; initial: Initial; docs: PackDoc[]; canManage: boolean; templateName: string | null }) {
+interface PackDocumentInfo {
+  id: string;
+  label: string;
+  formats: ("pdf" | "docx" | "xlsx")[];
+}
+const FORMAT_LABEL = { pdf: "PDF", docx: "Word", xlsx: "Excel" } as const;
+
+export function PackEditor({ type, initial, docs: initialDocs, canManage, templateName, documents = [] }: { type: TypeInfo; initial: Initial; docs: PackDoc[]; canManage: boolean; templateName: string | null; documents?: PackDocumentInfo[] }) {
   const router = useRouter();
   const toast = useToast();
   const [head, setHead] = useState({ revision: initial.revision, status: initial.status, fileName: initial.fileName });
@@ -227,15 +234,12 @@ export function PackEditor({ type, initial, docs: initialDocs, canManage, templa
           </label>
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-1.5">
-          {templateName && /\.(xlsx|xlsm|xltx|xltm)$/i.test(templateName) ? (
-            <a className="btn btn-sm btn-secondary" href={`/api/packs/output?case=${initial.id}&format=xlsx`} title={`Written into the RSG workbook ${templateName}, every tab kept`}>
-              <FileText size={13} /> Excel form
-            </a>
-          ) : (
-            <a className="btn btn-sm btn-secondary" href={`/api/packs/output?case=${initial.id}&format=docx`} title={templateName ? `Written into the Word template ${templateName}` : "Word document"}>
-              <FileText size={13} /> Word
-            </a>
-          )}
+          <a className="btn btn-sm btn-secondary" href={`/api/packs/output?case=${initial.id}&format=xlsx`} title={templateName && /\.(xlsx|xlsm|xltx|xltm)$/i.test(templateName) ? `Written into the RSG workbook ${templateName}, every tab kept` : "Written into the workbook uploaded on this pack, or the form's values as a workbook"}>
+            <FileText size={13} /> Excel form
+          </a>
+          <a className="btn btn-sm btn-secondary" href={`/api/packs/output?case=${initial.id}&format=docx`} title={templateName && /\.(docx|dotx|docm)$/i.test(templateName) ? `Written into the Word template ${templateName}` : "Word document"}>
+            <FileText size={13} /> Word
+          </a>
           <a className="btn btn-sm btn-pdf" href={`/api/packs/output?case=${initial.id}&format=pdf`} title="The document in the RSG layout">
             <FileDown size={13} /> PDF
           </a>
@@ -253,6 +257,23 @@ export function PackEditor({ type, initial, docs: initialDocs, canManage, templa
             </>
           )}
         </div>
+        {documents.length > 1 && (
+          <div className="mt-3 rounded-md border border-line bg-surface-2/40 p-2.5">
+            <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted">Documents of the pack – each in its own file type</div>
+            <div className="grid gap-1 sm:grid-cols-2">
+              {documents.map((d) => (
+                <div key={d.id} className="flex items-center gap-1.5 text-xs">
+                  <span className="min-w-0 flex-1 truncate" title={d.label}>{d.label}</span>
+                  {d.formats.map((f) => (
+                    <a key={f} className="btn btn-xs btn-secondary" href={`/api/packs/output?case=${initial.id}&format=${f}${d.id === "form" ? "" : `&doc=${d.id}`}`} title={`${d.label} as ${FORMAT_LABEL[f]}`}>
+                      {FORMAT_LABEL[f]}
+                    </a>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="mt-2 text-muted">
           {read} of {type.fields.length} values in hand · {docs.length} file{docs.length === 1 ? "" : "s"} uploaded ·{" "}
           {hasRef ? "the previous document in slot 2 supplies the project particulars, the figures, the wording and the signatories" : `upload the last approved ${type.short} into slot 2 – it supplies the project particulars, the figures, the wording and the signatories`}

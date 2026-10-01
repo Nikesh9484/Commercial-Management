@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { packDocuments } from "@/lib/packs/documents";
 import { notFound } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth";
@@ -48,6 +49,7 @@ export default async function PackCasePage({ params }: { params: Promise<{ type:
         docs={docs}
         canManage={canManagePacks(user)}
         templateName={template?.name ?? null}
+        documents={packDocuments(t)}
       />
     </div>
   );

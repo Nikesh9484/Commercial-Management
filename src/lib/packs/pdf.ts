@@ -575,6 +575,19 @@ export async function buildCompiledPack(input: CompiledInput): Promise<Buffer> {
   return Buffer.from(await pdf.save({ useObjectStreams: true }));
 }
 
+/** A plain page saying what could not be produced and why – the pack goes on, the reader sees what to redo. */
+export async function noticePdf(title: string, lines: string[]): Promise<Buffer> {
+  const pdf = await PdfLib.create();
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const ctx: Ctx = { pdf, font, bold, serifBold: bold };
+  const page = pdf.addPage(A4);
+  const [w, h] = A4;
+  let y = text(page, ctx, title, 48, h - 90, 12, { bold: true, width: w - 96 }) - 8;
+  for (const l of lines) y = text(page, ctx, l, 48, y, 9.5, { color: MUTED_RGB, width: w - 96 }) - 6;
+  return Buffer.from(await pdf.save({ useObjectStreams: true }));
+}
+
 export function safeFileName(base: string, ext: string): string {
   const cleanName = clean(base).replace(/[–—]/g, "-").replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, " ").trim().slice(0, 150) || "document_pack";
   return `${cleanName}.${ext}`;

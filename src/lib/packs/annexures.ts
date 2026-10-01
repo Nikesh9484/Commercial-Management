@@ -38,31 +38,31 @@ export interface Narrative {
   budget_treatment?: string;
 }
 
-const num = (s: unknown) => {
+export const num = (s: unknown) => {
   const t = String(s ?? "").trim();
   const neg = /^\(.*\)$/.test(t) || /^-/.test(t);
   const n = Number(t.replace(/[^0-9.]/g, ""));
   return Number.isFinite(n) && /\d/.test(t) ? (neg ? -n : n) : 0;
 };
-const sar = (n: number) => (n < 0 ? `(${formatMoney(-n)})` : formatMoney(n));
-const dmy = (s: unknown) => {
+export const sar = (n: number) => (n < 0 ? `(${formatMoney(-n)})` : formatMoney(n));
+export const dmy = (s: unknown) => {
   const t = String(s ?? "").trim();
   return t ? formatDate(t) || t : "";
 };
-const longDate = (s: unknown) => {
+export const longDate = (s: unknown) => {
   const t = String(s ?? "").trim();
   const d = t ? new Date(t) : null;
   if (!d || Number.isNaN(d.getTime())) return t;
   return d.toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric", timeZone: "UTC" });
 };
-const clean = (t: unknown) => String(t ?? "").replace(/\r\n?/g, "\n").replace(/[‐-―]/g, "–").replace(/[^\x09\x0A\x20-\x7E -ɏ‐-‧€]/g, "").trim();
-const lines = (v: unknown) => clean(v).split(/\n/).map((s) => s.trim()).filter(Boolean);
-const voNoOf = (v: PackValues) => {
+export const clean = (t: unknown) => String(t ?? "").replace(/\r\n?/g, "\n").replace(/[‐-―]/g, "–").replace(/[^\x09\x0A\x20-\x7E -ɏ‐-‧€]/g, "").trim();
+export const lines = (v: unknown) => clean(v).split(/\n/).map((s) => s.trim()).filter(Boolean);
+export const voNoOf = (v: PackValues) => {
   const raw = String(v.vo_no ?? "").replace(/^VO[\s-]*/i, "") || String(v.pvo_no ?? "").replace(/\D/g, "");
   return raw ? raw.padStart(3, "0") : "0XX";
 };
-const pvoNoOf = (v: PackValues) => (String(v.pvo_no ?? "").replace(/\D/g, "") || "0XX").padStart(3, "0");
-const items = (v: PackValues) =>
+export const pvoNoOf = (v: PackValues) => (String(v.pvo_no ?? "").replace(/\D/g, "") || "0XX").padStart(3, "0");
+export const items = (v: PackValues) =>
   lines(v.cost_items).map((l) => {
     const parts = l.split(/\s+[–-]\s+/);
     if (parts.length >= 4) return { ref: parts[0], desc: parts.slice(1, -2).join(" – "), omit: num(parts[parts.length - 2]), add: num(parts[parts.length - 1]) };
@@ -250,7 +250,7 @@ function fallback(v: PackValues): Required<Narrative> {
         : `Budget transfer required (Option B). This PVO of ${amount} is funded by a transfer from the budget on hold${v.budget_line ? ` – ${v.budget_line}` : ""}${v.budget_available ? ` (current balance SAR ${formatMoney(num(v.budget_available))})` : ""} to the package budget${v.budget_to_line ? ` – ${v.budget_to_line}` : ""}. The approval of this PVO is not an approval of the budget transfer, which requires a separate approval under the relevant sub-DoA.`,
   };
 }
-function narrativeOf(v: PackValues): Required<Narrative> {
+export function narrativeOf(v: PackValues): Required<Narrative> {
   const base = fallback(v);
   let drafted: Narrative = {};
   try {
@@ -282,7 +282,7 @@ export function voDescription(v: PackValues): string {
 }
 
 /** The Employer's letter that issues an Emergency Variation Order, as the issued letters word it. */
-function evoLetter(v: PackValues): string[] {
+export function evoLetter(v: PackValues): string[] {
   const no = voNoOf(v);
   const clauses = String(v.clauses ?? "").trim() || "Contract Clause 12 [Variations and Adjustments]";
   const particulars = /12\.3|Sub-Clause 12\.1|12\.1/.test(clauses) ? "Contract Sub-Clause 12.3 [Variation Proposal]" : "Contract Clause 12";
