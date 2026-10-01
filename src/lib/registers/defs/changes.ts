@@ -18,6 +18,29 @@ export const DEAD_STATUSES = ["Cancelled", "Rejected", "Superseded", "Transferre
 
 const STATUS = { register: "approval_statuses" };
 
+/** Stage statuses that close the change as approved. */
+export const APPROVED_STATUSES = ["Approved", "Review Complete"];
+
+/**
+ * The overall status the stages imply, as the tracker is read: a DVO approved (or closed) ends the
+ * change as Approved whatever an earlier line said; the furthest stage that is cancelled, rejected,
+ * superseded or transferred – with nothing alive after it – gives that status; a change struck
+ * through in the workbook is Cancelled. Otherwise the stored status stands (Pending when none).
+ */
+export function impliedOverallStatus(stage: Record<string, string | null | undefined>, stored: string | null | undefined, opts: { dvoClosed?: boolean; struck?: boolean } = {}): string {
+  const label = (p: string) => String(stage[p] ?? "").trim();
+  if (opts.dvoClosed || APPROVED_STATUSES.includes(label("dvo"))) return "Approved";
+  if (opts.struck) return "Cancelled";
+  for (const s of [...CHANGE_STAGES].reverse()) {
+    const l = label(s.prefix);
+    if (!l) continue;
+    if (DEAD_STATUSES.includes(l)) return l;
+    break; // the furthest stage is alive (approved, pending, under review): the change is still open
+  }
+  const kept = String(stored ?? "").trim();
+  return kept && kept !== "N/a" ? kept : "Pending";
+}
+
 function stageFields(prefix: string, label: string, full: string): FieldDef[] {
   const s = full;
   return [
@@ -54,13 +77,14 @@ export const changes: RegisterDef = {
   displayFields: ["item_no", "description"],
   scope: "programme",
   snapshot: true,
+  wideTable: true,
   defaultSort: { field: "item_no", dir: "asc" },
   fields: [
     { key: "programme_id", label: "Programme", type: "lookup", lookup: { register: "programmes" }, required: true, hideInTable: true, hideInForm: true },
     { key: "item_no", label: "Item No", type: "text", required: true, unique: true, section: HEADER, width: "7rem" },
     { key: "description", label: "Description", type: "textarea", required: true, section: HEADER },
     { key: "current_stage", label: "Current stage", type: "text", virtual: true, readonly: true, hideInForm: true, chip: true },
-    { key: "overall_status_id", label: "Overall status", type: "lookup", lookup: STATUS, chip: true, section: HEADER, filter: true },
+    { key: "overall_status_id", label: "Overall status", type: "lookup", lookup: STATUS, chip: true, section: HEADER, filter: true, help: "Follows the stages: a DVO approved closes the change as Approved; a stage cancelled, rejected, superseded or transferred with nothing after it gives that status." },
     { key: "days_open", label: "Days open", type: "number", virtual: true, readonly: true, hideInForm: true, help: "Amber over 30 days, red over 60 (open items only)." },
     { key: "date_raised", label: "Date raised", type: "date", section: HEADER, help: "Used for the Days open column." },
     { key: "asset_id", label: "Project / Asset", type: "lookup", lookup: { register: "assets" }, required: true, section: HEADER, filter: true },

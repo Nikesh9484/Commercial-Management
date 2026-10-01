@@ -18,6 +18,7 @@ import { buildTransfersReport } from "./transfers-report";
 import { buildFaReport } from "./fa-report";
 import { buildPeriodSummary, sar, sarMove } from "./period-summary";
 import { getAccommodationSummary, getCustomsSummary } from "../recovery/summary";
+import { buildCashflowForecast, monthLabel, type CashMonth } from "../cashflow/forecast";
 import { buildUncommittedTable } from "./uncommitted-ew";
 import { buildAconexReconciliation, ACONEX_MEASURES } from "../recovery/aconex";
 
@@ -74,6 +75,7 @@ export function resolveSections(keys: string[], opts: SectionOptions = {}): { ti
     else if (k === "period_summary") out.push({ title: "Period Summary – Key Period Movements", run: periodSummaryReport });
     else if (k === "recovery_report") out.push({ title: "Cost Recovery – Accommodation & Customs Duty", run: recoveryReport });
     else if (k === "uncommitted_ew") out.push({ title: "Uncommitted Costs and Early Warnings", run: uncommittedEwReport });
+    else if (k === "cashflow_forecast") out.push({ title: "Cash Flow Forecast – Employer Executive Review", run: cashflowForecastReport });
     else if (k === "aconex_report") out.push({ title: "Aconex Cost Check – control accounts vs cost report", run: aconexReport });
     else if (k === "level1") out.push({ title: "Schedule A – Cost Report Level 1 (Executive)", run: costLevel1 });
     else if (k === "level2") out.push({ title: "Schedule B – Cost Report Level 2 (Detailed)", run: costLevel2 });
@@ -2328,11 +2330,13 @@ function barChart(ctx: Ctx, data: { label: string; a: number; b: number }[], lab
   });
   doc.y = y0 + h + 18;
   doc.x = PAGE.margin;
-  doc.rect(x0, doc.y, 8, 8).fill("#2a78d6");
-  doc.fillColor(MUTED).fontSize(7).text(labelA, x0 + 12, doc.y - 1, { continued: true });
-  doc.rect(doc.x + 10, doc.y - 1, 8, 8).fill("#eb6834");
-  doc.fillColor(MUTED).text(`     ${labelB}`);
-  doc.moveDown(0.5);
+  const ly = doc.y;
+  doc.rect(x0, ly, 8, 8).fill("#2a78d6");
+  doc.fillColor(MUTED).font("Helvetica").fontSize(7).text(labelA, x0 + 12, ly - 1, { lineBreak: false });
+  const wA = doc.widthOfString(labelA);
+  doc.rect(x0 + 12 + wA + 14, ly, 8, 8).fill("#eb6834");
+  doc.fillColor(MUTED).text(labelB, x0 + 12 + wA + 26, ly - 1, { lineBreak: false });
+  doc.y = ly + 14;
   doc.x = PAGE.margin;
 }
 
@@ -2341,4 +2345,193 @@ function compact(v: number) {
   if (v >= 1e6) return `${Number((v / 1e6).toFixed(2))}M`;
   if (v >= 1e3) return `${Number((v / 1e3).toFixed(1))}k`;
   return String(Math.round(v));
+}
+
+/* ------------------------------------------------------------------ */
+/* Cash Flow Forecast – the Employer's executive review pages          */
+
+function cashflowForecastReport(ctx: Ctx) {
+  const { doc, data } = ctx;
+  const cf = buildCashflowForecast(data);
+  const width = PAGE.width - PAGE.margin * 2;
+  const money = (v: unknown) => (v === null || v === undefined || Math.abs(Number(v)) < 0.005 ? "–" : formatMoney(v as number));
+  const pctText = (v: number | null) => (v === null ? "–" : `${formatNumber(v)}%`);
+  const s = cf.summary;
+  doc.fillColor(MUTED).font("Helvetica").fontSize(8.5).text(
+    `${cf.programme.name} (${cf.programme.code}) · ${cf.period.label} · Total approved budget SAR ${formatMoney(s.budget)} · ${monthLabel(s.start)} to ${monthLabel(s.end)} (${s.durationMonths} months) · Currency SAR, excl. VAT. Built from the cost report, the IPC log and the contracts' completion dates – see the assumptions at the end.`,
+    { width },
+  );
+  doc.moveDown(0.5);
+
+  // 1. executive summary
+  subheading(ctx, "1. Executive summary");
+  kpiCards(ctx, [
+    ["Total approved budget", formatMoney(s.budget), "cost report column G"],
+    ["Actual spend to date", formatMoney(s.actual), `certified to ${cf.period.label}`],
+    ["Committed cost", formatMoney(s.committed), "awarded contracts + determined VOs"],
+    ["Forecast remaining cost", formatMoney(s.forecastRemaining), "cash to completion"],
+    ["Forecast final cost", formatMoney(s.forecastFinal), `anticipated final account SAR ${formatMoney(s.afa)}`],
+    ["Budget variance", `${s.variance > 0 ? "+" : ""}${formatMoney(s.variance)}`, s.variance > 0 ? "forecast above budget" : "within budget"],
+    ["Previous forecast final", s.previousForecastFinal === null ? "–" : formatMoney(s.previousForecastFinal), s.forecastChange === null ? "no previous report" : `${s.forecastChange >= 0 ? "+" : ""}${formatMoney(s.forecastChange)} since last report`],
+    ["Peak funding month", cf.kpis.peakMonth ? cf.kpis.peakMonth.label : "–", cf.kpis.peakMonth ? `SAR ${formatMoney(cf.kpis.peakMonth.amount)}` : ""],
+  ], (k) => (k[0] === "Budget variance" ? (s.variance > 0 ? "#b42318" : "#067647") : null));
+
+  // 6. management dashboard (KPIs) – placed with the summary so page one is the dashboard
+  subheading(ctx, "Management dashboard – KPIs");
+  const k = cf.kpis;
+  kpiCards(ctx, [
+    ["Budget utilisation %", pctText(k.budgetUtilisation), "forecast final ÷ approved budget"],
+    ["Cost committed %", pctText(k.committedPct), "committed ÷ approved budget"],
+    ["Cost spent %", pctText(k.spentPct), "actual to date ÷ approved budget"],
+    ["Forecast completion %", pctText(k.completionPct), "actual to date ÷ forecast final"],
+    ["Remaining budget", formatMoney(k.remainingBudget), "approved budget less actual to date"],
+    ["Peak funding month", k.peakMonth ? `${k.peakMonth.label}` : "–", k.peakMonth ? `SAR ${formatMoney(k.peakMonth.amount)}` : ""],
+  ], (x) => (x[0] === "Budget utilisation %" && (k.budgetUtilisation ?? 0) > 100 ? "#b42318" : null));
+
+  // 7. graphs
+  subheading(ctx, "Budget vs actual vs forecast (SAR)");
+  const trio = [
+    { label: "Approved budget", value: s.budget, color: "#2a78d6" },
+    { label: "Committed", value: s.committed, color: "#7c3aed" },
+    { label: "Actual to date", value: s.actual, color: "#067647" },
+    { label: "Forecast final", value: s.forecastFinal, color: "#eb6834" },
+  ];
+  const maxV = Math.max(1, ...trio.map((t) => t.value));
+  ensureSpace(ctx, trio.length * 16 + 10);
+  for (const t of trio) {
+    const y = doc.y;
+    doc.fillColor("#172033").font("Helvetica").fontSize(7.5).text(t.label, PAGE.margin, y + 2, { width: 110, lineBreak: false });
+    const w = Math.max(1, ((width - 230) * t.value) / maxV);
+    doc.rect(PAGE.margin + 115, y, w, 10).fill(t.color);
+    doc.fillColor("#172033").fontSize(7.5).text(formatMoney(t.value), PAGE.margin + 120 + w, y + 2, { width: 110, lineBreak: false });
+    doc.y = y + 15;
+  }
+  doc.x = PAGE.margin;
+  doc.moveDown(0.5);
+
+  const idx = cf.months.findIndex((m) => m.kind === "current");
+  const windowMonths = cf.months.slice(Math.max(0, idx - 11), Math.min(cf.months.length, idx + 13));
+  subheading(ctx, "Monthly cash flow (SAR)", `${windowMonths[0]?.label ?? ""} to ${windowMonths[windowMonths.length - 1]?.label ?? ""}: planned against actual (to the report month) and forecast (after it)`);
+  barChart(ctx, windowMonths.map((m) => ({ label: m.label, a: m.planned, b: m.total })), "Planned", "Actual / forecast");
+
+  subheading(ctx, "Cumulative cash flow – S-curve (SAR)", `${monthLabel(s.start)} to ${monthLabel(s.end)}`);
+  sCurveChart(ctx, cf.months.map((m) => ({ label: m.label, planned: m.cumulativePlanned, actual: m.cumulative, forecast: m.kind === "forecast" })));
+
+  // 2. monthly table
+  subheading(ctx, "2. Monthly cash flow table (SAR excl. VAT)", "Actual spend = certified in the month; forecast spend = works to complete spread to completion; total = actual + forecast");
+  const monthCols: Col[] = [
+    { key: "label", label: "Month", width: 0.9 },
+    { key: "planned", label: "Planned spend", width: 1.1, align: "right", format: money },
+    { key: "actual", label: "Actual spend", width: 1.1, align: "right", format: money },
+    { key: "forecast", label: "Forecast spend", width: 1.1, align: "right", format: money },
+    { key: "contractor", label: "Contractor payments", width: 1.1, align: "right", format: money },
+    { key: "consultant", label: "Consultant payments", width: 1.1, align: "right", format: money },
+    { key: "other", label: "Other project costs", width: 1.1, align: "right", format: money },
+    { key: "total", label: "Total monthly outflow", width: 1.2, align: "right", format: money },
+    { key: "cumulative", label: "Cumulative outflow", width: 1.3, align: "right", format: money },
+  ];
+  const sum = (key: keyof CashMonth) => cf.months.reduce((t, m) => t + (Number(m[key]) || 0), 0);
+  table(ctx, monthCols, cf.months as unknown as Record<string, unknown>[], {
+    zebra: true,
+    rowStyle: (r) => (r.kind === "current" ? { bold: true, bg: "#fff4e5" } : undefined),
+    totalRow: { label: "Total", planned: formatMoney(sum("planned")), actual: formatMoney(sum("actual")), forecast: formatMoney(sum("forecast")), contractor: formatMoney(sum("contractor")), consultant: formatMoney(sum("consultant")), other: formatMoney(sum("other")), total: formatMoney(sum("total")), cumulative: "" },
+  });
+
+  // 3. by package
+  subheading(ctx, "3. Cash flow by major package (SAR excl. VAT)");
+  table(
+    ctx,
+    [
+      { key: "category", label: "Package", width: 1.5 },
+      { key: "lines", label: "Lines", width: 0.5, align: "right" },
+      { key: "budget", label: "Approved budget", width: 1.1, align: "right", format: money },
+      { key: "committed", label: "Committed", width: 1.1, align: "right", format: money },
+      { key: "actual", label: "Actual to date", width: 1.1, align: "right", format: money },
+      { key: "forecastRemaining", label: "Forecast remaining", width: 1.1, align: "right", format: money },
+      { key: "forecastFinal", label: "Forecast final", width: 1.1, align: "right", format: money },
+      { key: "variance", label: "Variance", width: 1, align: "right", format: money },
+      { key: "window", label: "Spending period", width: 1.3 },
+      { key: "peak", label: "Peak month", width: 1.1 },
+    ],
+    cf.packages.map((p) => ({ ...p, window: p.firstMonth ? `${monthLabel(p.firstMonth)} – ${p.lastMonth ? monthLabel(p.lastMonth) : ""}` : "–", peak: p.peakMonth ? `${monthLabel(p.peakMonth)} (${formatMoney(p.peakAmount)})` : "–" })),
+    { zebra: true, totalRow: { category: "Total", lines: String(cf.packages.reduce((t, p) => t + p.lines, 0)), budget: formatMoney(s.budget), committed: formatMoney(s.committed), actual: formatMoney(s.actual), forecastRemaining: formatMoney(s.forecastRemaining), forecastFinal: formatMoney(s.forecastFinal), variance: formatMoney(s.variance), window: "", peak: "" } },
+  );
+
+  // 4. yearly
+  subheading(ctx, "4. Yearly summary (SAR excl. VAT)");
+  table(
+    ctx,
+    [
+      { key: "year", label: "Year", width: 0.6 },
+      { key: "budget", label: "Annual budget (planned)", width: 1.2, align: "right", format: money },
+      { key: "forecast", label: "Annual forecast (actual + forecast)", width: 1.4, align: "right", format: money },
+      { key: "actual", label: "Actual spend", width: 1.2, align: "right", format: money },
+      { key: "variance", label: "Variance", width: 1.2, align: "right", format: money },
+    ],
+    cf.years as unknown as Record<string, unknown>[],
+    { zebra: true, totalRow: { year: "Total", budget: formatMoney(cf.years.reduce((t, y) => t + y.budget, 0)), forecast: formatMoney(cf.years.reduce((t, y) => t + y.forecast, 0)), actual: formatMoney(cf.years.reduce((t, y) => t + y.actual, 0)), variance: formatMoney(cf.years.reduce((t, y) => t + y.variance, 0)) } },
+  );
+
+  // 5. observations
+  subheading(ctx, "5. Key observations");
+  for (const o of cf.observations) {
+    ensureSpace(ctx, 24);
+    doc.fillColor("#172033").font("Helvetica").fontSize(8.5).text(`• ${o}`, { width, indent: 0 });
+    doc.moveDown(0.2);
+  }
+  subheading(ctx, "Basis of the forecast");
+  for (const a of cf.assumptions) {
+    ensureSpace(ctx, 20);
+    doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(`• ${a}`, { width });
+  }
+  doc.moveDown(0.5);
+}
+
+/** Cumulative S-curve: planned against actual (solid) and forecast (dashed) across the whole project. */
+function sCurveChart(ctx: Ctx, pts: { label: string; planned: number; actual: number; forecast: boolean }[]) {
+  const { doc } = ctx;
+  if (!pts.length) return;
+  const h = 150;
+  ensureSpace(ctx, h + 40);
+  const x0 = PAGE.margin + 60;
+  const w = PAGE.width - PAGE.margin * 2 - 60;
+  const y0 = doc.y + 10;
+  const max = Math.max(1, ...pts.flatMap((p) => [p.planned, p.actual]));
+  const x = (i: number) => x0 + (pts.length === 1 ? w / 2 : (i / (pts.length - 1)) * w);
+  const y = (v: number) => y0 + h - (v / max) * h;
+  for (let i = 0; i <= 4; i++) {
+    const v = (max / 4) * i;
+    doc.moveTo(x0, y(v)).lineTo(x0 + w, y(v)).strokeColor(LINE).lineWidth(0.5).stroke();
+    doc.fillColor(MUTED).font("Helvetica").fontSize(6.5).text(compact(v), PAGE.margin, y(v) - 3, { width: 55, align: "right" });
+  }
+  const line = (key: "planned" | "actual", color: string, from: number, to: number, dash: boolean) => {
+    if (to <= from) return;
+    doc.save();
+    doc.strokeColor(color).lineWidth(1.5);
+    if (dash) doc.dash(3, { space: 2 });
+    doc.moveTo(x(from), y(pts[from][key]));
+    for (let i = from + 1; i <= to; i++) doc.lineTo(x(i), y(pts[i][key]));
+    doc.stroke();
+    doc.restore();
+  };
+  const firstForecast = pts.findIndex((p) => p.forecast);
+  line("planned", "#2a78d6", 0, pts.length - 1, false);
+  line("actual", "#067647", 0, firstForecast < 0 ? pts.length - 1 : firstForecast - 1, false);
+  if (firstForecast > 0) line("actual", "#eb6834", firstForecast - 1, pts.length - 1, true);
+  const step = Math.max(1, Math.ceil(pts.length / 12));
+  pts.forEach((p, i) => {
+    if (i % step !== 0 && i !== pts.length - 1) return;
+    doc.fillColor("#172033").font("Helvetica").fontSize(6.5).text(p.label, x(i) - 20, y0 + h + 4, { width: 40, align: "center", lineBreak: false });
+  });
+  doc.y = y0 + h + 18;
+  doc.x = PAGE.margin;
+  const legend: [string, string][] = [["Planned (budget S-curve)", "#2a78d6"], ["Actual (certified)", "#067647"], ["Forecast", "#eb6834"]];
+  let lx = x0;
+  for (const [label, color] of legend) {
+    doc.rect(lx, doc.y, 8, 8).fill(color);
+    doc.fillColor(MUTED).fontSize(7).text(label, lx + 12, doc.y - 1, { lineBreak: false });
+    lx += 150;
+  }
+  doc.moveDown(1);
+  doc.x = PAGE.margin;
 }

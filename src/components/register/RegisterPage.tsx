@@ -109,7 +109,8 @@ export function RegisterPage({
 
   const def = data?.def;
   const tableFields = useMemo(() => {
-    const shown = def?.fields.filter((f) => !f.hideInTable && f.type !== "password" && !hideFields.includes(f.key)) ?? [];
+    // a wide tracker shows every column of the record (scrolled sideways); the others keep their compact set
+    const shown = def?.fields.filter((f) => (def.wideTable ? !["programme_id", "contract_closed"].includes(f.key) : !f.hideInTable) && f.type !== "password" && !hideFields.includes(f.key)) ?? [];
     // a field can ask for its place in the table without moving on the record form
     return shown
       .map((f, i) => ({ f, i }))

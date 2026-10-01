@@ -14,6 +14,7 @@
  * gets a budget-hold line so Schedule A's totals stay at the approved budget.
  */
 import type { SheetValues } from "./read";
+import { DEAD_STATUSES as DEAD_STAGE, impliedOverallStatus } from "../registers/defs/changes";
 import { cellText } from "./read";
 import { readLevel1Check, type Level1Check } from "./level1-check";
 import { faStatusFromExcel } from "../bonds/contract-status";
@@ -480,20 +481,26 @@ export function convertMarinaReport(sheets: Sheet[]): ConversionResult {
       const dup = (itemSeen.get(item) ?? 0) + 1;
       itemSeen.set(item, dup);
       const itemNo = `CH-${item.padStart(3, "0")}${dup === 1 ? "" : String.fromCharCode(96 + dup)}`;
-      const dvoStatus = stageStatus(txt(v, 54));
-      const rfcStatus = stageStatus(txt(v, 21));
-      const pvoStatus = stageStatus(txt(v, 29));
-      const voStatus = stageStatus(txt(v, 37));
+      // a line struck through in the workbook is cancelled: the whole change when its description is, a stage when its reference is
+      const struckCols = C.strikes?.get(r) ?? [];
+      const struck = struckCols.includes(2);
+      const struckStage = (refCol: number, status: string) => (struckCols.includes(refCol) && !DEAD_STAGE.includes(status) ? "Cancelled" : status);
+      const dvoStatus = struckStage(42, stageStatus(txt(v, 54)));
+      const rfcStatus = struckStage(18, stageStatus(txt(v, 21)));
+      const pvoStatus = struckStage(26, stageStatus(txt(v, 29)));
+      const voStatus = struckStage(35, stageStatus(txt(v, 37)));
       const excelStatus = txt(v, 7);
       const u = excelStatus.toUpperCase();
-      const overall = u.includes("ACCEPT") || u.includes("APPROV") ? "Approved" : u.includes("REJECT") || u.includes("SUPERSED") || u.includes("CANCEL") ? "Rejected" : u.includes("FINAL ACCOUNT") ? (dvoStatus === "Approved" ? "Approved" : "Pending") : "Pending";
+      const excelOverall = u.includes("ACCEPT") || u.includes("APPROV") ? "Approved" : u.includes("REJECT") || u.includes("SUPERSED") || u.includes("CANCEL") ? "Rejected" : u.includes("FINAL ACCOUNT") ? (dvoStatus === "Approved" ? "Approved" : "Pending") : "Pending";
+      // the stages decide: a DVO approved closes the change, a struck-through line or a dead last stage cancels it
+      const overall = impliedOverallStatus({ rfc: rfcStatus, pvo: pvoStatus, vo: voStatus, dvo: dvoStatus }, excelOverall, { struck });
       const pvoAmt = money(v, 34);
       const rfcAmt = money(v, 25);
       const dvoAmt = money(v, 53);
       const stageDates = [date(v, 51), date(v, 48), date(v, 45), date(v, 40), date(v, 36), date(v, 28), date(v, 20)].filter((x): x is string => !!x);
       let closed: string | null = null;
       if (overall === "Approved" && ["Approved", "Review Complete"].includes(dvoStatus)) closed = date(v, 51) ?? (stageDates.length ? stageDates.sort().at(-1)! : null);
-      else if (overall === "Rejected") closed = stageDates.length ? stageDates.sort().at(-1)! : null;
+      else if (DEAD_STAGE.includes(overall) || overall === "Rejected") closed = stageDates.length ? stageDates.sort().at(-1)! : null;
       const pendingBy = txt(v, 6);
       const pending = ({ CLOSED: "None", "N/A": "None", OTHER: "Commercial Team" } as Record<string, string>)[pendingBy.toUpperCase()] ?? "Commercial Team";
       const rep = ["CLOSED", "OTHER", "N/A"].includes(txt(v, 5).toUpperCase()) ? "" : txt(v, 5).replace(/\b\w/g, (c) => c.toUpperCase()).replace(/\B\w/g, (c) => c.toLowerCase());

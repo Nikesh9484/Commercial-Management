@@ -82,6 +82,8 @@ export interface RegisterDef {
   viewRoles?: Role[];
   /** Include this register's rows in the month-end snapshot. Default: false (reference data). */
   snapshot?: boolean;
+  /** The page table shows every field (the full tracker, scrolled sideways) instead of the compact set; PDF and report builder keep the compact set. */
+  wideTable?: boolean;
   /** Group shown in the Settings page. */
   group?: string;
   /**

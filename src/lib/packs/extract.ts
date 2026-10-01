@@ -746,9 +746,53 @@ export function readRfc(pages: PosPage[]): Reading {
 export function readRfaForChange(pages: PosPage[]): Reading {
   const r: Reading = { values: {}, sources: {} };
   const src = "RFA";
-  set(r, "rfc_ref", valueRight(pages, "RFA Form Reference", { notLabels: ["Submittal Date"] }), src);
+  const all = glued(pages);
+  set(r, "rfc_ref", all.match(/\b1TB\d{5}-\d{3}[A-Z]\d{2}-[A-Z]{2,4}-RFA-[A-Z]{2}-\d{4}\b/)?.[0] ?? valueRight(pages, "RFA Form Reference", { notLabels: ["Submittal Date"] }), src);
+  set(r, "date", dateOf(valueRight(pages, /^Submittal Date$/i)) || dateOf(all.match(/Submittal Date\s*:?\s*(\d{1,2}-[A-Za-z]{3}-\d{2,4})/)?.[1] ?? ""), src);
   set(r, "requesting_department", valueRight(pages, "Requesting Department"), src);
-  set(r, "title", valueRight(pages, "Contract Name") || valueRight(pages, /^(Subject|Title):?$/i), src);
+  set(r, "contractor", valueRight(pages, /^Contractor$/i), src);
+  // the RSG-CM-FRM-0001 form has no title: the subject is what the purpose asks to instruct –
+  // "Approval is sought to instruct X to supply, deliver … platform for the Saudi Orchestra, at an estimated value …"
+  const purposeRow = pages[0]?.rows.findIndex((row) => row.cells.some((c) => /^Purpose$/i.test(c.s)) && row.cells.some((c) => /Approval is sought|Approval is requested|sought to/i.test(c.s)));
+  let purposeText = "";
+  if (pages[0] && purposeRow !== undefined && purposeRow >= 0) {
+    const rows = pages[0].rows;
+    for (let i = purposeRow; i < rows.length; i++) {
+      const cells = rows[i].cells.filter((c) => c.x > 190).map((c) => c.s);
+      if (i > purposeRow && /^(Summary of the request|Requesting Department|Approval requested|Background)/i.test(cells[0] ?? "")) break;
+      if (!cells.length) continue;
+      purposeText += `${cells.join(" ")} `;
+    }
+  }
+  purposeText = purposeText.replace(/\s+/g, " ").replace(/\s+,/g, ",").trim();
+  const instructed = purposeText.match(/(?:instruct|appoint|engage|award)\s+[^.]*?\bto\s+((?:supply|deliver|design|provide|construct|install|carry out|undertake|procure|execute|relocate|remove|repair|replace|extend|modify|manufacture|fabricate|moor|operate|prepare|complete)\b[^.]*)/i)?.[1] ?? purposeText.match(/(?:approval (?:is )?(?:sought|requested) (?:for|to)\s+)([^.]*)/i)?.[1] ?? "";
+  let subject = instructed
+    .replace(/\s+(?:in|at) the (?:AMAALA|Amaala)\s+[A-Za-z ]*?(?:Marina|Island|site|Hotel|Village)\b/i, "")
+    .replace(/,?\s+(at|for) an estimated (value|cost|sum)[^]*$/i, "")
+    .replace(/,?\s+to be (instructed|valued)[^]*$/i, "")
+    .replace(/\s+on \d{1,2} [A-Z][a-z]+ \d{4}[^]*$/, "")
+    .replace(/\s*\(excluding VAT\)[^]*$/i, "")
+    .replace(/(\d+(?:\.\d+)?)\s*m\s*[×x]\s*(\d+(?:\.\d+)?)\s*m/gi, "$1m x $2m")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[.,;:]+$/, "");
+  if (subject.length > 140) subject = subject.slice(0, 140).replace(/\s+\S*$/, "");
+  if (subject) subject = subject[0].toUpperCase() + subject.slice(1);
+  set(r, "title", valueRight(pages, /^(Subject|Title)( of (the )?(change|request))?:?$/i) || subject, src);
+  set(r, "purpose", purposeText, src);
+  // the "What – … Why – … How much –" summary gives the scope, the reason and the value
+  const bullet = (label: RegExp) => {
+    const t = pages.flatMap((p) => p.rows.map((row) => row.cells.map((c) => c.s).join(" "))).join("\n");
+    const m = t.match(new RegExp(`${label.source}\\s*[–-]\\s*([^]*?)(?=\\n\\s*•|\\n\\s*(?:What|Why|Who|How much|When|If not approved)\\s*[–-]|\\nApproval requested|$)`, "i"));
+    return m ? unwrap(m[1]).replace(/\s+/g, " ").trim() : "";
+  };
+  const what = bullet(/•?\s*What/);
+  const why = bullet(/•?\s*Why/);
+  const howMuch = bullet(/•?\s*How much/);
+  if (what) set(r, "scope", what, src);
+  if (why) set(r, "reason", why, src);
+  const value = money(valueRight(pages, /^Value of this Request$/i)) || money(howMuch.match(/SAR\s*[\d,]+(?:\.\d+)?/)?.[0] ?? "") || money(purposeText.match(/estimated (?:value|cost|sum) of\s*SAR\s*[\d,]+(?:\.\d+)?/i)?.[0]?.replace(/^.*SAR/, "SAR") ?? "");
+  if (value) set(r, "rom_estimate", value, src);
   // the purpose sits in the big cell between the Item / Description heading and Requesting Department
   const first = pages[0];
   if (first) {
@@ -761,8 +805,8 @@ export function readRfaForChange(pages: PosPage[]): Reading {
       const cut = text.search(/Requested Approvals?:?/i);
       const purpose = (cut >= 0 ? text.slice(0, cut) : text).trim();
       const requested = cut >= 0 ? text.slice(cut).replace(/^Requested Approvals?:?\s*/i, "").trim() : "";
-      set(r, "scope", unwrap(purpose), src);
-      set(r, "purpose", unwrap(purpose), src);
+      if (!r.values.scope) set(r, "scope", unwrap(purpose), src);
+      if (!r.values.purpose) set(r, "purpose", unwrap(purpose), src);
       set(r, "requested_approvals", unwrap(requested), src);
     }
   }
@@ -773,7 +817,7 @@ export function readRfaForChange(pages: PosPage[]): Reading {
   set(r, "reason", [background, justification].filter(Boolean).join("\n\n") || (requestedOf(r) ? `As requested for approval: ${requestedOf(r)}` : ""), src);
   set(r, "contractual_basis", valueBelow(pages, /^(Contractual basis|Contract basis)/i, [/^Next Steps/i, /^Attachments/i], 4), src);
   const price = valueRight(pages, /^Contract Price$/i);
-  if (money(price)) set(r, "rom_estimate", money(price), src);
+  if (!r.values.rom_estimate && money(price)) set(r, "rom_estimate", money(price), src);
   const fund = [valueRight(pages, "Project Budget / Funding Source"), valueBelow(pages, "Project Budget / Funding Source", ["Budget Remaining"], 3)].find((x) => x.length > 8) ?? "";
   set(r, "funding_source", unwrap(fund).replace(/\n/g, " "), src);
   return r;

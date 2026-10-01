@@ -67,7 +67,12 @@ function plain(v) {
       if (!Array.isArray(values)) continue;
       const cells = values.map(plain);
       if (!cells.some((v) => v !== null && v !== "")) continue;
-      if (!out.write((firstRow ? "" : ",") + JSON.stringify([row.number, cells]))) await new Promise((r) => out.once("drain", r));
+      // cells struck through (a change cancelled in the tracker): their column numbers travel with the row
+      const struck = [];
+      row.eachCell((c, i) => {
+        if (c.font && c.font.strike && c.value !== null && c.value !== undefined && c.value !== "") struck.push(i);
+      });
+      if (!out.write((firstRow ? "" : ",") + JSON.stringify(struck.length ? [row.number, cells, struck] : [row.number, cells]))) await new Promise((r) => out.once("drain", r));
       firstRow = false;
       rowCount = row.number;
       kept++;

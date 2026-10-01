@@ -12,6 +12,8 @@ export interface SheetValues {
   rowCount: number;
   /** true when the sheet had more rows than we keep */
   truncated: boolean;
+  /** row number -> 1-based column numbers whose cell is struck through (only rows that have any) */
+  strikes?: Map<number, number[]>;
 }
 
 export const MAX_ROWS_PER_SHEET = 20000;
@@ -46,8 +48,8 @@ export async function readWorkbookValues(filePath: string): Promise<SheetValues[
       const msg = result.stderr.trim().split("\n").filter(Boolean).pop() || `exit code ${result.code}`;
       throw new Error(`The workbook could not be read: ${msg}`);
     }
-    const raw = JSON.parse(fs.readFileSync(outFile, "utf8")) as { name: string; rowCount: number; truncated: boolean; rows: [number, unknown[]][] }[];
-    return raw.map((s) => ({ name: s.name, rowCount: s.rowCount, truncated: s.truncated, rows: new Map(s.rows) }));
+    const raw = JSON.parse(fs.readFileSync(outFile, "utf8")) as { name: string; rowCount: number; truncated: boolean; rows: [number, unknown[], number[]?][] }[];
+    return raw.map((s) => ({ name: s.name, rowCount: s.rowCount, truncated: s.truncated, rows: new Map(s.rows.map(([n, cells]) => [n, cells] as [number, unknown[]])), strikes: new Map(s.rows.filter((r) => r[2]?.length).map(([n, , struck]) => [n, struck!] as [number, number[]])) }));
   } finally {
     fs.rmSync(outFile, { force: true });
   }

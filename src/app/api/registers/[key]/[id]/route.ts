@@ -25,6 +25,14 @@ export async function PUT(req: Request, ctx: Ctx) {
 export const DELETE = withUser<Ctx>(async (user, { params }) => {
   const { key, id } = await params;
   const def = requireDef(key);
+  const row = getRecord(def, Number(id));
   deleteRecord(def, Number(id), user);
+  // a change added from documents and deleted leaves no gap in the CH series: the later ones move up
+  if (def.key === "changes" && row?.programme_id) {
+    const { closeGaps } = await import("@/lib/changes/from-docs");
+    const r = { entries: [], duplicates: [], needsDecision: false, files: [], periods: [], warnings: [] as string[] };
+    closeGaps(Number(row.programme_id), user, r);
+    return NextResponse.json({ ok: true, renumbered: r.warnings });
+  }
   return NextResponse.json({ ok: true });
 });

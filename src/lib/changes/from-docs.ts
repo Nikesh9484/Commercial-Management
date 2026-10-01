@@ -9,7 +9,7 @@ import { matchAgainstRegisters } from "../library/read";
 import { ensureOpenMonth } from "../periods";
 import { getAppContext } from "../context";
 import { formatDate, formatMoney, todayIso } from "../format";
-import type { Decisions, Duplicate, FromDocsResult, ReadValue } from "../from-docs-shared";
+import type { Decisions, Duplicate, FromDocsResult, Outcome, ReadValue } from "../from-docs-shared";
 
 /**
  * A change entry made from its own documents. The RFC, the PVO, the EVO, the EI, the RFA or the DVO
@@ -32,10 +32,26 @@ interface DocRead {
   programmeCode: string;
   rfcNo: number | null;
   no: number | null;
+  /** an Aconex workflow transmittal: the document it approved, the outcome, the date and its own number */
+  approval?: { docNo: string; stage: "rfc" | "pvo" | "vo" | "dvo" | "ei"; outcome: "Approved" | "Rejected" | "Pending"; date: string; mailNo: string; subject: string };
   note: string;
 }
 
-const KIND_LABEL: Record<string, string> = { rfc: "RFC", ei: "Employer's Instruction", rfa: "RFA", pvo: "PVO", evo: "EVO", dvo: "DVO", cost: "cost proposal", ear: "assessment report", unknown: "not recognised" };
+const KIND_LABEL: Record<string, string> = { rfc: "RFC", ei: "Employer's Instruction", rfa: "RFA", pvo: "PVO", evo: "EVO", dvo: "DVO", wtran: "Aconex approval", cost: "cost proposal", ear: "assessment report", unknown: "not recognised" };
+const MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+/** "Sunday, September 13, 2026", "13 September 2026", "13-Sep-26" → ISO */
+const isoOf = (s: string): string => {
+  const a = s.match(/([A-Za-z]{3,9})\s+(\d{1,2}),?\s+(\d{4})/);
+  if (a && MONTHS.findIndex((m) => m.startsWith(a[1].toLowerCase().slice(0, 3))) >= 0) return `${a[3]}-${String(MONTHS.findIndex((m) => m.startsWith(a[1].toLowerCase().slice(0, 3))) + 1).padStart(2, "0")}-${a[2].padStart(2, "0")}`;
+  const b = s.match(/(\d{1,2})[\s-]+([A-Za-z]{3,9})[\s-]+(\d{2,4})/);
+  if (b && MONTHS.findIndex((m) => m.startsWith(b[2].toLowerCase().slice(0, 3))) >= 0) return `${b[3].length === 2 ? `20${b[3]}` : b[3]}-${String(MONTHS.findIndex((m) => m.startsWith(b[2].toLowerCase().slice(0, 3))) + 1).padStart(2, "0")}-${b[1].padStart(2, "0")}`;
+  return s.match(/\d{4}-\d{2}-\d{2}/)?.[0] ?? "";
+};
+/** which stage of a change an Aconex document number belongs to */
+const stageOfDoc = (docNo: string): "rfc" | "pvo" | "vo" | "dvo" | "ei" | null => {
+  const k = docNo.match(/-(RFA|RFC|CRF|PVO|EVO|VOR|VO|DVO|EMI|EI)-/i)?.[1]?.toUpperCase();
+  return !k ? null : ["RFA", "RFC", "CRF"].includes(k) ? "rfc" : k === "PVO" ? "pvo" : ["EVO", "VOR", "VO"].includes(k) ? "vo" : k === "DVO" ? "dvo" : "ei";
+};
 
 const textOf = (pages: PosPage[]) => pages.map((p) => p.rows.map((r) => r.cells.map((c) => c.s).join(" ")).join("\n")).join("\n");
 const lastNumber = (s: string | null | undefined): number | null => {
@@ -63,6 +79,35 @@ async function readOne(f: DocFile): Promise<DocRead | null> {
   const pages = await positioned(pdf);
   const text = textOf(pages);
   const head = text.slice(0, 20_000);
+  if (/Workflow Transmittal|Workflow Review History/i.test(head)) {
+    // the Aconex approval: "The attached documents have completed the '…' workflow" – Doc No | Step | Participant | Review Outcome
+    const tight = text.replace(/-\s*\n\s*/g, "-").replace(/-\s+(?=[A-Z0-9])/g, "-");
+    // the Doc No cell wraps: "1TB01031-031C10-" … "AMA-RFA-CM-0005" with the step and outcome cells in between
+    const whole = tight.match(/\b1TB\d{5}-\d{3}[A-Z]\d{2}-[A-Z]{2,4}-(?:RFA|RFC|CRF|PVO|EVO|VOR|VO|DVO|EMI|EI)-[A-Z]{2}-\d{4}\b/i)?.[0];
+    const split = text.match(/\b(1TB\d{5}-\d{3}[A-Z]\d{2}-)\s*[\s\S]{0,240}?\b([A-Z]{2,4}-(?:RFA|RFC|CRF|PVO|EVO|VOR|VO|DVO|EMI|EI)-[A-Z]{2}-\d{4})\b/i);
+    const docNo = (whole ?? (split ? `${split[1]}${split[2]}` : "")).toUpperCase();
+    const stage = stageOfDoc(docNo);
+    const mailNo = text.match(/\b[A-Z]{2,6}\d{5}-WTRAN-\d{6}\b/)?.[0] ?? f.name.match(/\b[A-Z]{2,6}\d{5}-WTRAN-\d{6}\b/)?.[0] ?? "";
+    const date = isoOf(text.match(/\bSent\s+([A-Za-z]+,?\s+[A-Za-z]+\s+\d{1,2},?\s+\d{4})/)?.[1] ?? "");
+    const outcomes = [...text.matchAll(/\b(Accepted(?: with Comments)?|Approved|Rejected|Not Accepted|Declined)\b/gi)].map((m) => m[1].toLowerCase());
+    const outcome: "Approved" | "Rejected" | "Pending" = outcomes.some((o) => /reject|not accepted|declined/.test(o)) ? "Rejected" : outcomes.some((o) => /accept|approv/.test(o)) ? "Approved" : "Pending";
+    // the mail's subject (the lines between the mail numbers and "From"), else the workflow's name in the message
+    const lines = text.split("\n");
+    const start = lines.findIndex((l) => /Workflow Transmittal/i.test(l));
+    const stop = lines.findIndex((l, i) => i > start && /^\s*From\b/i.test(l));
+    const mailSubject = start >= 0 && stop > start ? lines.slice(start + 1, stop).join(" ").replace(/\s+/g, " ").replace(/^\s*Final\s*\(WF-\d+\)\s*/i, "").trim() : "";
+    const workflow = mailSubject || (text.match(/completed the\s*"([^"]+)"\s*workflow/i)?.[1]?.replace(/\s+/g, " ") ?? "");
+    let subject = workflow.match(/\bto (?:instruct|appoint|engage)\b[^]*?\bto ([^]*)$/i)?.[1] ?? workflow.replace(/^.*?\((?:RFA|RFC|PVO|VO|EVO|DVO|EI)\)\s*[-–]?\s*(?:to\s+)?/i, "");
+    subject = subject.replace(/\s+/g, " ").trim();
+    if (subject) subject = subject[0].toUpperCase() + subject.slice(1);
+    const programmeCode = docNo.match(/\b(1TB\d{5})\b/)?.[1] ?? "";
+    const rfcNo = stage === "rfc" ? lastNumber(docNo) : null;
+    const v: Record<string, string> = {};
+    if (stage === "rfc") v.rfc_ref = docNo;
+    if (subject) v.title = subject;
+    const note = stage && docNo ? `Aconex approval of ${docNo}: ${outcome}${date ? ` on ${formatDate(date)}` : ""}` : "not recognised as an approval of an RFA, RFC, PVO, VO, DVO or EI – kept out";
+    return { name: f.name, kind: stage && docNo ? "wtran" : "unknown", values: v, text, programmeCode, rfcNo, no: stage && stage !== "rfc" ? lastNumber(docNo) : null, approval: stage && docNo ? { docNo, stage, outcome, date, mailNo, subject } : undefined, note };
+  }
   let kind: string = classifyDoc(pages, "");
   if (/Emergency Variation Order Assessment/i.test(head)) kind = "evo";
   else if (/employer.?s instruction \(ei\)|rsg-cm-frm-0007/i.test(head)) kind = "ei";
@@ -79,7 +124,8 @@ async function readOne(f: DocFile): Promise<DocRead | null> {
   }
   const v = r.values;
   const programmeCode = (v.rfc_ref ?? "").match(/\b(1TB\d{5})\b/)?.[1] ?? f.name.match(/\b(1TB\d{5})\b/)?.[1] ?? text.match(/\b(1TB\d{5})\b/)?.[1] ?? "";
-  const rfcNo = lastNumber((v.rfc_ref ?? "").match(/(?:RFC|CRF|VOR)[-\s]*0*(\d+)/i)?.[0] ?? "") ?? lastNumber(f.name.match(/(?:RFC|CRF)[-_ ]*0*(\d+)/i)?.[0] ?? "");
+  // "RFC 94", "RFA-005" or the full Aconex reference "1TB01031-031C12-AMA-RFA-CM-0005": the last number is the one
+  const rfcNo = (/-(?:RFA|RFC|CRF)-/i.test(v.rfc_ref ?? "") ? lastNumber(v.rfc_ref) : null) ?? lastNumber((v.rfc_ref ?? "").match(/(?:RFC|CRF|VOR|RFA)[-\s]*(?:CM[-\s]*)?0*(\d+)/i)?.[0] ?? "") ?? lastNumber(f.name.match(/(?:RFC|CRF|RFA)[-_ ]*(?:CM[-_ ]*)?0*(\d+)/i)?.[0] ?? "");
   // the document's own number: PVO 011, PVO-CM-0008, EVO 007, DVO-008
   const numberIn = (s: string, kinds: string) => lastNumber(s.match(new RegExp(`\\b(?:${kinds})[-_ ]?(?:CM[-_ ]?)?(?:No\\.?\\s*)?0*(\\d{1,4})\\b`, "i"))?.[0] ?? "");
   let no: number | null = null;
@@ -98,6 +144,11 @@ function group(docs: DocRead[]): DocRead[][] {
   for (const d of docs) {
     const title = normTitle(d.values.title ?? "");
     let key = d.rfcNo ? `rfc:${d.programmeCode}:${d.rfcNo}` : "";
+    if (!key && d.approval && d.no) {
+      // a PVO / VO / DVO / EI approval joins the group whose document of that stage carries the number
+      const host = [...groups.entries()].find(([, docs]) => docs.some((x) => x.kind === (d.approval!.stage === "vo" ? "evo" : d.approval!.stage) && x.no === d.no));
+      if (host) key = host[0];
+    }
     if (!key && title) key = byTitle.get(title) ?? `title:${d.programmeCode}:${title}`;
     if (!key) key = `file:${d.name}`;
     if (title) byTitle.set(title, key);
@@ -141,7 +192,8 @@ const first = (docs: DocRead[], kinds: string[], key: string): { value: string; 
   return null;
 };
 
-export async function addChangesFromDocuments(files: DocFile[], user: UserInfo, decisions: Decisions = {}): Promise<FromDocsResult> {
+export async function addChangesFromDocuments(files: DocFile[], user: UserInfo, decisionsIn: Decisions = {}): Promise<FromDocsResult> {
+  let decisions: Decisions = { ...decisionsIn };
   const db = getDb();
   const def = getRegisterDef("changes")!;
   const app = getAppContext();
@@ -163,7 +215,7 @@ export async function addChangesFromDocuments(files: DocFile[], user: UserInfo, 
   }
   const L = lookups();
   const programmes = db.prepare("SELECT id, code, name FROM programmes").all() as { id: number; code: string; name: string }[];
-  const plans: { key: string; docs: DocRead[]; programme: { id: number; code: string; name: string }; existing: RecordRow | null; record: Record<string, unknown>; patch: Record<string, unknown>; read: ReadValue[]; missing: string[]; title: string; itemNo: string }[] = [];
+  const plans: { key: string; docs: DocRead[]; programme: { id: number; code: string; name: string }; existing: RecordRow | null; record: Record<string, unknown>; patch: Record<string, unknown>; read: ReadValue[]; missing: string[]; title: string; itemNo: string; entry?: Outcome }[] = [];
   for (const docs of group(reads)) {
     const code = docs.map((d) => d.programmeCode).find(Boolean) ?? "";
     const programme = programmes.find((p) => p.code === code) ?? app.programme;
@@ -178,8 +230,9 @@ export async function addChangesFromDocuments(files: DocFile[], user: UserInfo, 
       if (hit) read.push({ label, value: hit.value, from: hit.from });
       return hit?.value ?? "";
     };
-    const HEAD = ["rfc", "ei", "rfa", "pvo", "evo", "dvo"];
-    const title = take("Description", HEAD, "title");
+    const HEAD = ["rfc", "ei", "rfa", "pvo", "evo", "dvo", "wtran"];
+    // the subject: the Aconex approval's subject whenever there is one, else the documents' own titles
+    const title = take("Description", ["wtran", "rfc", "ei", "rfa", "pvo", "evo", "dvo"], "title");
     const scope = take("Scope", HEAD, "scope");
     const reason = take("Reason / benefits", HEAD, "reason");
     const rootCause = take("Root cause", HEAD, "root_cause");
@@ -194,13 +247,15 @@ export async function addChangesFromDocuments(files: DocFile[], user: UserInfo, 
     const timeImpact = take("Time impact (days)", ["rfc", "pvo", "evo", "dvo"], "time_impact");
     const pvoValue = take("PVO value (SAR)", ["pvo"], "total_value");
     const dvoValue = take("DVO value (SAR)", ["dvo"], "dvo_value");
-    const rfcRefFull = take("RFC reference", ["rfc", "ei", "rfa", "evo", "pvo"], "rfc_ref");
+    const rfcRefFull = take("RFC reference", ["rfc", "ei", "rfa", "evo", "pvo", "wtran"], "rfc_ref");
     const rfcNo = docs.map((d) => d.rfcNo).find(Boolean) ?? lastNumber(rfcRefFull);
     const pvoDoc = docs.find((d) => d.kind === "pvo");
     const evoDoc = docs.find((d) => d.kind === "evo");
     const dvoDoc = docs.find((d) => d.kind === "dvo");
     const eiDoc = docs.find((d) => d.kind === "ei");
     const rfcDoc = docs.find((d) => d.kind === "rfc");
+    const rfaDoc = docs.find((d) => d.kind === "rfa");
+    const approvals = docs.filter((d) => d.kind === "wtran" && d.approval).map((d) => d.approval!);
 
     // where the change sits: asset, contract, cost report line, contractor, package
     const assets = db.prepare("SELECT id, code, name FROM assets WHERE programme_id = ? ORDER BY code").all(programme.id) as { id: number; code: string; name: string }[];
@@ -215,12 +270,22 @@ export async function addChangesFromDocuments(files: DocFile[], user: UserInfo, 
 
     // an entry already in the register for this change?
     const rows = db.prepare("SELECT * FROM changes WHERE programme_id = ?").all(programme.id) as RecordRow[];
+    const approvedNo = (stage: string) => approvals.find((a) => a.stage === stage)?.docNo;
+    const requestKind = rfcDoc || /-(RFC|CRF)-/i.test(rfcRefFull) ? "rfc" : rfaDoc || /-RFA-/i.test(rfcRefFull) ? "rfa" : "rfc";
+    const sameKind = (r: RecordRow) => (requestKind === "rfa" ? /rfa/i.test(String(r.rfc_ref ?? "")) || /-RFA-/i.test(String(r.rfc_aconex_ref ?? "")) : /(rfc|crf)/i.test(String(r.rfc_ref ?? "")) || /-(RFC|CRF)-/i.test(String(r.rfc_aconex_ref ?? "")) || (!/rfa/i.test(String(r.rfc_ref ?? "")) && /^\d+$/.test(String(r.rfc_ref ?? "").trim())));
     const existing =
-      rows.find((r) => rfcNo && (lastNumber(String(r.rfc_aconex_ref ?? "")) === rfcNo || (/(rfc|crf)/i.test(String(r.rfc_ref ?? "")) && lastNumber(String(r.rfc_ref ?? "")) === rfcNo))) ??
+      rows.find((r) => rfcNo && sameKind(r) && (lastNumber(String(r.rfc_aconex_ref ?? "")) === rfcNo || lastNumber(String(r.rfc_ref ?? "")) === rfcNo)) ??
+      rows.find((r) => approvedNo("pvo") && lastNumber(String(r.pvo_ref ?? "")) === lastNumber(approvedNo("pvo"))) ??
+      rows.find((r) => approvedNo("dvo") && lastNumber(String(r.dvo_ref ?? "")) === lastNumber(approvedNo("dvo"))) ??
+      rows.find((r) => approvedNo("vo") && lastNumber(String(r.vo_ref ?? "")) === lastNumber(approvedNo("vo"))) ??
       rows.find((r) => pvoDoc?.no && lastNumber(String(r.pvo_ref ?? "")) === pvoDoc.no) ??
       rows.find((r) => dvoDoc?.no && lastNumber(String(r.dvo_ref ?? "")) === dvoDoc.no) ??
       rows.find((r) => title && normTitle(String(r.description ?? "")) === normTitle(title));
 
+    if (!existing && docs.every((d) => d.kind === "wtran")) {
+      result.warnings.push(`${docs.map((d) => d.name).join(", ")}: an approval of ${approvals[0]?.docNo ?? "a document"} that is not in the register yet – upload the RFA / RFC / PVO / DVO with it.`);
+      continue;
+    }
     const pending = L.status("Pending");
     const approved = L.status("Approved");
     const stage: Record<string, unknown> = {};
@@ -231,13 +296,20 @@ export async function addChangesFromDocuments(files: DocFile[], user: UserInfo, 
     stage.pvo_status_id = hasVo || dvoDoc ? approved : pending;
     if (evoDoc) stage.vo_status_id = approved;
     stage.dvo_status_id = dvoDoc ? approved : pending;
+    if (rfaDoc && !rfcDoc) {
+      // a Request for Approval stands where the RFC would: its reference, date and value
+      stage.rfc_ref = rfcNo ? `RFA-${pad3(rfcNo)}` : rfcRefFull;
+      if (/\b1TB\d{5}-/.test(rfcRefFull)) stage.rfc_aconex_ref = rfcRefFull;
+      if (dateRaised) stage.rfc_date = dateRaised;
+      if (money(rom)) stage.rfc_tracker_amount = money(rom);
+    }
     if (rfcDoc) {
       stage.rfc_ref = rfcNo ? `RFC-${pad3(rfcNo)}` : rfcRefFull;
       stage.rfc_aconex_ref = /\b1TB\d{5}-/.test(rfcRefFull) ? rfcRefFull : rfcDoc.values.rfc_ref ?? "";
       if (dateRaised) stage.rfc_date = dateRaised;
       if (timeImpact) stage.rfc_time_impact = Number(timeImpact) || null;
       if (money(rom)) stage.rfc_tracker_amount = money(rom);
-    } else if (rfcRefFull && !existing?.rfc_ref) stage.rfc_ref = rfcNo ? `RFC-${pad3(rfcNo)}` : rfcRefFull;
+    } else if (rfcRefFull && !rfaDoc && !existing?.rfc_ref) stage.rfc_ref = rfcNo ? `RFC-${pad3(rfcNo)}` : rfcRefFull;
     if (eiDoc) {
       stage.ei_ref = eiDoc.values.ei_no || eiDoc.values.instruction_ref || (eiDoc.no ? `EI-${pad3(eiDoc.no)}` : "");
       if (eiDoc.values.instruction_ref) stage.ei_aconex_ref = eiDoc.values.instruction_ref;
@@ -270,6 +342,18 @@ export async function addChangesFromDocuments(files: DocFile[], user: UserInfo, 
       const planned = money(pvoValue) ?? money(String(existing?.pvo_tracker_amount ?? ""));
       if (planned) stage.dvo_planned_value = planned;
       if (dvoDoc.values.time_impact) stage.dvo_time_impact = Number(dvoDoc.values.time_impact) || null;
+    }
+    // the Aconex approvals: the stage's status, its date and the workflow reference
+    for (const ap of approvals) {
+      const id = ap.outcome === "Approved" ? approved : ap.outcome === "Rejected" ? L.status("Rejected") ?? pending : pending;
+      stage[`${ap.stage}_status_id`] = id;
+      if (ap.date) stage[`${ap.stage}_date`] = ap.date;
+      if (ap.mailNo) stage[`${ap.stage}_aconex_ref`] = ap.mailNo;
+      if (ap.stage === "rfc" && !stage.rfc_ref) stage.rfc_ref = /RFA/i.test(ap.docNo) ? `RFA-${pad3(lastNumber(ap.docNo) ?? 0)}` : `RFC-${pad3(lastNumber(ap.docNo) ?? 0)}`;
+      if (ap.stage === "pvo" && !stage.pvo_ref) stage.pvo_ref = `PVO ${pad3(lastNumber(ap.docNo) ?? 0)}`;
+      if (ap.stage === "vo" && !stage.vo_ref) stage.vo_ref = `${/EVO/i.test(ap.docNo) ? "EVO" : "VO"} ${pad3(lastNumber(ap.docNo) ?? 0)}`;
+      if (ap.stage === "dvo" && !stage.dvo_ref) stage.dvo_ref = `DVO-${pad3(lastNumber(ap.docNo) ?? 0)}`;
+      read.push({ label: `${ap.stage.toUpperCase()} approval`, value: `${ap.outcome}${ap.date ? ` on ${formatDate(ap.date)}` : ""} (${ap.mailNo || ap.docNo})`, from: `Aconex workflow ${ap.mailNo}` });
     }
     // the cost report carries the furthest stage only
     if (money(pvoValue) || money(dvoValue) || existing?.pvo_cr_amount) stage.rfc_cr_amount = 0;
@@ -305,8 +389,34 @@ export async function addChangesFromDocuments(files: DocFile[], user: UserInfo, 
       fill("ew_ref", ewRef);
       patch.notes = [String(existing.notes ?? "").trim(), `${stamp}. ${extras}`.trim(), missingNote].filter(Boolean).join("\n");
     }
-    const max = rows.map((r) => Number(String(r.item_no ?? "").match(/^CH-(\d+)$/i)?.[1] ?? 0)).reduce((a, b) => Math.max(a, b), 0);
-    const itemNo = `CH-${pad3(max + 1 + plans.filter((pl) => pl.programme.id === programme.id && !pl.existing).length)}`;
+    // the next number in the register's own pattern: CH-146 (one series), or CH-006C72-17 (a series per package)
+    const perPackage = rows.some((r) => /^CH-\d{3}[A-Z]\d{2}-/i.test(String(r.item_no ?? "")));
+    const acc = (contract ? (db.prepare("SELECT acc_ref FROM contracts WHERE id = ?").get(contract.id) as { acc_ref: string | null } | undefined)?.acc_ref ?? "" : "").match(/\d{3}[A-Z]\d{2}/i)?.[0]?.toUpperCase() ?? contractTitle.match(/\d{3}[A-Z]\d{2}/i)?.[0]?.toUpperCase() ?? "";
+    const queued = plans.filter((pl) => pl.programme.id === programme.id && !pl.existing);
+    let itemNo: string;
+    // the first free number: a number freed by a deleted entry is used again, so the series keeps no gap
+    const firstFree = (used: Set<number>, from = 1) => {
+      let n = from;
+      while (used.has(n)) n++;
+      return n;
+    };
+    const typedMax = (nums: number[]) => nums.reduce((a, b) => Math.max(a, b), 0);
+    if (perPackage && acc) {
+      const used = new Set(rows.map((r) => Number(String(r.item_no ?? "").match(new RegExp(`^CH-${acc}-(\\d+)$`, "i"))?.[1] ?? 0)).filter(Boolean));
+      for (const pl of queued) {
+        const n = Number(pl.itemNo.match(new RegExp(`^CH-${acc}-(\\d+)$`, "i"))?.[1] ?? 0);
+        if (n) used.add(n);
+      }
+      itemNo = `CH-${acc}-${firstFree(used, Math.max(1, typedMax(rows.filter((r) => !/Added from documents/.test(String(r.notes ?? ""))).map((r) => Number(String(r.item_no ?? "").match(new RegExp(`^CH-${acc}-(\\d+)$`, "i"))?.[1] ?? 0))) + 1))}`;
+    } else {
+      const used = new Set(rows.map((r) => Number(String(r.item_no ?? "").match(/^CH-(\d+)$/i)?.[1] ?? 0)).filter(Boolean));
+      for (const pl of queued) {
+        const n = Number(pl.itemNo.match(/^CH-(\d+)$/i)?.[1] ?? 0);
+        if (n) used.add(n);
+      }
+      const typed = typedMax(rows.filter((r) => !/Added from documents/.test(String(r.notes ?? ""))).map((r) => Number(String(r.item_no ?? "").match(/^CH-(\d+)$/i)?.[1] ?? 0)));
+      itemNo = `CH-${pad3(firstFree(used, typed + 1))}`;
+    }
     const record: Record<string, unknown> = {
       programme_id: programme.id,
       item_no: itemNo,
@@ -333,7 +443,6 @@ export async function addChangesFromDocuments(files: DocFile[], user: UserInfo, 
   // a duplicate waits for a decision: nothing is written until every one has it
   const undecided = plans.filter((pl) => pl.existing && !decisions[pl.key]);
   if (undecided.length) {
-    result.needsDecision = true;
     const statusName = (id: unknown) => L.statusName(Number(id));
     const show = (v: unknown) => (v === null || v === undefined || v === "" ? "–" : typeof v === "number" ? formatMoney(v) : String(v));
     result.duplicates = undecided.map<Duplicate>((pl) => {
@@ -363,7 +472,13 @@ export async function addChangesFromDocuments(files: DocFile[], user: UserInfo, 
         files: pl.docs.map((d) => d.name),
       };
     });
-    return result;
+    // the same documents again with nothing new in them: nothing to decide, the row is simply kept
+    for (const d of result.duplicates.filter((d) => !d.differences.length)) decisions = { ...decisions, [d.key]: "keep" };
+    result.duplicates = result.duplicates.filter((d) => d.differences.length);
+    if (result.duplicates.length) {
+      result.needsDecision = true;
+      return result;
+    }
   }
 
   // every new entry goes under the current month's report
@@ -384,11 +499,40 @@ export async function addChangesFromDocuments(files: DocFile[], user: UserInfo, 
     }
     if (pl.existing) {
       const row = updateRecord(def, Number(pl.existing.id), pl.patch, user, "import", { bypassRoles: user.role === "admin" });
-      result.entries.push({ action: "updated", id: row.id, label: String(row.item_no ?? ""), description: String(row.description ?? ""), programme: pl.programme.name, files: pl.docs.map((d) => d.name), read: pl.read, missing: pl.missing });
+      pl.entry = { action: "updated", id: row.id, label: String(row.item_no ?? ""), description: String(row.description ?? ""), programme: pl.programme.name, files: pl.docs.map((d) => d.name), read: pl.read, missing: pl.missing };
+      result.entries.push(pl.entry);
     } else {
       const row = createRecord(def, pl.record, user, "import");
-      result.entries.push({ action: "created", id: row.id, label: pl.itemNo, description: String(row.description ?? ""), programme: pl.programme.name, files: pl.docs.map((d) => d.name), read: pl.read, missing: pl.missing });
+      pl.entry = { action: "created", id: row.id, label: pl.itemNo, description: String(row.description ?? ""), programme: pl.programme.name, files: pl.docs.map((d) => d.name), read: pl.read, missing: pl.missing };
+      result.entries.push(pl.entry);
     }
   }
+  // entries added from documents keep an unbroken series: one deleted and added again leaves no gap behind
+  for (const programmeId of new Set(result.entries.map((e) => plans.find((pl) => pl.entry === e)?.programme.id ?? 0).filter(Boolean))) closeGaps(programmeId, user, result);
   return result;
+}
+
+/** Renumbers the document-added entries of a project so the CH series has no gap (entries typed by hand keep their numbers). */
+export function closeGaps(programmeId: number, user: UserInfo, result: FromDocsResult = { entries: [], duplicates: [], needsDecision: false, files: [], periods: [], warnings: [] }) {
+  const db = getDb();
+  const def = getRegisterDef("changes")!;
+  const rows = db.prepare("SELECT id, item_no, notes FROM changes WHERE programme_id = ? ORDER BY id").all(programmeId) as { id: number; item_no: string; notes: string | null }[];
+  if (rows.some((r) => /^CH-\d{3}[A-Z]\d{2}-/i.test(r.item_no))) return; // a series per package is left as it is
+  const fixed = new Set(rows.filter((r) => !/Added from documents/.test(r.notes ?? "")).map((r) => Number(r.item_no.match(/^CH-(\d+)$/i)?.[1] ?? 0)).filter(Boolean));
+  const movable = rows.filter((r) => /Added from documents/.test(r.notes ?? "") && /^CH-\d+$/i.test(r.item_no)).sort((a, b) => Number(a.item_no.slice(3)) - Number(b.item_no.slice(3)));
+  let n = [...fixed].reduce((a, b) => Math.max(a, b), 0) + 1;
+  for (const r of movable) {
+    while (fixed.has(n)) n++;
+    const want = `CH-${pad3(n)}`;
+    fixed.add(n);
+    if (r.item_no !== want) {
+      try {
+        updateRecord(def, r.id, { item_no: want }, user, "import", { bypassRoles: true });
+        for (const e of result.entries) if (e.id === r.id) e.label = want;
+        result.warnings.push(`${r.item_no} renumbered to ${want} so the series has no gap.`);
+      } catch (e) {
+        console.error("renumbering failed:", e);
+      }
+    }
+  }
 }

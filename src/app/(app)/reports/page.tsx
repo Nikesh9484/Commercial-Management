@@ -31,6 +31,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
         item("period_summary", "Period Summary – Key Period Movements", "The month in one click, as sent to the directors: projected cost to complete, budget position, forecast movement analysis, change status and the items behind every movement, with a written narrative – on screen, PDF, Excel or email draft"),
         item("recovery_report", "Cost Recovery – Accommodation & Customs Duty", "What contractors owe RSG: accommodation charges invoiced, recovered through IPCs, withheld and outstanding, and customs duties RSG paid on their imports with the recovery position – per contractor, with the tracker rows"),
         item("aconex_report", "Aconex Cost Check", "The Aconex control account export reconciled line by line against the cost report: budget, commitments, approved and pending changes, estimate at completion and incurred to date, with every difference listed"),
+        item("cashflow_forecast", "Cash Flow Forecast – Employer Executive Review", "Planned, actual and forecast cash flow built from the cost report, the IPC log and the contracts' completion dates: executive summary, monthly and yearly tables, cash flow by major package, KPIs, key observations and the S-curve – on screen, PDF or Excel"),
         item("uncommitted_ew", "Uncommitted Costs and Early Warnings (Level 5 layout)", "For this report: every cost report line with its budget, commitments, VOs under process, EOT and other claims, uncommitted scope, early warnings and estimate at completion in the programme-wide consolidated layout, with the early warnings behind column L listed contract by contract – on screen, PDF or Excel ready to paste"),
         item("kpi_register", "KPI Report – F1 Variation Orders (Open VO Register)", "The head office's monthly KPI on variation orders for this report: Closed KPIs (DVO recorded as Approved) and Open KPIs (PVO or VO recorded, DVO pending) in the Open VO Register layout, with what moved since the previous report – on screen with the supporting documents and PDF packs, or as Excel ready to paste into the register"),
         item("dashboard", "Commercial Dashboard (Excel)", "The whole dashboard in one workbook: headline tiles, native Excel charts and one sheet per module with live formulas over the registers"),
@@ -130,6 +131,18 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
                           </a>
                           <a className="btn btn-sm btn-secondary" href={`/api/export?section=excel-app-modules`} title="The macro source files, only needed if Excel refuses the macros in the .xlsm">
                             <FileDown size={14} /> VBA modules
+                          </a>
+                        </>
+                      ) : it.section === "cashflow_forecast" ? (
+                        <>
+                          <Link className="btn btn-sm btn-summary" href={`/reports/cashflow-forecast${period ? `?period=${period.id}` : ""}`}>
+                            <Sparkles size={14} /> Open
+                          </Link>
+                          <a className="btn btn-sm btn-pdf" href={`/api/export?section=cashflow_forecast&format=pdf${pid}`}>
+                            <FileDown size={14} /> PDF
+                          </a>
+                          <a className="btn btn-sm btn-excel" href={`/api/export?section=cashflow_forecast&format=xlsx${pid}`}>
+                            <FileSpreadsheet size={14} /> Excel
                           </a>
                         </>
                       ) : it.section === "uncommitted_ew" ? (

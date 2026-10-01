@@ -31,6 +31,7 @@ const NAMES: Record<string, string> = {
   period_summary: "Period_Summary_Key_Movements",
   recovery_report: "Cost_Recovery_Accommodation_Customs",
   uncommitted_ew: "Uncommitted_Costs_and_Early_Warnings",
+  cashflow_forecast: "Cash_Flow_Forecast",
   aconex_report: "Aconex_Cost_Check",
   kpi_register: "KPI_F1_Open_VO_Register",
   deck: "Cost_Report_Presentation",

@@ -18,6 +18,7 @@ import { formatDate, formatDateTime, formatMoney, toDate } from "../format";
 import type { FieldDef, RecordRow, RegisterDef } from "../registers/types";
 import { getRegisterDef } from "../registers";
 import { getAccommodationSummary, getCustomsSummary } from "../recovery/summary";
+import { buildCashflowForecast, monthLabel } from "../cashflow/forecast";
 import { buildUncommittedTable } from "./uncommitted-ew";
 import { buildAconexReconciliation, ACONEX_MEASURES, measureDecides } from "../recovery/aconex";
 import { kpiRegisterSheet } from "./kpi-excel";
@@ -72,6 +73,7 @@ export async function renderSectionsExcel(data: ReportData, keys: string[], link
     else if (k === "period_summary") periodSummarySheet(wb, data);
     else if (k === "recovery_report") recoveryReportSheet(wb, data);
     else if (k === "uncommitted_ew") uncommittedEwSheet(wb, data);
+    else if (k === "cashflow_forecast") cashflowForecastSheets(wb, data);
     else if (k === "aconex_report") aconexSheet(wb, data);
     else if (k === "kpi_register") kpiRegisterSheet(wb, data);
     else if (k === "level1" || k === "level2" || k.toUpperCase() === "A" || k.toUpperCase() === "B") {
@@ -1211,5 +1213,108 @@ function cell(f: FieldDef, r: RecordRow): unknown {
       return Number(v);
     default:
       return v;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Cash Flow Forecast – summary, monthly table, packages, years        */
+
+export function cashflowForecastSheets(wb: ExcelJS.Workbook, d: ReportData) {
+  const cf = buildCashflowForecast(d);
+  const s = cf.summary;
+  const pct = (v: number | null) => (v === null ? "–" : `${v}%`);
+
+  const ws = wb.addWorksheet("Cash Flow Summary");
+  [44, 24, 24, 60].forEach((w, i) => (ws.getColumn(i + 1).width = w));
+  titleBlock(ws, `Cash Flow Forecast – ${cf.programme.name} (${cf.programme.code}) – ${cf.period.label}`, `${sub(d)} · ${monthLabel(s.start)} to ${monthLabel(s.end)} (${s.durationMonths} months) · SAR excl. VAT`, 4);
+  header(ws.addRow(["1. Executive summary", "SAR", "", "Basis"]));
+  const put = (label: string, v: number | string | null, note = "") => {
+    const r = ws.addRow([label, v, "", note]);
+    if (typeof v === "number") r.getCell(2).numFmt = MONEY_FMT;
+    return r;
+  };
+  put("Total approved budget", s.budget, "cost report column G (latest budget)");
+  put("Actual spend to date", s.actual, `certified to ${cf.period.label} (column P)`);
+  put("Committed cost", s.committed, "column I – awarded contracts + determined VOs");
+  put("Forecast remaining cost", s.forecastRemaining, "cash to completion");
+  put("Forecast final cost", s.forecastFinal, `anticipated final account (column N) SAR ${formatMoney(s.afa)}`);
+  put("Budget variance", s.variance, s.variance > 0 ? "forecast above budget" : "within budget");
+  put("Previous report forecast final", s.previousForecastFinal, s.forecastChange === null ? "no previous report" : `change ${s.forecastChange >= 0 ? "+" : ""}${formatMoney(s.forecastChange)}`);
+  ws.addRow([]);
+  header(ws.addRow(["6. Management dashboard – KPIs", "Value", "", "Definition"]));
+  put("Budget utilisation %", pct(cf.kpis.budgetUtilisation), "forecast final ÷ approved budget");
+  put("Cost committed %", pct(cf.kpis.committedPct), "committed ÷ approved budget");
+  put("Cost spent %", pct(cf.kpis.spentPct), "actual to date ÷ approved budget");
+  put("Forecast completion %", pct(cf.kpis.completionPct), "actual to date ÷ forecast final");
+  put("Remaining budget", cf.kpis.remainingBudget, "approved budget − actual to date");
+  put("Peak funding month", cf.kpis.peakMonth ? `${cf.kpis.peakMonth.label} – SAR ${formatMoney(cf.kpis.peakMonth.amount)}` : "–", "highest monthly outflow (actual or forecast)");
+  ws.addRow([]);
+  header(ws.addRow(["5. Key observations", "", "", ""]));
+  for (const o of cf.observations) {
+    const r = ws.addRow([o]);
+    ws.mergeCells(r.number, 1, r.number, 4);
+    r.alignment = { wrapText: true, vertical: "top" };
+  }
+  ws.addRow([]);
+  header(ws.addRow(["Basis of the forecast", "", "", ""]));
+  for (const a of cf.assumptions) {
+    const r = ws.addRow([a]);
+    ws.mergeCells(r.number, 1, r.number, 4);
+    r.alignment = { wrapText: true, vertical: "top" };
+    r.font = { color: { argb: "FF5B6577" }, size: 9 };
+  }
+
+  const wm = wb.addWorksheet("Monthly Cash Flow");
+  [12, 10, 18, 18, 18, 20, 20, 20, 22, 22].forEach((w, i) => (wm.getColumn(i + 1).width = w));
+  titleBlock(wm, `2. Monthly cash flow – ${cf.programme.name} – ${cf.period.label}`, "Planned = budget S-curve · Actual = certified in the month (to the report month) · Forecast = works to complete spread to completion · SAR excl. VAT", 10);
+  header(wm.addRow(["Month", "Kind", "Planned spend", "Actual spend", "Forecast spend", "Contractor payments", "Consultant payments", "Other project costs", "Total monthly cash outflow", "Cumulative cash outflow"]));
+  const first = wm.rowCount + 1;
+  for (const m of cf.months) {
+    const r = wm.addRow([m.label, m.kind, m.planned, m.actual, m.forecast, m.contractor, m.consultant, m.other, m.total, m.cumulative]);
+    for (let c = 3; c <= 10; c++) r.getCell(c).numFmt = MONEY_FMT;
+    if (m.kind === "current") r.eachCell({ includeEmpty: true }, (c) => (c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF4E5" } }));
+  }
+  const last = wm.rowCount;
+  const tr = wm.addRow(["Total", "", ...["C", "D", "E", "F", "G", "H", "I"].map((col) => ({ formula: `SUM(${col}${first}:${col}${last})` })), ""]);
+  for (let c = 3; c <= 10; c++) tr.getCell(c).numFmt = MONEY_FMT;
+  totalRow(tr);
+
+  const wp = wb.addWorksheet("Cash Flow by Package");
+  [28, 8, 20, 20, 20, 20, 20, 18, 26, 26].forEach((w, i) => (wp.getColumn(i + 1).width = w));
+  titleBlock(wp, `3. Cash flow by major package – ${cf.programme.name} – ${cf.period.label}`, "Each cost report line is grouped by what it buys; the months of each package are on the right · SAR excl. VAT", 10);
+  const monthKeys = cf.months.map((m) => m.key);
+  const hdr = wp.addRow(["Package", "Lines", "Approved budget", "Committed", "Actual to date", "Forecast remaining", "Forecast final", "Variance", "Spending period", "Peak month", ...cf.months.map((m) => m.label)]);
+  header(hdr);
+  for (const p of cf.packages) {
+    const r = wp.addRow([p.category, p.lines, p.budget, p.committed, p.actual, p.forecastRemaining, p.forecastFinal, p.variance, p.firstMonth ? `${monthLabel(p.firstMonth)} – ${p.lastMonth ? monthLabel(p.lastMonth) : ""}` : "–", p.peakMonth ? `${monthLabel(p.peakMonth)} (${formatMoney(p.peakAmount)})` : "–", ...monthKeys.map((k) => p.byMonth[k] ?? 0)]);
+    for (let c = 3; c <= 8; c++) r.getCell(c).numFmt = MONEY_FMT;
+    for (let c = 11; c <= 10 + monthKeys.length; c++) {
+      r.getCell(c).numFmt = MONEY_FMT;
+      wp.getColumn(c).width = 14;
+    }
+  }
+  const pt = wp.addRow(["Total", cf.packages.reduce((t, p) => t + p.lines, 0), s.budget, s.committed, s.actual, s.forecastRemaining, s.forecastFinal, s.variance, "", "", ...monthKeys.map((k) => cf.packages.reduce((t, p) => t + (p.byMonth[k] ?? 0), 0))]);
+  for (let c = 3; c <= 10 + monthKeys.length; c++) if (c !== 9 && c !== 10) pt.getCell(c).numFmt = MONEY_FMT;
+  totalRow(pt);
+
+  const wy = wb.addWorksheet("Yearly Summary");
+  [10, 24, 30, 24, 24].forEach((w, i) => (wy.getColumn(i + 1).width = w));
+  titleBlock(wy, `4. Yearly summary – ${cf.programme.name} – ${cf.period.label}`, "Annual budget = planned S-curve for the year · Annual forecast = actual + forecast · SAR excl. VAT", 5);
+  header(wy.addRow(["Year", "Annual budget", "Annual forecast (actual + forecast)", "Actual spend", "Variance"]));
+  for (const y of cf.years) {
+    const r = wy.addRow([y.year, y.budget, y.forecast, y.actual, y.variance]);
+    for (let c = 2; c <= 5; c++) r.getCell(c).numFmt = MONEY_FMT;
+  }
+  const yt = wy.addRow(["Total", cf.years.reduce((t, y) => t + y.budget, 0), cf.years.reduce((t, y) => t + y.forecast, 0), cf.years.reduce((t, y) => t + y.actual, 0), cf.years.reduce((t, y) => t + y.variance, 0)]);
+  for (let c = 2; c <= 5; c++) yt.getCell(c).numFmt = MONEY_FMT;
+  totalRow(yt);
+
+  const wl = wb.addWorksheet("Lines behind the forecast");
+  [16, 44, 28, 22, 12, 18, 18, 18, 18, 10, 10].forEach((w, i) => (wl.getColumn(i + 1).width = w));
+  titleBlock(wl, `Cost report lines behind the forecast – ${cf.programme.name} – ${cf.period.label}`, "Package = cash flow grouping · Payer = contractor / consultant / other · Start = first payment application · End = revised completion", 11);
+  header(wl.addRow(["Code", "Name", "Contractor", "Package", "Payer", "Approved budget", "Committed", "Actual to date", "Forecast final", "Start", "End"]));
+  for (const l of cf.lines) {
+    const r = wl.addRow([l.code, l.name, l.contractor, l.category, l.payer, l.budget, l.committed, l.actual, l.forecastFinal, monthLabel(l.start), monthLabel(l.end)]);
+    for (let c = 6; c <= 9; c++) r.getCell(c).numFmt = MONEY_FMT;
   }
 }

@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { impliedOverallStatus } from "./defs/changes";
 import { getDb, columnFor, getSetting } from "../db";
 import { getRegisterDef, allRegisters } from "./index";
 import type { FieldDef, LookupOption, RecordRow, RegisterDef, UserInfo } from "./types";
@@ -304,6 +305,25 @@ function applyRules(def: RegisterDef, prepared: Prepared, mode: "create" | "upda
     }
     prepared.values.item_no = candidate;
     prepared.display.item_no = candidate;
+  }
+  if (def.key === "changes") {
+    // the overall status follows the stages (a DVO approved closes the change; a dead last stage gives its status)
+    const db = getDb();
+    const names = new Map((db.prepare("SELECT id, name FROM approval_statuses").all() as { id: number; name: string }[]).map((r) => [r.id, r.name]));
+    const v = (k: string) => (k in prepared.values ? prepared.values[k] : existing?.[k]);
+    const stage: Record<string, string | null> = {};
+    for (const p of ["ew", "rfc", "pvo", "vo", "ei", "dvo"]) {
+      const id = v(`${p}_status_id`);
+      stage[p] = id === null || id === undefined || id === "" ? null : (names.get(Number(id)) ?? null);
+    }
+    const storedId = v("overall_status_id");
+    const stored = storedId === null || storedId === undefined || storedId === "" ? null : (names.get(Number(storedId)) ?? null);
+    const want = impliedOverallStatus(stage, stored, { dvoClosed: v("dvo_closed") === true || v("dvo_closed") === 1 });
+    const wantId = [...names.entries()].find(([, n]) => n === want)?.[0];
+    if (wantId !== undefined && wantId !== Number(storedId ?? NaN)) {
+      prepared.values.overall_status_id = wantId;
+      prepared.display.overall_status_id = wantId;
+    }
   }
   if (def.key === "budget_transfers") {
     const v = (k: string) => (k in prepared.values ? prepared.values[k] : existing?.[k]);

@@ -7,6 +7,7 @@ import { allRegisters } from "./registers";
 import type { FieldDef, RegisterDef } from "./registers/types";
 import { nowIso, formatMonthYear } from "./format";
 import { tidyRegisters } from "./text/tidy-registers";
+import { rederiveOverallStatuses } from "./changes/status";
 import { personalSetting, personalRequest, isSharedContextKey } from "./personal-context";
 
 /**
@@ -438,6 +439,15 @@ function seed(db: Database.Database) {
   // its early warnings were renumbered) doubled the period movement. Runs once: of each set of rows
   // in a project that say the same thing against the same package and cost report line, the
   // original stays – under the latest number and figures – and the copies go.
+  // The overall status of a change follows its stages (a DVO approved closes it as Approved; a line
+  // cancelled, rejected or superseded at its last stage is not pending). Cheap, so it runs every start.
+  try {
+    const n = rederiveOverallStatuses(db);
+    if (n) console.log(`[migration] overall status brought in line with the stages on ${n} change(s)`);
+  } catch (e) {
+    console.warn("[migration] change status alignment skipped:", e);
+  }
+
   if (getSetting(db, "deduped_early_warnings") !== "1") {
     try {
       const r = dedupeEarlyWarnings(db);

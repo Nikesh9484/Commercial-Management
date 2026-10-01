@@ -132,7 +132,10 @@ export { daysBetween };
 
 /** True when a stage has anything recorded against it. */
 export function stageHasData(row: RecordRow, prefix: string): boolean {
-  return [`${prefix}_ref`, `${prefix}_date`, `${prefix}_status_id`, `${prefix}_tracker_amount`, `${prefix}_cr_amount`].some((k) => row[k] !== null && row[k] !== undefined && row[k] !== "");
+  const has = (k: string) => row[k] !== null && row[k] !== undefined && row[k] !== "";
+  // a status set to "Pending" on its own (the next stages of a change just raised) does not make the stage current
+  const pendingOnly = has(`${prefix}_status_id`) && String(row[`${prefix}_status_id__label`] ?? "").toLowerCase() === "pending";
+  return [`${prefix}_ref`, `${prefix}_date`, `${prefix}_tracker_amount`, `${prefix}_cr_amount`].some(has) || (has(`${prefix}_status_id`) && !pendingOnly);
 }
 
 /**

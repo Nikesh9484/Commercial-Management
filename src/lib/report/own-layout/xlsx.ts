@@ -48,13 +48,42 @@ export class XSheet {
   path: string;
   /** hidden in the workbook (a stale copy or a working sheet): left exactly as it is */
   hidden = false;
-  head: string;
-  tail: string;
-  rows = new Map<number, XRow>();
+  head = "";
+  tail = "";
+  private raw: string | null = null;
+  private parsed: Map<number, XRow> | null = null;
+  private loader: () => string;
   dirty = false;
-  constructor(name: string, path: string, xml: string) {
+  constructor(name: string, path: string, loader: () => string) {
     this.name = name;
     this.path = path;
+    this.loader = loader;
+  }
+  /** true while the sheet has not been parsed: its file in the zip is left as it is */
+  get untouched(): boolean {
+    return !this.parsed;
+  }
+  private get xml(): string {
+    if (this.raw === null && !this.parsed) this.raw = this.loader();
+    return this.raw ?? "";
+  }
+  /** a cheap look at the XML without parsing it */
+  mentions(text: string): boolean {
+    if (this.parsed) return (this.head + this.tail).includes(text) || [...this.parsed.values()].some((r) => [...r.cells.values()].some((c) => c.inner.includes(text)));
+    const hit = this.xml.includes(text);
+    if (!hit) this.raw = null; // nothing here: let the text go
+    return hit;
+  }
+  get rows(): Map<number, XRow> {
+    if (!this.parsed) this.parse(this.xml);
+    return this.parsed!;
+  }
+  set rows(m: Map<number, XRow>) {
+    this.parsed = m;
+  }
+  private parse(xml: string) {
+    this.parsed = new Map();
+    this.raw = null;
     const open = xml.indexOf("<sheetData");
     const selfClosed = open >= 0 && xml.slice(open, xml.indexOf(">", open) + 1).endsWith("/>");
     if (open < 0) {
@@ -83,10 +112,11 @@ export class XSheet {
         if (!p) continue;
         row.cells.set(p.c, { c: p.c, attrs: cm[1].replace(/\s*\br="[A-Z]+\d+"/, ""), inner: cm[3] ?? "" });
       }
-      this.rows.set(r, row);
+      this.parsed.set(r, row);
     }
   }
   serialize(): string {
+    if (!this.parsed) return this.xml;
     const rows = [...this.rows.values()].sort((a, b) => a.r - b.r);
     const out: string[] = [this.head];
     for (const row of rows) {
@@ -112,12 +142,17 @@ export class XWorkbook {
   sheets: XSheet[] = [];
   strings: string[] = [];
   private workbookXml = "";
+  /** workbook.xml as bytes – it can run to tens of megabytes of defined names, so it is never held as one string */
+  private workbookBytes: Buffer<ArrayBufferLike> = Buffer.alloc(0);
   private readonly serialBase = Date.UTC(1899, 11, 30);
 
   static async load(bytes: Buffer): Promise<XWorkbook> {
     const wb = new XWorkbook();
     wb.zip = await JSZip.loadAsync(bytes);
-    wb.workbookXml = (await wb.zip.file("xl/workbook.xml")?.async("string")) ?? "";
+    wb.workbookBytes = (await wb.zip.file("xl/workbook.xml")?.async("nodebuffer")) ?? Buffer.alloc(0);
+    // the sheet list only needs the <sheets> block
+    const sheetsBlock = wb.workbookBytes.toString("utf8", 0, Math.min(wb.workbookBytes.length, 400_000));
+    wb.workbookXml = sheetsBlock.includes("</sheets>") ? sheetsBlock.slice(0, sheetsBlock.indexOf("</sheets>") + 9) : wb.workbookBytes.toString("utf8");
     const rels = (await wb.zip.file("xl/_rels/workbook.xml.rels")?.async("string")) ?? "";
     const relMap = new Map<string, string>();
     for (const m of rels.matchAll(/<Relationship\b[^>]*\bId="([^"]+)"[^>]*\bTarget="([^"]+)"/g)) relMap.set(m[1], m[2]);
@@ -131,9 +166,10 @@ export class XWorkbook {
       const target = rid ? relMap.get(rid) : undefined;
       if (!name || !target) continue;
       const path = target.startsWith("/") ? target.slice(1) : `xl/${target.replace(/^\/?xl\//, "")}`;
-      const xml = await wb.zip.file(path)?.async("string");
-      if (xml === undefined) continue;
-      const sheet = new XSheet(unesc(name), path, xml);
+      const entry = wb.zip.file(path);
+      if (!entry) continue;
+      const bytes = await entry.async("nodebuffer");
+      const sheet = new XSheet(unesc(name), path, () => bytes.toString("utf8"));
       sheet.hidden = /\bstate="(hidden|veryHidden)"/.test(attrs);
       wb.sheets.push(sheet);
     }
@@ -300,8 +336,9 @@ export class XWorkbook {
       .replace(/<formula>([\s\S]*?)<\/formula>/g, (_m, f: string) => `<formula>${esc(shiftFormula(unesc(f), true))}</formula>`)
       .replace(/<formula1>([\s\S]*?)<\/formula1>/g, (_m, f: string) => `<formula1>${esc(shiftFormula(unesc(f), true))}</formula1>`);
     // 3. other sheets' formulas pointing here
+    const token = s.name.replace(/'/g, "''").split(" ")[0];
     for (const o of this.sheets) {
-      if (o === s) continue;
+      if (o === s || !o.mentions(token)) continue;
       let touched = false;
       for (const row of o.rows.values())
         for (const cell of row.cells.values())
@@ -317,7 +354,34 @@ export class XWorkbook {
       }
     }
     // 4. defined names
-    this.workbookXml = this.workbookXml.replace(/<definedName\b([^>]*)>([\s\S]*?)<\/definedName>/g, (_m, a: string, f: string) => `<definedName${a}>${esc(shiftFormula(unesc(f), false))}</definedName>`);
+    // defined names (a workbook can carry hundreds of thousands): one pass, only the entries naming this sheet are rebuilt
+    if (this.workbookBytes.includes(token)) {
+      const xml = this.workbookBytes;
+      const parts: Buffer[] = [];
+      let pos = 0;
+      let scan = 0;
+      // jump from one mention of the sheet to the next (never a scan per entry: 200,000 entries × 17 MB would
+      // run for minutes) and rebuild only the entry each mention sits in
+      for (;;) {
+        const hit = xml.indexOf(token, scan);
+        if (hit < 0) break;
+        const open = xml.lastIndexOf("<definedName", hit);
+        const gt = open < 0 ? -1 : xml.indexOf(">", open);
+        const close = gt < 0 ? -1 : xml.indexOf("</definedName>", gt);
+        if (open < 0 || gt < 0 || close < 0 || hit < gt || hit > close || open < pos) {
+          scan = hit + 1; // a mention outside a defined name's body (a sheet entry, an already rebuilt part)
+          continue;
+        }
+        const body = xml.toString("utf8", gt + 1, close);
+        parts.push(xml.subarray(pos, gt + 1), Buffer.from(esc(shiftFormula(unesc(body), false)), "utf8"));
+        pos = close;
+        scan = close + "</definedName>".length;
+      }
+      if (parts.length) {
+        parts.push(xml.subarray(pos));
+        this.workbookBytes = Buffer.concat(parts);
+      }
+    }
     s.dirty = true;
   }
 
@@ -354,11 +418,20 @@ export class XWorkbook {
 
   /** The workbook recalculates when it opens, so every total reflects the values written. */
   async save(): Promise<Buffer> {
-    for (const s of this.sheets) if (s.dirty) this.zip.file(s.path, s.serialize());
-    let wb = this.workbookXml;
-    if (/<calcPr\b/.test(wb)) wb = wb.replace(/<calcPr\b([^>]*?)\s*\/?>/, (_m, a: string) => `<calcPr${a.replace(/\s*fullCalcOnLoad="[^"]*"/, "")} fullCalcOnLoad="1"/>`);
-    else wb = wb.replace("</workbook>", '<calcPr fullCalcOnLoad="1"/></workbook>');
-    this.zip.file("xl/workbook.xml", wb);
+    for (const s of this.sheets) if (s.dirty && !s.untouched) this.zip.file(s.path, s.serialize());
+    // the calculation flag is patched in the bytes: only the tag itself is decoded
+    const wbBytes = this.workbookBytes;
+    const at = wbBytes.indexOf("<calcPr");
+    let patched: Buffer;
+    if (at >= 0) {
+      const end = wbBytes.indexOf(">", at) + 1;
+      const tag = wbBytes.toString("utf8", at, end).replace(/<calcPr\b([^>]*?)\s*\/?>/, (_m, a: string) => `<calcPr${a.replace(/\s*fullCalcOnLoad="[^"]*"/, "")} fullCalcOnLoad="1"/>`);
+      patched = Buffer.concat([wbBytes.subarray(0, at), Buffer.from(tag, "utf8"), wbBytes.subarray(end)]);
+    } else {
+      const close = wbBytes.lastIndexOf("</workbook>");
+      patched = close >= 0 ? Buffer.concat([wbBytes.subarray(0, close), Buffer.from('<calcPr fullCalcOnLoad="1"/>', "utf8"), wbBytes.subarray(close)]) : wbBytes;
+    }
+    this.zip.file("xl/workbook.xml", patched);
     // the calculation chain is rebuilt by Excel; a stale one makes it complain
     if (this.zip.file("xl/calcChain.xml")) {
       this.zip.remove("xl/calcChain.xml");
