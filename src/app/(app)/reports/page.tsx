@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { OwnLayoutCard } from "@/components/report/OwnLayoutCard";
+import { getReportTemplate } from "@/lib/report/own-layout/templates";
 import { AlertTriangle, FileDown, FileSpreadsheet, BookOpen, Lock, Unlock, Presentation, SlidersHorizontal, Sparkles } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth";
 import { getAppContext } from "@/lib/context";
@@ -15,6 +17,8 @@ export const metadata = { title: "Reports & downloads" };
 export default async function ReportsPage({ searchParams }: { searchParams: Promise<{ period?: string }> }) {
   const user = (await getCurrentUser())!;
   const ctx = getAppContext();
+  const ownTpl = ctx.programme ? getReportTemplate(ctx.programme.id) : null;
+  const ownTemplate = ownTpl ? { name: ownTpl.name, uploaded_at: ownTpl.uploaded_at, uploaded_by: ownTpl.uploaded_by } : null;
   const { period: q } = await searchParams;
   const periods = listPeriods();
   const period = periods.find((p) => String(p.id) === q) ?? periods.find((p) => p.id === ctx.period?.id) ?? periods[0] ?? null;
@@ -79,6 +83,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
             </div>
           </div>
 
+          <OwnLayoutCard periodId={period.id} periodLabel={period.label} template={ownTemplate} canUpload={user.role === "admin" || user.role === "editor"} />
           <div className="card overflow-hidden p-0">
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-gradient-to-r from-navy to-[#1f4f8f] px-5 py-3 text-white">
               <h2 className="text-sm font-semibold">Full monthly report – {period.label}</h2>

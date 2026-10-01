@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { saveReportTemplate } from "../report/own-layout/templates";
 import { memoryNote, releaseMemory } from "./heavy";
 import fs from "node:fs";
 import path from "node:path";
@@ -557,6 +558,15 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo, progres
   }
   // the imported month is stored as this report's own data
   takeSnapshot(periodId, user, "import");
+  // the workbook itself is kept: the month's report is written back into this very layout
+  if (monthly) {
+    try {
+      const file = uploadPath(req.fileId);
+      if (fs.existsSync(file)) saveReportTemplate(programmeId, String(req.fileName ?? "report.xlsx"), fs.readFileSync(file), user);
+    } catch (e) {
+      console.error("report template could not be kept:", e);
+    }
+  }
   releaseMemory();
   debug("snapshot taken");
   await yieldNow();
