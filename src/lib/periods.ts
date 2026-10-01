@@ -1,7 +1,7 @@
 import { getDb, getSetting, setSetting } from "./db";
 import { getRegisterDef } from "./registers";
-import { updateRecord, ValidationError } from "./registers/engine";
-import { getPeriod, listPeriods, latestPeriod, storedCopyAt, type PeriodRow } from "./snapshots";
+import { createRecord, updateRecord, ValidationError } from "./registers/engine";
+import { getPeriod, listPeriods, latestPeriod, lockPeriod, storedCopyAt, type PeriodRow } from "./snapshots";
 import { logAudit } from "./audit";
 import { AuthError } from "./auth";
 import { formatMonthYear } from "./format";
@@ -131,4 +131,41 @@ export function deletePeriod(id: number, user: UserInfo): { label: string } {
   tx();
   logAudit(db, { registerKey: "reporting_periods", recordId: id, action: "delete", user, summary: `Deleted ${p.label} with its snapshot and checklist` });
   return { label: p.label };
+}
+
+/**
+ * Every new entry belongs to the current month's report. When the project's latest report is an
+ * earlier month, that month is closed (locked, its figures stored) and the report for this month is
+ * opened as the next report number; the top bar is moved onto it. Nothing happens when the current
+ * month's report already exists.
+ */
+export function ensureOpenMonth(programmeId: number, user: UserInfo, today = new Date()): { label: string; locked: string | null; opened: string | null; warning: string | null } {
+  const db = getDb();
+  const first = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1));
+  const end = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 1, 0));
+  const iso = (d: Date) => d.toISOString().slice(0, 10);
+  const latest = latestPeriod(db, programmeId);
+  let locked: string | null = null;
+  let opened: string | null = null;
+  let warning: string | null = null;
+  if (latest && latest.period_end >= iso(first)) return { label: latest.label, locked, opened, warning };
+  if (latest && latest.status !== "Locked") {
+    if (user.role === "admin") {
+      try {
+        lockPeriod(latest.id, user);
+        locked = latest.label;
+      } catch (e) {
+        warning = `${latest.label} could not be locked: ${e instanceof Error ? e.message : String(e)}`;
+      }
+    } else warning = `${latest.label} is still open – an Admin locks it from Monthly Report → All reports.`;
+  }
+  const reportNo = (latest?.report_no ?? 0) + 1;
+  const label = `Monthly Report No ${reportNo} – ${formatMonthYear(end)}`;
+  const row = createRecord(getRegisterDef("reporting_periods")!, { programme_id: programmeId, report_no: reportNo, period_end: iso(end), period_start: iso(first), label, status: "Open" }, user, "import");
+  opened = label;
+  // the shared top bar follows the project onto its new open report
+  if (String(getSetting(db, "current_programme_id") ?? "") === String(programmeId)) setSetting(db, "current_period_id", String(row.id));
+  setSetting(db, `current_period_id:${programmeId}`, String(row.id));
+  logAudit(db, { registerKey: "reporting_periods", recordId: row.id, action: "create", user, summary: `Opened ${label}${locked ? ` after locking ${locked}` : ""}`, changes: {} });
+  return { label, locked, opened, warning };
 }

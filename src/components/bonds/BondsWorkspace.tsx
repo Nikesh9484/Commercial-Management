@@ -11,6 +11,7 @@ import { RegisterPage } from "@/components/register/RegisterPage";
 import { ExpiringSoonCard } from "@/components/bonds/ExpiringSoonCard";
 import { BondsAlertSummaries } from "@/components/bonds/BondsAlertSummaries";
 import { ExportButtons } from "@/components/ui/ExportButtons";
+import { AddFromDocuments } from "@/components/changes/AddFromDocuments";
 import { HorizontalBars } from "@/components/charts/HorizontalBars";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
 
@@ -21,7 +22,7 @@ const num = (v: unknown) => (v === null || v === undefined || v === "" ? 0 : Num
  * filtered, and the register itself. The same filter is carried into the PDF and Excel reports, so a
  * download always matches what is on screen.
  */
-export function BondsWorkspace({ rows, isAdmin, hasPeriod }: { rows: RecordRow[]; isAdmin: boolean; hasPeriod: boolean }) {
+export function BondsWorkspace({ rows, isAdmin, hasPeriod, canUpload = false }: { rows: RecordRow[]; isAdmin: boolean; hasPeriod: boolean; canUpload?: boolean }) {
   const [filter, setFilter] = useState<BondsFilter>(NO_BONDS_FILTER);
 
   const visible = useMemo(() => filterBonds(rows, filter), [rows, filter]);
@@ -63,6 +64,15 @@ export function BondsWorkspace({ rows, isAdmin, hasPeriod }: { rows: RecordRow[]
             {label && <span className="rounded-full bg-navy/10 px-2 py-0.5 text-xs font-medium text-navy">{label}</span>}
           </h2>
           <div className="flex items-center gap-2">
+            {canUpload && (
+              <AddFromDocuments
+                endpoint="/api/bonds/from-documents"
+                title="Add a bond or insurance from its documents"
+                button="Add from documents"
+                intro="Drop the policy schedule, the certificate of insurance or the bank guarantee – with its Aconex transmittal if you have it – for one or several at once. The type, the policy number, the insurer or bank, the contractor and contract, the period and the amount are read (scanned pages included) and the register is updated, whatever report is selected."
+                tip="A policy of the same type already held for that contractor stops the upload: the old and the new are shown side by side for you to replace or keep. Anything the files do not give is listed with the entry – use the pencil on the row to add it."
+              />
+            )}
             {filtered && (
               <button className="btn btn-ghost btn-sm" onClick={() => setFilter(NO_BONDS_FILTER)}>
                 <X size={14} /> Clear

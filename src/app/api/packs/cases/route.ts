@@ -3,9 +3,9 @@ import { withUser, readJson } from "@/lib/api";
 import { getAppContext } from "@/lib/context";
 import { autoValues } from "@/lib/packs/data";
 import { packType } from "@/lib/packs/shared";
-import { createCase, rebuildValues } from "@/lib/packs/store";
+import { createCase, listCases, rebuildValues } from "@/lib/packs/store";
 
-/** POST { type, sourceId?, title? } – starts a pack for the current project, filled from the register item picked. */
+/** POST { type, sourceId?, title?, reuse? } – starts a pack for the current project, filled from the register item picked; with reuse, the pack already started for that item is returned instead. */
 export async function POST(req: Request, ctx: unknown) {
   return withUser(async (user) => {
     const app = getAppContext();
@@ -14,6 +14,11 @@ export async function POST(req: Request, ctx: unknown) {
     const t = packType(String(body.type ?? ""));
     if (!t) return NextResponse.json({ error: "Unknown pack category." }, { status: 400 });
     const sourceId = Number(body.sourceId) > 0 ? Number(body.sourceId) : null;
+    // a pack already started for this register item: open it rather than start a second one
+    if (sourceId && body.reuse) {
+      const existing = listCases(app.programme.id, t.key).find((c) => c.source_id === sourceId && c.status !== "Superseded");
+      if (existing) return NextResponse.json({ case: existing, existing: true });
+    }
     const auto = autoValues(t.key, app.programme.id, sourceId, user);
     const title = String(body.title ?? "").trim() || auto.title || t.label;
     const c = createCase({ type: t.key, programmeId: app.programme.id, sourceId, ref: auto.ref, title, values: auto.values }, user);

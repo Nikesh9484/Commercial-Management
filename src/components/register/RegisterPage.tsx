@@ -14,6 +14,7 @@ import { RecordForm, type FormValues } from "./RecordForm";
 import { RecordHistory } from "./HistoryPanel";
 import { ImportDialog } from "./ImportDialog";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
+import { ChangePackButtons } from "@/components/changes/ChangePackButtons";
 
 const PAGE_SIZE = 50;
 
@@ -383,6 +384,7 @@ export function RegisterPage({
                           <ExternalLink size={13} /> {def.rowLinkLabel ?? "Open"}
                         </Link>
                       )}
+                      {registerKey === "changes" && data.canEdit && <ChangePackButtons changeId={Number(r.id)} stage={String(r.current_stage ?? "")} />}
                       {isPeriods &&
                         isAdmin &&
                         (r.status === "Locked" ? (

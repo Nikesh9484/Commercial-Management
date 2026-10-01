@@ -33,7 +33,7 @@ const nextConfig: NextConfig = {
   // instead of a bundled copy per route – that alone keeps the server well under the 512 MB plan.
   // pdfjs-dist must load from node_modules as well: bundled, it looks for its worker beside the bundle
   // chunk, which the build does not always place there, and every PDF then reads as empty.
-  serverExternalPackages: ["better-sqlite3", "pdf-parse", "pdfjs-dist", "pdf-lib", "@pdf-lib/fontkit", "mammoth", "pptxgenjs", "exceljs", "pdfkit", "docx", "jszip", "@anthropic-ai/sdk", "@aws-sdk/client-s3"],
+  serverExternalPackages: ["better-sqlite3", "pdf-parse", "pdfjs-dist", "@napi-rs/canvas", "tesseract.js", "pdf-lib", "@pdf-lib/fontkit", "mammoth", "pptxgenjs", "exceljs", "pdfkit", "docx", "jszip", "@anthropic-ai/sdk", "@aws-sdk/client-s3"],
   poweredByHeader: false,
   async headers() {
     return [{ source: "/(.*)", headers: securityHeaders }];

@@ -24,7 +24,7 @@ export default async function BondsPage() {
         subtitle="Every bond and insurance policy: what the contract requires, what has been provided, and when it expires."
       />
       {ctx.programme ? (
-        <BondsWorkspace rows={bondRows} isAdmin={user.role === "admin"} hasPeriod={!!ctx.period} />
+        <BondsWorkspace rows={bondRows} isAdmin={user.role === "admin"} hasPeriod={!!ctx.period} canUpload={["admin", "editor", "contributor", "reporter"].includes(user.role)} />
       ) : (
         <div className="card flex items-center gap-2 p-5 text-sm text-muted">
           <AlertTriangle size={16} /> Select a programme in the top bar first.

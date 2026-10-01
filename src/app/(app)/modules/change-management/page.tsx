@@ -1,9 +1,11 @@
 import Link from "next/link";
+import { AddFromDocuments } from "@/components/changes/AddFromDocuments";
+import { canCreateRegister } from "@/lib/registers/types";
+import { getRegisterDef } from "@/lib/registers";
 import { AlertTriangle, FileText } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth";
 import { getAppContext } from "@/lib/context";
 import { getModule } from "@/lib/modules";
-import { getRegisterDef } from "@/lib/registers";
 import { recordsForView } from "@/lib/view-mode";
 import { getChangeSummary, MATRIX_STATUSES } from "@/lib/changes/summary";
 import { formatMoney } from "@/lib/format";
@@ -20,6 +22,7 @@ export default async function ChangeManagementPage() {
   const user = (await getCurrentUser())!;
   const mod = getModule("change-management")!;
   const ctx = getAppContext();
+  const canAdd = user.role === "admin" && canCreateRegister(getRegisterDef("changes")!, user.role);
   const summary = ctx.programme ? getChangeSummary(ctx.programme.id) : null;
 
   // ageing and category breakdown for the open changes, computed from the same rows the table shows
@@ -60,9 +63,19 @@ export default async function ChangeManagementPage() {
         subtitle="Every change in one record, followed from Early Warning → RFC → PVO → VO → EI → DVO → Funding. Approved DVOs, live PVO / VOs and RFCs feed the cost report automatically."
         actions={
           ctx.programme ? (
-            <span className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-2 py-1 shadow-sm" title="Executive change management report for the month: stage-by-stage value, ageing, narrative and actions">
-              <FileText size={14} className="text-navy" />
-              <ExportButtons section="changes_report" label="Change status report" />
+            <span className="inline-flex flex-wrap items-center gap-2">
+              {canAdd && (
+                <AddFromDocuments
+                  endpoint="/api/changes/from-documents"
+                  title="Add a change from its documents"
+                  intro="Drop the RFC, the PVO, the EVO, the Employer's Instruction, the RFA or the DVO – for one change or for several at once, any file type. Each change becomes the next CH number of the project named in the documents, under this month's report; a change already in the register is shown side by side for you to replace or keep."
+                  tip="Anything the files do not give is listed with the entry and on its notes – use the pencil on the row to add it. An RFC alone leaves the PVO and DVO pending; a PVO or VO approves the RFC and PVO and keeps the DVO pending; a DVO closes the change."
+                />
+              )}
+              <span className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-2 py-1 shadow-sm" title="Executive change management report for the month: stage-by-stage value, ageing, narrative and actions">
+                <FileText size={14} className="text-navy" />
+                <ExportButtons section="changes_report" label="Change status report" />
+              </span>
             </span>
           ) : undefined
         }

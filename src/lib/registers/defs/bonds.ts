@@ -13,7 +13,8 @@ export const bonds: RegisterDef = {
   displayField: "ref",
   displayFields: ["ref", "policy_no"],
   scope: "programme",
-  snapshot: true,
+  // a standalone tracker: read live whatever report is selected, so a locked month's report and its downloads carry the bonds as they stand today
+  snapshot: false,
   defaultSort: { field: "expiry_date", dir: "asc" },
   totals: ["original_contract_sum", "required_amount", "amount_provided", "variance"],
   fields: [

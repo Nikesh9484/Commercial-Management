@@ -176,6 +176,7 @@ export const REPORTER_PATHS = [
   "/api/context",
   "/api/auth",
   "/api/health",
+  "/imports/documents",
   "/user-guide.pdf",
   "/login",
   "/account",
@@ -188,6 +189,10 @@ const REPORTER_WRITES: { method: string; path: string }[] = [
   // the KPI packs and the document packs are prepared by the user account as well as the admin:
   // uploading files, typing the head office details and the form fields, building the packs
   ...["POST", "PUT", "PATCH", "DELETE"].flatMap((method) => [{ method, path: "/api/kpi" }, { method, path: "/api/packs" }]),
+  // bonds and insurance documents are uploaded by the user account as well: the register is updated from them
+  { method: "POST", path: "/api/bonds/from-documents" },
+  { method: "POST", path: "/api/payments/from-documents" },
+  { method: "POST", path: "/api/feed/from-documents" },
 ];
 const under = (pathname: string, p: string) => pathname === p || pathname.startsWith(p + "/") || pathname.startsWith(p + "?");
 

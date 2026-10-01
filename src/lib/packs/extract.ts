@@ -681,18 +681,36 @@ export function readRfc(pages: PosPage[]): Reading {
   if (aconexRef) {
     set(r, "rfc_ref", aconexRef, src);
     set(r, "title", valueRightWrapped(pages, /^Title of Change Request$/i) || valueRight(pages, /^Title of change request$/i), src);
-    const details = unwrap(valueBelow(pages, /^Details of change request$/i, [/^List the benefits/i, /^Attachments:?$/i, /^Please specify/i, /^Self-declaration/i], 60).replace(/^Describe the change being requested[^\n]*\n?/i, ""));
+    // the change itself: every line under "Details of change request", its own "Change:" / "Urgency:" headings kept
+    const details = unwrap(sectionBelow(pages, /^Details of change request$/i, [/^List the benefits/i, /^Attachments:?$/i, /^Please specify/i, /^Self-declaration/i, /^Initiator/i, /^Specify if the change/i], 60).replace(/^Describe the change being requested[^\n]*\n?/i, ""));
     set(r, "scope", details, src);
-    const benefits = unwrap(valueBelow(pages, /^Benefits:?$/i, [/^Consequences:?$/i, /^Initiator/i], 20));
-    const consequences = unwrap(valueBelow(pages, /^Consequences:?$/i, [/^Initiator/i, /^n\/a$/i, /^Please specify/i], 20));
-    set(r, "reason", [benefits && `Benefits: ${benefits}`, consequences && `Consequences: ${consequences}`].filter(Boolean).join("\n"), src);
+    const benefits = unwrap(valueBelow(pages, /^Benefits:?$/i, [/^Consequences:?$/i, /^Initiator/i, /^Specify if the change/i], 20));
+    const consequences = unwrap(valueBelow(pages, /^Consequences:?$/i, [/^Initiator/i, /^n\/a$/i, /^Please specify/i, /^Specify if the change/i], 20));
+    const benefitsBlock = unwrap(sectionBelow(pages, /^List the benefits and consequences/i, [/^Specify if the change/i, /^Initiator/i, /^EWN/i, /^Details of supporting/i], 25));
+    set(r, "reason", [benefits && `Benefits: ${benefits}`, consequences && `Consequences: ${consequences}`].filter(Boolean).join("\n") || benefitsBlock, src);
+    set(r, "ew_ref", (sectionBelow(pages, /^EWN \/ Risk ID$/i, [/^Currently/i, /^Initiator/i, /^Specify/i], 1).match(/[A-Z0-9][A-Z0-9_\-.\/]{2,}/i) ?? [""])[0], src);
+    set(r, "initiated_by", valueRight(pages, /^(Change Initiator|Change initiating entity)$/i), src);
+    set(r, "change_type", valueRight(pages, /^Change type$/i), src);
+    set(r, "delivered_by", valueRight(pages, /^Entity delivering the works$/i), src);
+    set(r, "project_stage", valueRight(pages, /^Project Stage$/i), src);
+    // the initiator's name and the date, from the Aconex-populated block: Name | Mail No. | Date
+    for (const pg of pages) {
+      const i = pg.rows.findIndex((row) => /^Details of the change initiator/i.test(row.cells[0]?.s ?? ""));
+      if (i < 0) continue;
+      const data = pg.rows.slice(i + 1, i + 4).find((row) => row.cells.length >= 2 && !/^Name$/i.test(row.cells[0].s));
+      if (data) {
+        set(r, "initiated_by_name", data.cells[0].s, src);
+        const d = data.cells.map((c) => dateOf(c.s)).find(Boolean);
+        if (d) set(r, "date", d, src);
+      }
+    }
     set(r, "root_cause", valueRightWrapped(pages, /^Root cause of change$/i), src);
     const budget = valueRight(pages, /^Budgetary Check$/i);
     if (budget) set(r, "eac_included", /not included/i.test(budget) ? "No" : /included/i.test(budget) ? "Yes" : budget, src);
     set(r, "contract_title", valueRightWrapped(pages, /^Contract Name$/i), src);
     set(r, "requesting_department", valueRight(pages, /^Initiating Department$/i), src);
     set(r, "project_name", valueRight(pages, /^Project Name$/i, { notLabels: ["Root cause of change"] }).replace(/^TB-/, ""), src);
-    set(r, "date", dateOf(valueRight(pages, /^Requested on$/i)), src);
+    set(r, "date", dateOf(valueRight(pages, /^Requested on$/i)) || dateOf(text.match(/Requested on\s+(\d{1,2}\s+[A-Za-z]{3}\s+\d{4})/)?.[1] ?? ""), src);
     for (const pg of pages) for (const row of pg.rows) {
       const cells = row.cells.map((c) => c.s);
       if (/^Cost$/i.test(cells[0] ?? "")) {
@@ -762,6 +780,28 @@ export function readRfaForChange(pages: PosPage[]): Reading {
 }
 const requestedOf = (r: Reading) => String(r.values.requested_approvals ?? "").split(/\n/)[0]?.trim() ?? "";
 /** lines that were only wrapped on the page are joined again; list items and sentences keep their breaks */
+/**
+ * The rows beneath a heading until a stop label – like valueBelow, but a line such as "Change:" or
+ * "Urgency:" inside the text is kept, and the Aconex page furniture is skipped.
+ */
+function sectionBelow(pages: PosPage[], label: string | RegExp, stops: (string | RegExp)[], maxRows = 30): string {
+  const hit = findLabel(pages, label);
+  if (!hit) return "";
+  const rows = hit.page.rows;
+  const start = rows.indexOf(hit.row);
+  const out: string[] = [];
+  const same = hit.row.cells.slice(hit.idx + 1).map((c) => c.s).join(" ");
+  if (same && !stops.some((s) => isLabel(same, s))) out.push(same);
+  for (let i = start + 1; i < Math.min(rows.length, start + 1 + maxRows); i++) {
+    const row = rows[i];
+    const first = row.cells[0]?.s ?? "";
+    if (stops.some((s) => row.cells.some((c) => isLabel(c.s, s)))) break;
+    if (/^This document contains restricted information|^Consolidated Commercial Form$|^Change Decision Pack$|^Page \d+( of \d+)?$/i.test(first)) continue;
+    out.push(row.cells.map((c) => c.s).join(" "));
+  }
+  return out.join("\n").trim();
+}
+
 function unwrap(text: string): string {
   const out: string[] = [];
   for (const raw of text.split(/\n/)) {

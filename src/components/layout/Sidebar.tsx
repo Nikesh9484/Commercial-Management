@@ -143,6 +143,8 @@ export function Sidebar({ open, onClose, role, project }: { open: boolean; onClo
               {link("/reports/uncommitted-ew", "Uncommitted & Early Warnings", Sparkles)}
               {link("/reports/kpi", "KPI Report – F1 VOs", Target)}
               {link("/reports/builder", "Customise my reports", SlidersHorizontal)}
+              <div className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider text-blue-200/50">Documents</div>
+              {link("/imports/documents", "Feed documents (any files)", Upload)}
               {packsMenu}
               <a href="/user-guide.pdf" target="_blank" rel="noopener" className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-blue-100/80 hover:bg-white/10 hover:text-white">
                 <FileText size={18} className="shrink-0" />
@@ -160,6 +162,7 @@ export function Sidebar({ open, onClose, role, project }: { open: boolean; onClo
               <div className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider text-blue-200/50">Stand-alone imports</div>
               {/* Bonds, payments and final accounts all ride in on the monthly workbook now; the
                   Claims Tracker stays because it is a different workbook altogether. */}
+              {link("/imports/documents", "Feed documents (any files)", Upload)}
               {link("/imports/monthly", "Monthly report workbook", Upload)}
               {link("/imports/claims-tracker", "Claims Tracker", Upload)}
               {link("/imports/accommodation", "Accommodation invoice tracker", Upload)}

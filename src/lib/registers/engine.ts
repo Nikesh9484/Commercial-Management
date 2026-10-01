@@ -329,9 +329,11 @@ function applyRules(def: RegisterDef, prepared: Prepared, mode: "create" | "upda
 /* Writing                                                             */
 /* ------------------------------------------------------------------ */
 
-export function createRecord(def: RegisterDef, input: Record<string, unknown>, user: UserInfo, source: "form" | "import" = "form"): RecordRow {
-  if (source === "import") assertCanEdit(def, user);
-  else assertCanCreate(def, user);
+export function createRecord(def: RegisterDef, input: Record<string, unknown>, user: UserInfo, source: "form" | "import" = "form", options: { bypassRoles?: boolean } = {}): RecordRow {
+  if (!options.bypassRoles) {
+    if (source === "import") assertCanEdit(def, user);
+    else assertCanCreate(def, user);
+  }
   const db = getDb();
   const withScope = { ...scopeDefaults(def), ...input };
   for (const [k, v] of Object.entries(scopeDefaults(def))) if (withScope[k] === null || withScope[k] === undefined || withScope[k] === "") withScope[k] = v;

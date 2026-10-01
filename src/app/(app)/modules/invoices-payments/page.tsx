@@ -13,6 +13,7 @@ import { RegisterPage } from "@/components/register/RegisterPage";
 import { ExportButtons } from "@/components/ui/ExportButtons";
 import { FileText } from "lucide-react";
 import { PaymentChart } from "@/components/payments/PaymentChart";
+import { AddFromDocuments } from "@/components/changes/AddFromDocuments";
 
 export const metadata = { title: "Invoice & Payment Tracking" };
 
@@ -54,12 +55,22 @@ export default async function PaymentsPage() {
         title={mod.title}
         subtitle="Contract summary (one row per contract) and, behind each contract, its IPC log of payment applications, certificates and payments."
         actions={
-          ctx.period ? (
-            <span className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-2 py-1 shadow-sm" title="Executive payment report for the month: certification and payment position, performance against the contractual timetable, retention, ageing and overdue items">
-              <FileText size={14} className="text-navy" />
-              <ExportButtons section="payments_report" label="Payment status report" />
-            </span>
-          ) : undefined
+          <span className="inline-flex flex-wrap items-center gap-2">
+            {["admin", "editor", "contributor", "reporter"].includes(user.role) && (
+              <AddFromDocuments
+                endpoint="/api/payments/from-documents"
+                title="Update the payment tracker from documents"
+                intro="Drop the payment application transmittal, the Interim Payment Certificate letter or the payment certificate pack – for one application or many, with their Aconex mails. The application number, the dates, the Aconex references and the amounts are read and the IPC log of that contract is written, whatever report is selected."
+                tip="A row already holding a different value for something the documents give stops the upload: the old and the new are shown side by side for you to replace or keep. Anything the files do not give is listed with the entry – use the pencil on the row to add it."
+              />
+            )}
+            {ctx.period ? (
+              <span className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-2 py-1 shadow-sm" title="Executive payment report for the month: certification and payment position, performance against the contractual timetable, retention, ageing and overdue items">
+                <FileText size={14} className="text-navy" />
+                <ExportButtons section="payments_report" label="Payment status report" />
+              </span>
+            ) : null}
+          </span>
         }
       />
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
