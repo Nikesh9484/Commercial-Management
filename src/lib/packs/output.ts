@@ -1,11 +1,10 @@
-import { getDb, getSetting } from "../db";
-import { computeCostReport } from "../cost-report/compute";
+import { getDb } from "../db";
 import { nowIso } from "../format";
 import type { UserInfo } from "../registers/types";
 import { buildDocx, buildEarDocx, fillTemplate } from "./word";
 import { fillExcelTemplate, isExcelTemplate } from "./excel";
 import { buildCompiledPack, renderFormPdf, safeFileName, type FormMeta, type PackPart, type PartItem } from "./pdf";
-import { renderBudgetParticulars, renderChangeLog, renderDvoForm, renderEarReport, renderPvoForm, renderRfaForm, type AccRow } from "./forms";
+import { renderBudgetParticulars, renderEarReport, renderRfaForm } from "./forms";
 import { renderAppendix01, renderAssessment, renderBudgetParticularsNova, renderChangeLogNova, renderContractualBasis, renderEmployerLetter, renderExecutiveSummary, renderVoForm, renderVoFormEmergency } from "./annexures";
 import { withNarrative } from "./narrative";
 import { changeLogRows, type ChangeLogRow } from "./data";
@@ -28,36 +27,25 @@ export function outputFileBase(c: PackCase): string {
   return c.file_name.trim() || defaultPackFileName(t, caseValues(c), c.ref, c.title);
 }
 
-/** The ACC budget table of the PVO form: the project's cost report by category, this PVO on its own category. */
-function accRows(c: PackCase, values: PackValues): AccRow[] {
-  try {
-    const db = getDb();
-    const periodId = getSetting(db, "current_period_id");
-    const report = computeCostReport(c.programme_id, periodId ? Number(periodId) : null);
-    const thisValue = Number(values.total_value || 0) || 0;
-    const line = c.source_id ? (db.prepare("SELECT cost_line_id FROM changes WHERE id = ?").get(c.source_id) as { cost_line_id: number | null } | undefined) : undefined;
-    const lineCat = line?.cost_line_id ? report.lines.find((l) => l.id === line.cost_line_id)?.category ?? "" : "";
-    const by = new Map<string, AccRow>();
-    for (const l of report.lines) {
-      const r = by.get(l.category) ?? { category: l.category || "Other", budget: 0, contract: 0, dvos: 0, commitments: 0, pvos: 0, thisPvo: 0 };
-      r.budget += l.G;
-      r.dvos += l.H;
-      r.commitments += l.I;
-      r.contract += l.I - l.H;
-      r.pvos += l.J;
-      by.set(l.category, r);
-    }
-    const rows = [...by.values()].map((r) => ({ ...r, budget: r2(r.budget), contract: r2(r.contract), dvos: r2(r.dvos), commitments: r2(r.commitments), pvos: r2(r.pvos) }));
-    const target = rows.find((r) => r.category === lineCat) ?? rows.find((r) => /construction/i.test(r.category)) ?? rows[0];
-    if (target) target.thisPvo = thisValue;
-    return rows;
-  } catch {
-    return [];
-  }
-}
-const r2 = (n: number) => Math.round(n * 100) / 100;
-
+/** The change log behind the pack: the earlier approved pack's log with this change as its last line; the register's log when there is none. */
 function logRows(c: PackCase): ChangeLogRow[] {
+  const values = caseValues(c);
+  try {
+    const rows = JSON.parse(values.change_log_rows || "[]") as ChangeLogRow[];
+    if (rows.length) {
+      const no = String(values.pvo_no ?? "").replace(/\D/g, "");
+      const total = Number(String(values.total_value ?? values.dvo_value ?? "").replace(/[^0-9.\-]/g, "")) || null;
+      const isDvo = c.pack_type === "dvo";
+      const own = rows.map((r) => ({ ...r, thisOne: false }));
+      // a DVO settles a PVO already in the log: that line becomes this one
+      const idx = isDvo ? own.findIndex((r) => no && r.pvo.replace(/\D/g, "").replace(/^0+/, "") === no.replace(/^0+/, "")) : -1;
+      if (idx >= 0) own[idx] = { ...own[idx], dvo: String(values.dvo_no ?? own[idx].dvo), dvoValue: total ?? own[idx].dvoValue, thisOne: true };
+      else own.push({ description: c.title, rfc: String(values.rfc_ref ?? "").replace(/^Emergency VO.*$/i, ""), pvo: no ? `PVO-${no}` : "", vo: no ? `VO-${no}` : "", dvo: isDvo ? String(values.dvo_no ?? "") : "", pvoValue: isDvo ? Number(String(values.pvo_value ?? "").replace(/[^0-9.\-]/g, "")) || total : total, dvoValue: isDvo ? total : null, thisOne: true });
+      return own;
+    }
+  } catch {
+    /* the register's log below */
+  }
   if (!c.source_id) return [];
   const db = getDb();
   if (c.source_table === "changes") {
@@ -85,6 +73,17 @@ function referenceCandidates(c: PackCase, t: PackType): Buffer[] {
   const tpl = getTemplate(t.key);
   const tb = tpl && /\.pdf$/i.test(tpl.name) ? readTemplateBytes(tpl) : null;
   if (tb) out.push(tb);
+  // then the approved packs uploaded on any other pack of the category – this project's first, the newest first
+  const formKind = t.key === "pvo" || t.key === "vo" ? "pvo_form" : t.key === "dvo" ? "dvo_form" : "";
+  if (formKind) {
+    const rows = getDb()
+      .prepare("SELECT d.* FROM pack_docs d JOIN pack_cases c ON c.id = d.case_id WHERE c.pack_type = ? AND d.case_id <> ? AND d.name LIKE '%.pdf' AND d.page_kinds LIKE ? ORDER BY (c.programme_id = ?) DESC, d.id DESC LIMIT 4")
+      .all(c.pack_type, c.id, `%"${formKind}"%`, c.programme_id) as PackDoc[];
+    for (const r of rows) {
+      const rb = readDocBytes(r);
+      if (rb) out.push(rb);
+    }
+  }
   return out;
 }
 function referenceBytes(c: PackCase, t: PackType): Buffer | null {
@@ -129,12 +128,9 @@ export async function renderDocumentPdf(c: PackCase, t: PackType, values: PackVa
       console.error("pack overlay failed, trying the next template:", e);
     }
   }
+  // the form pages of a PVO, EVO or DVO are always the approved pack's own: the dashboard draws none of its own
+  if (t.key === "pvo" || t.key === "vo" || t.key === "dvo") throw new ValidationError(`No approved ${t.short} pack to take the form pages from. Upload the last approved ${t.short} pack (PDF, with its form pages) into the template entry of this pack, or set it as the ${t.short} category's template.`);
   switch (t.key) {
-    case "pvo":
-    case "vo":
-      return renderPvoForm(t, values, meta, { acc: accRows(c, values), changeLog: logRows(c) });
-    case "dvo":
-      return renderDvoForm(t, values, meta);
     case "rfa":
       return renderRfaForm(t, values, meta);
     case "eot_ear":
@@ -230,7 +226,7 @@ async function assemble(c: PackCase, t: PackType, values: PackValues, meta: Form
       { no: 1, label: "APPROVED PVO & VO – COVER PAGE + WF APPROVALS ONLY", hint: "The approved PVO with its workflow approvals, and the revise-and-resubmit updates", style: "annexure", items: [...itemsOf(docs, "pvo"), ...itemsOf(docs, "resubmit")] },
       { no: 2, label: "COST IMPACT – EMPLOYER'S ASSESSMENT AND DETERMINATION", hint: "The cost proposal and the drawings behind the determined value – uploaded, or the pages inside the approved PVO pack", style: "annexure", items: await costAndDrawings(docs, ["pvo"], "approved PVO pack") },
       { no: 3, label: "BUDGET PARTICULARS", hint: "Where the budget comes from and where it goes", style: "annexure", items: [gen("Budget particulars", await renderBudgetParticulars(t, values, meta))] },
-      { no: 4, label: "CHANGE LOG", hint: "Every change on the contract with its RFC, PVO, VO and DVO", style: "annexure", items: [gen("Change log", await renderChangeLog(t, values, meta, logRows(c)))] },
+      { no: 4, label: "CHANGE LOG", hint: "Every change on the contract with its RFC, PVO, VO and DVO", style: "annexure", items: [gen("Change log", await renderChangeLogNova(values, logRows(c)))] },
     ];
     return { front: [{ name: "PVO to DVO movement summary, DVO form (RSG-CM-FRM-0014) and review & recommendation (RSG-CM-FRM-0027)", bytes: form }], parts: [...ann, ...number(others, 5)], index: { title: "DETERMINED VARIATION ORDER (DVO)" } };
   }
@@ -285,11 +281,15 @@ export async function renderOutput(c: PackCase, format: OutputFormat, user: User
   const tpl = getTemplate(c.pack_type);
   const tplExcel = !!tpl && isExcelTemplate(tpl.name);
   if (format === "xlsx") {
-    const bytes = tpl && tplExcel ? readTemplateBytes(tpl) : null;
-    if (!tpl || !bytes) throw new ValidationError("No Excel template has been uploaded for this category – upload the RSG form as a workbook on the category page.");
-    const ext = tpl.name.match(/\.(xlsx|xlsm|xltx|xltm)$/i)?.[1].toLowerCase() ?? "xlsx";
+    // the workbook written into: the earlier document's workbook uploaded on this pack first, else the category's Excel template
+    const own = listDocs(c.id).filter((d) => isExcelTemplate(d.name)).sort((a, b) => (a.slot === REFERENCE_SLOT ? -1 : 0) - (b.slot === REFERENCE_SLOT ? -1 : 0));
+    const ownBytes = own.length ? readDocBytes(own[0]) : null;
+    const name = ownBytes ? own[0].name : tpl?.name ?? "";
+    const bytes = ownBytes ?? (tpl && tplExcel ? readTemplateBytes(tpl) : null);
+    if (!bytes) throw new ValidationError("No RSG workbook to write into – upload the earlier document's workbook on this pack (template entry), or set one as the category's template.");
+    const ext = name.match(/\.(xlsx|xlsm|xltx|xltm)$/i)?.[1].toLowerCase() ?? "xlsx";
     const mime = ext === "xlsm" || ext === "xltm" ? "application/vnd.ms-excel.sheet.macroEnabled.12" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-    return { bytes: await fillExcelTemplate(bytes, t, values), fileName: safeFileName(base, ext === "xltx" ? "xlsx" : ext === "xltm" ? "xlsm" : ext), mime, note: `written into the RSG workbook ${tpl.name}` };
+    return { bytes: await fillExcelTemplate(bytes, t, values), fileName: safeFileName(base, ext === "xltx" ? "xlsx" : ext === "xltm" ? "xlsm" : ext), mime, note: `written into the RSG workbook ${name}` };
   }
   if (format === "docx") {
     const bytes = tpl && /\.(docx|dotx|docm)$/i.test(tpl.name) ? readTemplateBytes(tpl) : null;

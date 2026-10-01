@@ -20,7 +20,14 @@ export async function PATCH(req: Request, ctx: Ctx) {
       const { sources } = await rebuildValues(cur.id, user);
       return NextResponse.json({ case: getCase(cur.id), refreshed: Object.keys(sources).length });
     }
-    const c = updateCase(cur.id, { revision: typeof body.revision === "string" ? body.revision : undefined, status: typeof body.status === "string" ? body.status : undefined, file_name: typeof body.file_name === "string" ? body.file_name : undefined }, user);
+    const values = body.values && typeof body.values === "object" ? (body.values as Record<string, string>) : undefined;
+    const clear = Array.isArray(body.clear) ? (body.clear as unknown[]).filter((k): k is string => typeof k === "string") : undefined;
+    let c = updateCase(cur.id, { revision: typeof body.revision === "string" ? body.revision : undefined, status: typeof body.status === "string" ? body.status : undefined, file_name: typeof body.file_name === "string" ? body.file_name : undefined, values, clear }, user);
+    // a typed value (or one cleared) changes what the files give: read again so the reference, title and calculated figures follow
+    if (values || clear?.length) {
+      await rebuildValues(cur.id, user);
+      c = getCase(cur.id)!;
+    }
     return NextResponse.json({ case: c });
   })(req, ctx);
 }

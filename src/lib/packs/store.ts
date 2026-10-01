@@ -3,6 +3,8 @@ import path from "node:path";
 import type Database from "better-sqlite3";
 import { getDb } from "../db";
 import { AuthError } from "../auth";
+import { isExcelTemplate, readExcelValues } from "./excel";
+import { convertToPdf, convertible } from "./convert";
 import { ValidationError } from "../registers/engine";
 import { logAudit } from "../audit";
 import { nowIso } from "../format";
@@ -10,7 +12,7 @@ import type { UserInfo } from "../registers/types";
 import { formatPages, keyPages, readPdfPages } from "../kpi/pages";
 import type { PosPage } from "./positioned";
 import { PACK_STATUSES, packType, slotsFor, REFERENCE_SLOT, type PackCase, type PackDoc, type PackTemplate, type PackTypeKey, type PackValues, type TemplateInspection } from "./shared";
-import { classifyDoc, packParts, positioned, readApprovedPvoForDvo, readCost, readReferenceDvo, readReferenceEar, readReferencePvo, readReferenceRfa, readRfaForChange, readRfc, type DocKind, type Reading } from "./extract";
+import { classifyDoc, packParts, positioned, readApprovedPvoForDvo, readCost, readEi, readReferenceDvo, readReferenceEar, readReferencePvo, readReferenceRfa, readRfaForChange, readRfc, type DocKind, type Reading } from "./extract";
 import { autoValues } from "./data";
 
 export * from "./shared";
@@ -193,21 +195,45 @@ export function createCase(input: { type: PackTypeKey; programmeId: number; sour
   return getCase(id)!;
 }
 
-export function updateCase(id: number, patch: { ref?: string; title?: string; revision?: string; status?: string; file_name?: string; values?: PackValues }, user: UserInfo): PackCase {
+/** the values typed in on the pack, kept over every re-read of the files */
+export function manualValues(values: PackValues): Record<string, string> {
+  try {
+    const m = JSON.parse(values.__manual || "{}");
+    return m && typeof m === "object" ? (m as Record<string, string>) : {};
+  } catch {
+    return {};
+  }
+}
+function sourcesOf(values: PackValues): Record<string, string> {
+  try {
+    return JSON.parse(values.__sources || "{}") as Record<string, string>;
+  } catch {
+    return {};
+  }
+}
+
+export function updateCase(id: number, patch: { ref?: string; title?: string; revision?: string; status?: string; file_name?: string; values?: PackValues; clear?: string[] }, user: UserInfo): PackCase {
   assertManage(user);
   const cur = getCase(id);
   if (!cur) throw new ValidationError("That pack is no longer here.");
   const t = packType(cur.pack_type)!;
   const clean = (v: unknown, max: number) => String(v ?? "").replace(/[\r\n]+/g, " ").trim().slice(0, max);
   const values = { ...caseValues(cur) };
+  const manual = manualValues(values);
   if (patch.values && typeof patch.values === "object") {
     const known = new Set(t.fields.map((f) => f.key));
     for (const [k, v] of Object.entries(patch.values)) {
       if (!known.has(k)) continue;
       const f = t.fields.find((x) => x.key === k)!;
-      values[k] = String(v ?? "").slice(0, f.kind === "long" ? 20000 : 500);
+      // a value typed in stays as typed, whatever the files say, until it is cleared
+      values[k] = manual[k] = String(v ?? "").slice(0, f.kind === "long" ? 20000 : 500);
     }
   }
+  if (patch.clear?.length) for (const k of patch.clear) delete manual[k];
+  values.__manual = JSON.stringify(manual);
+  const sources = sourcesOf(values);
+  for (const k of Object.keys(manual)) sources[k] = "entered manually";
+  values.__sources = JSON.stringify(sources);
   const next = {
     ref: patch.ref !== undefined ? clean(patch.ref, 80) : cur.ref,
     title: patch.title !== undefined ? clean(patch.title, 300) : cur.title,
@@ -217,7 +243,7 @@ export function updateCase(id: number, patch: { ref?: string; title?: string; re
   };
   db().prepare("UPDATE pack_cases SET ref = ?, title = ?, revision = ?, status = ?, file_name = ?, values_json = ?, updated_at = ?, updated_by = ? WHERE id = ?").run(next.ref, next.title, next.revision, next.status, next.file_name, JSON.stringify(values), nowIso(), user.name, id);
   const changed = (["ref", "title", "revision", "status", "file_name"] as const).filter((k) => next[k] !== cur[k]);
-  if (patch.values) changed.push("values" as never);
+  if (patch.values || patch.clear?.length) changed.push("values" as never);
   if (changed.length) logAudit(getDb(), { registerKey: "pack_cases", recordId: id, action: "update", user, summary: `Document packs: ${t.short} ${next.ref} updated (${changed.join(", ")})` });
   return getCase(id)!;
 }
@@ -340,10 +366,10 @@ export async function rebuildValues(caseId: number, user: UserInfo): Promise<{ v
   const values: PackValues = { ...base.values };
   // the wording drafted for the pack stays with it (it is dropped by itself once its inputs change)
   const prev = caseValues(c);
-  for (const k of Object.keys(prev)) if (k.startsWith("__narrative")) values[k] = prev[k];
+  for (const k of Object.keys(prev)) if (k.startsWith("__narrative") || k === "__manual") values[k] = prev[k];
   const sources: Record<string, string> = {};
   for (const k of Object.keys(values)) if (values[k]) sources[k] = c.source_id ? "register" : "project";
-  const EXTRA = ["acc_table", "cost_subject", "cost_scope", "instruction_ref", "instruction_text", "ei_no"];
+  const EXTRA = ["acc_table", "cost_subject", "cost_scope", "instruction_ref", "instruction_text", "ei_no", "change_log_rows"];
   const apply = (r: Reading, keep: string[] = []) => {
     for (const [k, v] of Object.entries(r.values)) {
       if (!v || keep.includes(k)) continue;
@@ -355,19 +381,33 @@ export async function rebuildValues(caseId: number, user: UserInfo): Promise<{ v
   // every PDF is read and recognised by its own headings; the entry it was put in only breaks a tie,
   // so a document dropped into "Other attachment" is still read and used
   const read: { doc: PackDoc; pages: PosPage[]; kind: DocKind }[] = [];
-  for (const d of docs.filter((x) => /\.pdf$/i.test(x.name))) {
+  for (const d of docs) {
+    const isPdf = /\.pdf$/i.test(d.name);
+    // a Word letter, a mail or a text file in a reading entry is turned into pages and read like a PDF
+    if (!isPdf && !(convertible(d.name) && !isExcelTemplate(d.name))) continue;
     const bytes = readDocBytes(d);
     if (!bytes) continue;
-    const pages = await positioned(bytes);
+    let pdf: Buffer | null = bytes;
+    if (!isPdf) {
+      try {
+        pdf = (await convertToPdf(bytes, d.name))?.pdf ?? null;
+      } catch {
+        pdf = null;
+      }
+    }
+    if (!pdf) continue;
+    const pages = await positioned(pdf);
     if (pages.length) read.push({ doc: d, pages, kind: classifyDoc(pages, d.slot) });
   }
   const readAll = async (slot: string) => {
     // the change behind a PVO or DVO may be an RFC or an RFA – both are read for the scope and reason
-    const want: DocKind[] = slot === REFERENCE_SLOT ? (t.key === "pvo" ? ["pvo"] : t.key === "dvo" ? ["dvo"] : t.key === "rfa" ? ["rfa"] : t.key === "eot_ear" || t.key === "cost_ear" ? ["ear"] : ["pvo", "dvo"]) : slot === "pvo" ? ["pvo"] : slot === "rfc" || slot === "details" ? (t.key === "rfa" ? ["rfc"] : ["rfc", "rfa"]) : slot === "cost" ? ["cost"] : [];
-    // the files in the entry itself first (the entry is the user's word on what the file is), then any file elsewhere that reads as that kind
+    const want: DocKind[] = slot === REFERENCE_SLOT ? (t.key === "pvo" ? ["pvo"] : t.key === "dvo" ? ["dvo"] : t.key === "rfa" ? ["rfa"] : t.key === "eot_ear" || t.key === "cost_ear" ? ["ear"] : ["pvo", "dvo"]) : slot === "pvo" ? ["pvo"] : slot === "rfc" || slot === "details" ? (t.key === "rfa" ? ["rfc", "ei"] : ["rfc", "rfa", "ei"]) : slot === "cost" ? ["cost"] : [];
+    // the files in the entry itself first (the entry is the user's word on what the file is), then any file elsewhere that reads as that kind;
+    // the forms themselves (an RFC, an EI) come last, so what they state wins over a transmittal or a summary that quotes them
     const inSlot = read.filter((x) => x.doc.slot === slot);
     const elsewhere = read.filter((x) => x.doc.slot !== slot && want.includes(x.kind) && !(slot === "pvo" && x.doc.slot === REFERENCE_SLOT) && !(slot === REFERENCE_SLOT && x.doc.slot === "pvo"));
-    return [...inSlot, ...elsewhere].map((x) => x.pages);
+    const rank = (k: DocKind) => (k === "ei" || k === "rfc" || k === "rfa" ? 1 : 0);
+    return [...inSlot, ...elsewhere].sort((a, b) => rank(a.kind) - rank(b.kind)).map((x) => x.pages);
   };
   // 1. the template – the last approved document of the same kind: the one uploaded on this pack,
   //    or, when there is none, the PDF set as the category's template
@@ -382,10 +422,33 @@ export async function rebuildValues(caseId: number, user: UserInfo): Promise<{ v
       if (pages.length) references = [pages, ...references];
     }
   }
+  // the RSG workbook of the earlier document, read cell by cell: the category's Excel template first, then any workbook uploaded on the pack
+  const workbooks: Reading[] = [];
+  {
+    const tpl = getTemplate(t.key);
+    const bytes = tpl && isExcelTemplate(tpl.name) ? readTemplateBytes(tpl) : null;
+    if (bytes) workbooks.push(await readExcelValues(bytes, t));
+    for (const d of docs.filter((x) => isExcelTemplate(x.name))) {
+      const b = readDocBytes(d);
+      if (b) workbooks.push(await readExcelValues(b, t));
+    }
+  }
+  const own = ["pvo_no", "dvo_no", "rfa_no", "date", "title", "scope", "reason", "total_value", "dvo_value", "add", "omit", "cost_items", "rfc_ref", "eac_explanation", "letter_ref", "report_ref", "claim_no", "eot_no", "emergency_circumstances", "instruction_ref", "description", "information_provided"];
+  const nextNumber = (key: string, ref: Reading, label: string) => {
+    if (!values[key] && ref.values[key] && /^\d+$/.test(ref.values[key])) {
+      values[key] = String(Number(ref.values[key]) + 1).padStart(3, "0");
+      sources[key] = label;
+    }
+  };
+  for (const ref of workbooks) {
+    if (!Object.keys(ref.values).length) continue;
+    apply(ref, own);
+    if (t.key === "pvo") nextNumber("pvo_no", ref, "previous PVO + 1");
+    if (t.key === "vo") nextNumber("pvo_no", ref, "previous EVO + 1");
+  }
   for (const pages of references) {
     if (!pages.length) continue;
     // what names the earlier document itself is not carried over: its number, its date, its title and value are this pack's own
-    const own = ["pvo_no", "dvo_no", "rfa_no", "date", "title", "scope", "reason", "total_value", "dvo_value", "add", "omit", "cost_items", "rfc_ref", "eac_explanation", "letter_ref", "report_ref", "claim_no", "eot_no", "emergency_circumstances", "instruction_ref", "description", "information_provided"];
     if (t.key === "pvo") {
       const ref = readReferencePvo(pages);
       apply(ref, own);
@@ -434,7 +497,14 @@ export async function rebuildValues(caseId: number, user: UserInfo): Promise<{ v
   // 2. the approved PVO behind a DVO
   if (t.key === "dvo") for (const pages of await readAll("pvo")) if (pages.length) apply(readApprovedPvoForDvo(pages));
   // 3. the RFC (or the RFA details): the change itself
-  for (const slot of ["rfc", "details"]) for (const pages of await readAll(slot)) if (pages.length) apply(classifyDoc(pages, "rfc") === "rfa" && t.key !== "rfa" ? readRfaForChange(pages) : readRfc(pages));
+  for (const slot of ["rfc", "details"]) {
+    for (const pages of await readAll(slot)) {
+      if (!pages.length) continue;
+      const kind = classifyDoc(pages, "rfc");
+      if (kind === "cost" || kind === "pvo" || kind === "dvo" || kind === "ear") continue;
+      apply(kind === "rfa" && t.key !== "rfa" ? readRfaForChange(pages) : kind === "ei" ? readEi(pages) : readRfc(pages));
+    }
+  }
   // 4. the cost assessment: the value – from the cost proposal entry; with nothing there, from the
   //    cost pages inside the RFC / RFA (or, for a DVO, the approved PVO pack)
   const costDocs = (await readAll("cost")).filter((p) => p.length);
@@ -500,6 +570,47 @@ export async function rebuildValues(caseId: number, user: UserInfo): Promise<{ v
       values.title = fallback;
       sources.title = sources.cost_scope || sources.cost_subject || "cost assessment";
     }
+  }
+  // the next numbers follow the change log of the earlier pack: one more than the highest PVO / VO / DVO in it
+  try {
+    const log = JSON.parse(values.change_log_rows || "[]") as { pvo: string; vo: string; dvo: string }[];
+    const maxOf = (key: "pvo" | "vo" | "dvo") => {
+      let best = -1;
+      let width = 2;
+      for (const row of log) {
+        const m = String(row[key] ?? "").match(/(\d+)\s*$/);
+        if (m && Number(m[1]) > best) {
+          best = Number(m[1]);
+          width = m[1].length;
+        }
+      }
+      return best < 0 ? null : { next: best + 1, width };
+    };
+    if ((t.key === "pvo" || t.key === "vo") && (!values.pvo_no || sources.pvo_no === "previous PVO + 1" || sources.pvo_no === "previous EVO + 1")) {
+      const n = maxOf("pvo");
+      if (n && (!values.pvo_no || n.next > Number(values.pvo_no))) {
+        values.pvo_no = String(n.next).padStart(3, "0");
+        sources.pvo_no = "change log + 1";
+      }
+    }
+    if (t.key === "dvo" && (!values.dvo_no || sources.dvo_no === "previous DVO + 1")) {
+      // the higher of: one more than the earlier DVO, one more than the highest DVO in the log
+      const n = maxOf("dvo");
+      const cur = Number(String(values.dvo_no ?? "").match(/(\d+)\s*$/)?.[1] ?? 0);
+      if (n && n.next > cur) {
+        const prefix = (log.find((r) => /\d/.test(r.dvo))?.dvo ?? "DVO-").replace(/\d+\s*$/, "") || "DVO-";
+        values.dvo_no = `${prefix}${String(n.next).padStart(n.width, "0")}`;
+        sources.dvo_no = "change log + 1";
+      }
+    }
+  } catch {
+    /* no usable log */
+  }
+  // what was typed in on the pack stays as typed
+  const manual = manualValues(values);
+  for (const [k, v] of Object.entries(manual)) {
+    values[k] = v;
+    sources[k] = "entered manually";
   }
   values.__sources = JSON.stringify(sources);
   const ref = t.key === "pvo" ? values.pvo_no || c.ref : t.key === "dvo" ? values.dvo_no || c.ref : t.key === "rfa" ? values.rfa_no || c.ref : c.ref;

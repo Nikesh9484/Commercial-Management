@@ -42,7 +42,7 @@ export async function positioned(bytes: Buffer): Promise<PosPage[]> {
   return readPositioned(bytes);
 }
 
-export type DocKind = "pvo" | "dvo" | "rfa" | "ear" | "rfc" | "cost" | "unknown";
+export type DocKind = "pvo" | "dvo" | "rfa" | "ear" | "rfc" | "ei" | "cost" | "unknown";
 
 /** What a PDF is, from the headings on its first pages – so a file in any entry is read the right way. */
 export function classifyDoc(pages: PosPage[], slotHint: string): DocKind {
@@ -52,7 +52,9 @@ export function classifyDoc(pages: PosPage[], slotHint: string): DocKind {
   if (/determination of variation order|rsg-cm-frm-0014|rgs-cm-frm-0014|pvo to dvo cost movement/.test(head)) return "dvo";
   if (/request for approval form|rsg-pr-frm-0004|trs-pr-frm-0004/.test(head)) return "rfa";
   if (/employer'?s assessment report|extension of time report|revision history/.test(head)) return "ear";
-  if (/request for change|change request form|rsg-cm-frm-0011|\brfc\b.*\bform\b|change decision pack|consolidated commercial form|employer.?s instruction \(ei\)|rsg-cm-frm-0007/.test(head)) return "rfc";
+  // the Employer's Instruction form itself – not a transmittal or a letter that merely names one
+  if (/rsg-cm-frm-0007|trs-cm-frm-0007|trs - cm - frm - 0007/.test(head) && /instruction no/.test(head)) return "ei";
+  if (/request for change|change request form|rsg-cm-frm-0011|\brfc\b.*\bform\b|change decision pack|consolidated commercial form/.test(head)) return "rfc";
   if (/grand total|unit price|unite price|\bqty\b|cost proposal|bill of quantit|\bboq\b|rate breakdown/.test(all)) return "cost";
   if (slotHint === "cost" || slotHint === "rfc" || slotHint === "details") return slotHint === "cost" ? "cost" : "rfc";
   return "unknown";
@@ -89,6 +91,99 @@ const GENERAL: [string, string, (string | RegExp)[]?][] = [
   ["contract_no", "ACC Contract No"],
   ["destination", "Destination"],
 ];
+
+/** The CHANGE LOG page of an approved pack: one entry per change with its RFC, PVO, VO and DVO and the values. */
+export function readChangeLogPage(pages: PosPage[], own: { no: string; title: string; dvo?: string } = { no: "", title: "" }): { rows: { description: string; rfc: string; pvo: string; vo: string; dvo: string; pvoValue: number | null; dvoValue: number | null; thisOne: boolean }[]; originalContract: string } {
+  const out = { rows: [] as { description: string; rfc: string; pvo: string; vo: string; dvo: string; pvoValue: number | null; dvoValue: number | null; thisOne: boolean }[], originalContract: "" };
+  const page = pages.find((p) => p.rows.some((r) => r.cells.some((c) => /^CHANGE LOG$/i.test(c.s.trim()))) && p.rows.some((r) => r.cells.some((c) => /^Sr$/i.test(c.s.trim())) && r.cells.some((c) => /^PVO$/i.test(c.s.trim()))));
+  if (!page) return out;
+  const header = page.rows.find((r) => r.cells.some((c) => /^Sr$/i.test(c.s.trim())) && r.cells.some((c) => /^PVO$/i.test(c.s.trim())))!;
+  const hc = (re: RegExp, after = 0) => header.cells.find((c) => re.test(c.s.trim()) && c.x > after);
+  const sr = hc(/^Sr$/i)!;
+  const rfcH = hc(/^RFC$/i);
+  const pvoH = hc(/^PVO$/i);
+  const voH = hc(/^VO$/i);
+  const dvoH = hc(/^DVO$/i);
+  const cvH = hc(/Contra?ct Value/i);
+  const pvoValH = hc(/^PVO$/i, (cvH ?? dvoH ?? pvoH)!.x + 1);
+  const dvoValH = hc(/^DVO$/i, (pvoValH ?? cvH ?? dvoH)!.x + 1);
+  const thisH = hc(/^This PVO/i);
+  const descX = rfcH ? rfcH.x - 20 : (page.w ?? 595) * 0.55;
+  const centre = (c: { x: number; w: number }) => c.x + c.w / 2;
+  const colOf = (c: { x: number; w: number }) => {
+    const cands = [["rfc", rfcH], ["pvo", pvoH], ["vo", voH], ["dvo", dvoH], ["cv", cvH], ["pvoVal", pvoValH], ["dvoVal", dvoValH], ["this", thisH]] as const;
+    let best: string | null = null;
+    let bestD = 40;
+    for (const [k, h] of cands) {
+      if (!h) continue;
+      const d = Math.abs(centre(c) - centre(h));
+      if (d < bestD) {
+        bestD = d;
+        best = k;
+      }
+    }
+    return best;
+  };
+  const body: typeof page.rows = [];
+  for (const r of page.rows.filter((x) => x.y < header.y).sort((a, b) => b.y - a.y)) {
+    if (/^Total$/i.test(r.cells[0]?.s.trim() ?? "")) break;
+    body.push(r);
+  }
+  type Entry = { y: number; lines: { y: number; s: string }[]; cols: Record<string, string> };
+  const entries: Entry[] = [];
+  const loose: { y: number; s: string }[] = [];
+  for (const r of body) {
+    const srCell = r.cells.find((c) => c.x < sr.x + 70 && /^\d{1,3}$/.test(c.s.trim()));
+    const descCells = r.cells.filter((c) => c.x > sr.x + 25 && c.x < descX && c !== srCell);
+    const text = descCells.map((c) => c.s).join(" ").trim();
+    if (/^Original Contract/i.test(text)) {
+      const v = r.cells.find((c) => colOf(c) === "cv" || (moneyOf(c.s) !== null && c.x > descX));
+      out.originalContract = v ? money(v.s) : "";
+      continue;
+    }
+    if (/^This PVO/i.test(text)) {
+      // the pack's own change: its last line, under the pack's own number
+      const m = text.match(/\((PVO|DVO)-?(\d+)\s*[–-]\s*(.*)\)\s*$/i);
+      const v = r.cells.find((c) => colOf(c) === "this" || colOf(c) === "pvoVal");
+      const no = m ? m[2] : own.no.replace(/\D/g, "");
+      const title = m ? m[3] : own.title;
+      if (!no || (!v && !title)) continue;
+      // the same change already listed (a DVO settling a PVO in the log, or a second "This PVO" line): one entry, completed
+      const same = entries.find((e) => (e.cols.pvo ?? "").replace(/\D/g, "").replace(/^0+/, "") === no.replace(/^0+/, ""));
+      if (same) {
+        if (own.dvo) {
+          same.cols.dvo = own.dvo;
+          if (v) same.cols.dvoVal = v.s;
+        } else if (v && !same.cols.pvoVal) same.cols.pvoVal = v.s;
+      } else entries.push({ y: r.y, lines: [{ y: r.y, s: title }], cols: own.dvo ? { pvo: `PVO-${no}`, vo: `VO-${no}`, dvo: own.dvo, dvoVal: v ? v.s : "" } : { pvo: `PVO-${no}`, vo: `VO-${no}`, pvoVal: v ? v.s : "" } });
+      continue;
+    }
+    // an entry starts on a numbered row, or on a row that carries a change reference (a log without numbers)
+    const refCell = r.cells.find((c) => c.x >= descX && /^(RFC|PVO|VO|DVO)\s*-?\s*\d+/i.test(c.s.trim()));
+    if (srCell || refCell) {
+      const cols: Record<string, string> = {};
+      for (const c of r.cells) {
+        if (c === srCell || descCells.includes(c)) continue;
+        const k = colOf(c);
+        if (k) cols[k] = c.s.trim();
+      }
+      entries.push({ y: r.y, lines: text ? [{ y: r.y, s: text }] : [], cols });
+    } else if (text) loose.push({ y: r.y, s: text });
+  }
+  // a wrapped description line belongs to the entry nearest to it
+  for (const l of loose) {
+    let best: Entry | null = null;
+    for (const e of entries) if (!best || Math.abs(e.y - l.y) < Math.abs(best.y - l.y)) best = e;
+    if (best && Math.abs(best.y - l.y) <= 14) best.lines.push(l);
+  }
+  const val = (s: string | undefined) => (s && moneyOf(s) !== null ? Number(money(s)) : null);
+  for (const e of entries) {
+    const description = e.lines.sort((a, b) => b.y - a.y).map((l) => l.s).join(" ").replace(/\s+/g, " ").trim();
+    const cancelled = /cancelled/i.test(`${e.cols.pvoVal ?? ""} ${e.cols.dvoVal ?? ""}`);
+    out.rows.push({ description, rfc: (e.cols.rfc ?? "").replace(/^-$/, ""), pvo: e.cols.pvo ?? "", vo: e.cols.vo ?? "", dvo: e.cols.dvo ?? "", pvoValue: cancelled ? null : val(e.cols.pvoVal) ?? val(e.cols.this), dvoValue: cancelled ? null : val(e.cols.dvoVal), thisOne: false });
+  }
+  return out;
+}
 
 export function readReferencePvo(pages: PosPage[]): Reading {
   const r: Reading = { values: {}, sources: {} };
@@ -191,6 +286,10 @@ export function readReferencePvo(pages: PosPage[]): Reading {
     set(r, "approved_by", lines(approved), src);
     set(r, "approved_position", positions(approved), src);
   }
+  // the change log of the pack: every change on the contract, with the pack's own as its last line
+  const log = readChangeLogPage(pages, { no: r.values.pvo_no ?? "", title: r.values.title ?? "" });
+  if (log.rows.length) set(r, "change_log_rows", JSON.stringify(log.rows), src);
+  if (log.originalContract && !r.values.original_contract) set(r, "original_contract", log.originalContract, src);
   // the VO form in the pack names the representatives
   const erep = peopleUnder(pages, /^Approved and Issued by/i, [/^Received by/i, /^RSG-CM-FRM/], (x) => POSITION.test(x))[0];
   if (erep) {
@@ -279,6 +378,8 @@ export function readReferenceDvo(pages: PosPage[]): Reading {
   }
   const bd = valueRight(pages, "DESTINATION OF THE BUDGET");
   if (bd) set(r, "budget_to_line", bd.match(/1TB\d{5}\.\d{2}\.[A-Z]{2}\.\S+/)?.[0] ?? "", src);
+  const log = readChangeLogPage(pages, { no: r.values.pvo_no ?? r.values.vo_no ?? "", title: r.values.title ?? "", dvo: r.values.dvo_no ?? "" });
+  if (log.rows.length) set(r, "change_log_rows", JSON.stringify(log.rows), src);
   return r;
 }
 
@@ -451,7 +552,10 @@ export function readEi(pages: PosPage[]): Reading {
   const r: Reading = { values: {}, sources: {} };
   const src = "Employer's Instruction";
   const text = glued(pages);
-  set(r, "rfc_ref", text.match(/\b1TB\d{5}-\d{3}[A-Z]\d{2}-AMA-(?:EMI|EI)-[A-Z]{2}-[A-Z0-9]{4}\b/)?.[0], src);
+  const refRe = /\b1TB\d{5}-\d{3}[A-Z]\d{2}-AMA-(?:EMI|EI)-[A-Z]{2}-[A-Z0-9]{4}\b/;
+  // the Aconex reference beside its label first (it may wrap over two lines), then anywhere in the text
+  const aconex = valueRightWrapped(pages, /^Aconex Ref\.?$/i).replace(/\s*-\s*/g, "-");
+  set(r, "rfc_ref", aconex.match(refRe)?.[0] ?? text.replace(/\s*-\s*/g, "-").match(refRe)?.[0], src);
   set(r, "instruction_ref", r.values.rfc_ref, src);
   const no = valueRightWrapped(pages, /^Instruction No\.?$/i, ["Date Issue"]);
   set(r, "ei_no", no.match(/\d{2,4}/)?.[0], src);
@@ -658,5 +762,7 @@ export function readApprovedPvoForDvo(pages: PosPage[]): Reading {
   set(out, "reason", r.values.scope, src);
   for (const k of ["program_name", "project_name", "project_code", "works_package", "contractor", "contract_no", "budget_line", "budget_available", "budget_to_line", "acc_table"]) if (r.values[k]) set(out, k, r.values[k], src);
   set(out, "instruction_ref", r.values.rfc_ref, src);
+  const log = readChangeLogPage(pages, { no: out.values.pvo_no ?? out.values.vo_no ?? "", title: out.values.title ?? "" });
+  if (log.rows.length) set(out, "change_log_rows", JSON.stringify(log.rows), src);
   return out;
 }

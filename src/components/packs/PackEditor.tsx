@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { CheckCircle2, FileDown, FileText, FolderUp, Plus, RefreshCw, Trash2, Upload } from "lucide-react";
+import { CheckCircle2, FileDown, FileText, FolderUp, Pencil, Plus, RefreshCw, Trash2, Undo2, Upload } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
 import { Chip } from "@/components/ui/Chip";
 import { formatDate, formatMoney } from "@/lib/format";
@@ -47,7 +47,7 @@ function toBase64(blob: Blob): Promise<string> {
   });
 }
 
-const SOURCE_TONE: Record<string, "green" | "blue" | "amber" | "grey"> = { "previous PVO": "green", "previous DVO": "green", "previous RFA": "green", "previous EAR": "green", "approved PVO": "green", RFC: "blue", "cost assessment": "blue", register: "grey", project: "grey", calculated: "grey" };
+const SOURCE_TONE: Record<string, "green" | "blue" | "amber" | "grey"> = { "entered manually": "amber", "previous PVO": "green", "previous EVO": "green", "previous DVO": "green", "previous RFA": "green", "previous EAR": "green", "approved PVO": "green", RFC: "blue", "cost assessment": "blue", register: "grey", project: "grey", calculated: "grey" };
 
 function shown(f: Field, v: string | undefined): string {
   const t = String(v ?? "").trim();
@@ -79,6 +79,20 @@ export function PackEditor({ type, initial, docs: initialDocs, canManage, templa
   const packName = head.fileName.trim() || initial.defaultFileName;
   const values = initial.values;
   const sources = initial.sources;
+  // a value being typed in: its key and the text so far
+  const [editing, setEditing] = useState<{ key: string; text: string } | null>(null);
+  async function saveValue() {
+    if (!editing) return;
+    const j = await patch({ values: { [editing.key]: editing.text } }, "Saved – this value stays as typed until you clear it.");
+    if (j) {
+      setEditing(null);
+      router.refresh();
+    }
+  }
+  async function clearValue(key: string) {
+    const j = await patch({ clear: [key] }, "Back to what the files say.");
+    if (j) router.refresh();
+  }
   const hasRef = docs.some((d) => d.slot === REFERENCE_SLOT);
   const read = type.fields.filter((f) => (values[f.key] ?? "").trim()).length;
 
@@ -296,16 +310,43 @@ export function PackEditor({ type, initial, docs: initialDocs, canManage, templa
                     {fields.map((f) => {
                       const v = shown(f, values[f.key]);
                       const src = sources[f.key];
+                      const isEditing = editing?.key === f.key;
                       return (
                         <tr key={f.key} className="border-t border-line align-top">
                           <td className="w-[38%] py-1 pr-2 text-muted">{f.label}</td>
-                          <td className={`py-1 pr-2 ${f.kind === "long" ? "whitespace-pre-wrap" : ""} ${v ? "text-ink" : "text-amber-700"}`}>{v || "not in the files yet"}</td>
-                          <td className="w-[8rem] py-1 text-right">
-                            {v && src && (
+                          <td className={`py-1 pr-2 ${f.kind === "long" ? "whitespace-pre-wrap" : ""} ${v ? "text-ink" : "text-amber-700"}`}>
+                            {isEditing ? (
+                              <div className="space-y-1">
+                                {f.kind === "long" ? (
+                                  <textarea className="input min-h-[6rem] w-full text-xs" value={editing.text} onChange={(e) => setEditing({ key: f.key, text: e.target.value })} autoFocus />
+                                ) : (
+                                  <input className="input h-7 w-full text-xs" value={editing.text} onChange={(e) => setEditing({ key: f.key, text: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") void saveValue(); if (e.key === "Escape") setEditing(null); }} autoFocus />
+                                )}
+                                <div className="flex gap-1">
+                                  <button className="btn btn-xs btn-primary" onClick={saveValue} disabled={busy}>Save</button>
+                                  <button className="btn btn-xs btn-secondary" onClick={() => setEditing(null)}>Cancel</button>
+                                </div>
+                              </div>
+                            ) : (
+                              v || "not in the files yet"
+                            )}
+                          </td>
+                          <td className="w-[10rem] py-1 text-right whitespace-nowrap">
+                            {v && src && !isEditing && (
                               <Chip tone={SOURCE_TONE[src] ?? "grey"}>
                                 {/previous|approved/.test(src) && <CheckCircle2 size={10} className="mr-1" />}
                                 {src}
                               </Chip>
+                            )}
+                            {canManage && !isEditing && (
+                              <button className="btn btn-xs btn-ghost ml-1" title="Type this value in" onClick={() => setEditing({ key: f.key, text: values[f.key] ?? "" })}>
+                                <Pencil size={11} />
+                              </button>
+                            )}
+                            {canManage && !isEditing && src === "entered manually" && (
+                              <button className="btn btn-xs btn-ghost" title="Back to what the files say" onClick={() => clearValue(f.key)}>
+                                <Undo2 size={11} />
+                              </button>
                             )}
                           </td>
                         </tr>
