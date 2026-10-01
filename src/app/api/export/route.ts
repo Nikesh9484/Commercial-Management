@@ -12,6 +12,7 @@ import { renderDeckPptx } from "@/lib/report/deck-pptx";
 import { renderDeckPdf } from "@/lib/report/deck-pdf";
 import { renderDashboardExcel } from "@/lib/report/dashboard-excel";
 import { renderExcelEdition, excelEditionModulesZip } from "@/lib/excel-app/build";
+import { renderBudgetEacWorkbook } from "@/lib/report/budget-eac-excel";
 
 const NAMES: Record<string, string> = {
   exec: "Executive_Summary",
@@ -31,6 +32,7 @@ const NAMES: Record<string, string> = {
   period_summary: "Period_Summary_Key_Movements",
   recovery_report: "Cost_Recovery_Accommodation_Customs",
   uncommitted_ew: "Uncommitted_Costs_and_Early_Warnings",
+  budget_eac: "Budget_EAC",
   cashflow_forecast: "Cash_Flow_Forecast",
   aconex_report: "Aconex_Cost_Check",
   kpi_register: "KPI_F1_Open_VO_Register",
@@ -77,6 +79,11 @@ async function heavyGET(req: Request, ctx: unknown) {
       }
       const buffer = await renderDeckPdf(deck);
       return new Response(new Uint8Array(buffer), { headers: { "Content-Type": "application/pdf", "Content-Disposition": `attachment; filename="${base}_slides.pdf"` } });
+    }
+    if (sections.includes("budget_eac")) {
+      // the head office "Programme XX Budget EAC" workbook, named as the template is
+      const { buffer, fileName } = await renderBudgetEacWorkbook(data);
+      return new Response(new Uint8Array(buffer), { headers: { "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "Content-Disposition": `attachment; filename="${fileName.replace(/["\\]/g, "")}"` } });
     }
     if (sections.includes("dashboard")) {
       // the whole dashboard as one workbook: tiles, native charts and one sheet per module
