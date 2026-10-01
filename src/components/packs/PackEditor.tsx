@@ -274,6 +274,11 @@ export function PackEditor({ type, initial, docs: initialDocs, canManage, templa
             </div>
           </div>
         )}
+        {docs.some((d) => d.missing) && (
+          <div className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+            <strong>{docs.filter((d) => d.missing).length} of the uploaded files are no longer on this server</strong> – its disk was reset before uploaded files were backed up, so nothing can be read from them and the pack would show &ldquo;file missing on the server&rdquo; pages. Upload those files again into the same entries (they are marked below); from now on every upload is kept in the backup and comes back on its own.
+          </div>
+        )}
         <div className="mt-2 text-muted">
           {read} of {type.fields.length} values in hand · {docs.length} file{docs.length === 1 ? "" : "s"} uploaded ·{" "}
           {hasRef ? "the previous document in slot 2 supplies the project particulars, the figures, the wording and the signatories" : `upload the last approved ${type.short} into slot 2 – it supplies the project particulars, the figures, the wording and the signatories`}
@@ -438,10 +443,10 @@ function SlotRow({ typeKey, slot, docs, slots, canManage, busy, onUpload, onMove
         <ul className="divide-y divide-line">
           {docs.map((d) => (
             <li key={d.id} className="flex flex-wrap items-center gap-2 px-2 py-1">
-              <a className="min-w-0 flex-1 truncate text-ink hover:underline" href={`/api/packs/docs/${d.id}/download`} target="_blank" rel="noopener" title={d.rel_path}>
+              <a className={`min-w-0 flex-1 truncate hover:underline ${d.missing ? "text-red-700 line-through" : "text-ink"}`} href={`/api/packs/docs/${d.id}/download`} target="_blank" rel="noopener" title={d.rel_path}>
                 {d.name}
               </a>
-              <span className="text-muted">{(d.size / 1024 / 1024).toFixed(1)} MB{d.page_count ? ` · ${d.page_count} p.` : ""}</span>
+              {d.missing ? <span className="text-[11px] font-semibold text-red-700">file missing on the server – upload it again</span> : <span className="text-muted">{(d.size / 1024 / 1024).toFixed(1)} MB{d.page_count ? ` · ${d.page_count} p.` : ""}</span>}
               {slot.key === "reference" && d.page_count > 0 && !hasFormPages(d, typeKey) && <span className="text-[11px] text-amber-700">no form pages in this file – its index and dividers are used; the form pages come from the category&apos;s PDF template</span>}
               {d.page_count > 0 && slot.key === "pvo" && <PagesPicker doc={d} canManage={canManage} onSave={(p) => onPages(d, p)} />}
               {canManage && (

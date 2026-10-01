@@ -520,6 +520,8 @@ export interface PackCase {
 }
 
 export interface PackDoc {
+  /** set by the pack page: the file is not on this server (and not in the backup store) – it must be uploaded again */
+  missing?: boolean;
   id: number;
   case_id: number;
   slot: string;

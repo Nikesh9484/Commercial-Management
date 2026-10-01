@@ -685,6 +685,26 @@ export async function rebuildValues(caseId: number, user: UserInfo): Promise<{ v
       }
     }
   }
+  // a file the disk has lost cannot be read again: what it gave last time stays rather than going blank
+  const lost = docs.filter((d) => !docOnDisk(d));
+  if (lost.length) {
+    let prevSources: Record<string, string> = {};
+    try {
+      prevSources = JSON.parse(prev.__sources || "{}") as Record<string, string>;
+    } catch {
+      prevSources = {};
+    }
+    // a value carried over from the register, the previous pack or a counter gives way to what the lost file said earlier
+    const weak = (s: string | undefined) => !s || /^(register|project|previous |change log|worded from|entered manually)/.test(s);
+    for (const [k, v] of Object.entries(prev)) {
+      const was = prevSources[k] ?? "read earlier";
+      if (!v || k.startsWith("__") || (prevSources[k] && weak(was))) continue;
+      if (values[k] && !weak(sources[k])) continue;
+      if (!t.fields.some((f) => f.key === k) && !EXTRA.includes(k)) continue;
+      values[k] = v;
+      sources[k] = was.endsWith("(file no longer on the server)") ? was : `${was} (file no longer on the server)`;
+    }
+  }
   // what was typed in on the pack stays as typed
   const manual = manualValues(values);
   for (const [k, v] of Object.entries(manual)) {
@@ -731,6 +751,12 @@ export async function removeDocAndRebuild(id: number, user: UserInfo) {
   const cur = getDoc(id);
   removeDoc(id, user);
   if (cur) await rebuildValues(cur.case_id, user);
+}
+
+/** True when the document's file is on this disk, fetching it from the backup store when it is not. */
+export function docOnDisk(doc: PackDoc): boolean {
+  const p = path.join(packDataDir(), doc.disk_path);
+  return fs.existsSync(p) || restoreFileSync(p);
 }
 
 export function readDocBytes(doc: PackDoc): Buffer | null {

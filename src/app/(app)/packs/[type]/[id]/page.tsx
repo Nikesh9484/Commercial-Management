@@ -5,7 +5,7 @@ import { ArrowLeft } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth";
 import { getAppContext } from "@/lib/context";
 import { packRefLabel, packType } from "@/lib/packs/shared";
-import { canManagePacks, caseValues, getCase, getTemplate, listDocs } from "@/lib/packs/store";
+import { canManagePacks, caseValues, docOnDisk, getCase, getTemplate, listDocs } from "@/lib/packs/store";
 import { outputFileBase } from "@/lib/packs/output";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { PackEditor } from "@/components/packs/PackEditor";
@@ -22,7 +22,8 @@ export default async function PackCasePage({ params }: { params: Promise<{ type:
   const ctx = getAppContext();
   const programme = ctx.programmes.find((p) => p.id === c.programme_id) ?? null;
   const template = getTemplate(t.key);
-  const docs = listDocs(c.id);
+  // a file the server's disk lost before files were backed up is flagged, so the row says so instead of "not in the files yet"
+  const docs = listDocs(c.id).map((d) => ({ ...d, missing: !docOnDisk(d) }));
   const values = caseValues(c);
   let sources: Record<string, string> = {};
   try {
