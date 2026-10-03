@@ -158,7 +158,8 @@ async function readOne(f: DocFile): Promise<LeaseRead | null> {
   const head = text.slice(0, 5000);
   const sq = squash(text);
   const sqHead = squash(head);
-  const isAmendment = /AMENDMENT\s*No\.?\s*\d+/i.test(head) && /Lease\s*Agreement/i.test(head);
+  // the positioned text can split "No. 1" into "No . 1": the squashed head decides, the file name helps
+  const isAmendment = (/AMENDMENTNo\.?\d+/i.test(sqHead) || /AGREEMENTAMENDMENT/i.test(sqHead) || /amend/i.test(f.name)) && /LeaseAgreement/i.test(sqHead);
   const isLease = /LABOUR\s*ACCOMMODATION\s*LEASE\s*AGREEMENT|ACCOMMODATION\s*LEASE\s*AGREEMENT/i.test(head);
   const kind: LeaseRead["kind"] = isAmendment ? "amendment" : isLease ? "agreement" : "unknown";
   const aconex = [...new Set(`${f.name}\n${head}`.match(/\b1TB\d{5}-\d{3}[A-Z]\d{2}-[A-Z]{2,4}-[A-Z]{2,4}-[A-Z]{2}-\d{4}(?:C\d)?\b/g) ?? [])];
@@ -195,7 +196,7 @@ async function readOne(f: DocFile): Promise<LeaseRead | null> {
   }
 
   // an amendment: which agreement, and what it changes
-  base.amendmentNo = Number(head.match(/AMENDMENT\s*No\.?\s*(\d+)/i)?.[1] ?? "") || null;
+  base.amendmentNo = Number(sqHead.match(/AMENDMENTNo\.?(\d+)/i)?.[1] ?? "") || null;
   base.amendmentDate = dateFromSquashed(sqHead.match(/ismadeon(\d{1,2}(?:st|nd|rd|th)?[A-Za-z]{3,9}\d{4})/i)?.[1]);
   base.agreementNo = (sqHead.match(/(?:Contract|Agreement)No\.?:?(1TB\d{5}[A-Z]\d{2,3})/i)?.[1] ?? "").toUpperCase();
   base.tenant = (head.match(/\(2\)\s+([^,\n]{3,80}?)\s*,\s*a\s+company/i)?.[1] ?? head.match(/Lease\s*Agreement\s+([^.\n(]{3,60}?)\s*\.?\s*\(/i)?.[1] ?? "").replace(/\s+/g, " ").trim();
@@ -257,7 +258,7 @@ export async function addLeasesFromDocuments(files: DocFile[], user: UserInfo, d
   const programmeOf = (r: LeaseRead) => programmes.find((p) => r.programmeCode && String(p.code ?? "").toUpperCase().startsWith(r.programmeCode.toUpperCase())) ?? app.programme ?? programmes[0];
   const show = (v: unknown) => (v === null || v === undefined || v === "" ? "–" : typeof v === "number" ? formatMoney(v) : String(v));
 
-  type Plan = { read: LeaseRead; programme: { id: number; name: string }; record: Record<string, unknown>; existing: RecordRow | null; key: string; label: string; readValues: ReadValue[]; missing: string[]; differences: { label: string; old: string; new: string }[]; contractorId: number | null; contractLine: RecordRow | null };
+  type Plan = { read: LeaseRead; programme: { id: number; name: string }; record: Record<string, unknown>; existing: RecordRow | null; key: string; label: string; readValues: ReadValue[]; missing: string[]; differences: { label: string; old: string; new: string }[]; contractorId: number | null; contractLine: RecordRow | null; /** the same original agreement, already on the tracker */ same?: boolean };
   const plans: Plan[] = [];
   const amendments: { read: LeaseRead; programme: { id: number; name: string }; contractorId: number | null }[] = [];
   // agreements first, so an amendment uploaded with its agreement finds it
@@ -337,15 +338,36 @@ export async function addLeasesFromDocuments(files: DocFile[], user: UserInfo, d
           .filter(([, o, n]) => n !== null && n !== "" && show(o) !== show(n))
           .map(([label, o, n]) => ({ label, old: show(o), new: show(n) }))
       : [];
-    plans.push({ read: p, programme, record, existing, key: `lease:${programme.id}:${existing ? `id${existing.id}` : record.agreement_no}`, label: `Lease agreement ${record.agreement_no} – ${contractor?.name ?? p.tenant ?? "tenant not matched"}`, readValues, missing, differences, contractorId, contractLine });
+    // the original uploaded again: nothing to decide, the document is filed and the row stands
+    const same = !!existing && differences.length === 0;
+    // the same agreement re-issued with a different fee, term or expiry on a later date is an amendment, not a duplicate
+    const amendable = ["Term (months)", "Original lease fee", "Security deposit"];
+    const laterDate = !!existing && !!p.agreementDate && (!existing.agreement_date || String(existing.agreement_date) < p.agreementDate);
+    const sameLease = !!existing && (!p.commencement || !existing.commencement_date || String(existing.commencement_date) === p.commencement) && (!p.agreementNo || String(existing.agreement_no ?? "").toUpperCase() === p.agreementNo);
+    if (existing && !same && laterDate && sameLease && differences.every((d) => amendable.includes(d.label))) {
+      const changes = differences.map((d) => `${d.label}: ${d.old} → ${d.new}`);
+      amendments.push({
+        read: { ...p, kind: "amendment", amendmentNo: null, amendmentDate: p.agreementDate, newFee: differences.some((d) => d.label === "Original lease fee") ? p.leaseFee : null, newTermMonths: differences.some((d) => d.label === "Term (months)") ? p.termMonths : null, newExpiry: differences.some((d) => d.label === "Term (months)") && p.expiry ? p.expiry : "", changes, note: `re-issued lease agreement ${p.agreementNo} read as an amendment – ${changes.join("; ")}` },
+        programme,
+        contractorId,
+      });
+      result.files = result.files.map((x) => (x.name === p.name ? { ...x, kind: "amendment", note: `${x.note} – read as an amendment to the agreement already on the tracker (${changes.join("; ")})` } : x));
+      continue;
+    }
+    plans.push({ read: p, programme, record, existing, key: `lease:${programme.id}:${existing ? `id${existing.id}` : record.agreement_no}`, label: `Lease agreement ${record.agreement_no} – ${contractor?.name ?? p.tenant ?? "tenant not matched"}`, readValues, missing, differences, contractorId, contractLine, same });
   }
 
-  const undecided = plans.filter((pl) => pl.existing && !decide(decisions, pl.key));
+  // a document of another project than the one in the top bar is filed under its own project – say so, or it looks lost
+  for (const r of reads) {
+    const programme = programmeOf(r);
+    if (app.programme && programme.id !== app.programme.id) result.warnings.push(`${r.name}: this is a ${programme.name} agreement (${r.agreementNo || r.programmeCode}) – it is listed under ${programme.name}, not ${app.programme.name}. Switch the project in the top bar to see it.`);
+  }
+  const undecided = plans.filter((pl) => pl.existing && !pl.same && !decide(decisions, pl.key));
   if (undecided.length) {
     result.needsDecision = true;
     result.duplicates = undecided.map<Duplicate>((pl) => ({
       key: pl.key,
-      existing: { id: Number(pl.existing!.id), label: `Lease ${pl.existing!.agreement_no}`, detail: `${pl.existing!.contractor_id__label ?? ""} – from ${pl.existing!.commencement_date ? formatDate(String(pl.existing!.commencement_date)) : "–"}, fee ${show(pl.existing!.lease_fee)} SAR, ${pl.existing!.amendments_count || 0} amendment(s)` },
+      existing: { id: Number(pl.existing!.id), label: `Lease ${pl.existing!.agreement_no} (${pl.programme.name})`, detail: `${pl.existing!.contractor_id__label ?? ""} – from ${pl.existing!.commencement_date ? formatDate(String(pl.existing!.commencement_date)) : "–"}, fee ${show(pl.existing!.lease_fee)} SAR, ${pl.existing!.amendments_count || 0} amendment(s)` },
       incoming: { label: pl.label, detail: pl.read.note },
       differences: pl.differences,
       files: [pl.read.name],
@@ -387,6 +409,12 @@ export async function addLeasesFromDocuments(files: DocFile[], user: UserInfo, d
     const f = files.find((x) => x.name === pl.read.name);
     const outcome = (action: Outcome["action"], row: RecordRow): Outcome => ({ action, id: Number(row.id), label: `Lease ${row.agreement_no}`, description: pl.label, programme: pl.programme.name, files: [pl.read.name], read: pl.readValues, missing: pl.missing });
     if (pl.existing) {
+      if (pl.same) {
+        const docId = file(pl.programme.id, f, pl.read, { contractor_id: pl.contractorId }, Number(pl.existing.id));
+        if (docId && !pl.existing.library_doc_id) updateRecord(def, Number(pl.existing.id), { library_doc_id: docId }, user, "import", { bypassRoles: true });
+        result.entries.push({ ...outcome("kept", pl.existing), description: `${pl.label} – the same original agreement is already on the tracker (${pl.programme.name}); the document has been filed in the Contract Library.` });
+        continue;
+      }
       if (decide(decisions, pl.key) === "keep") {
         file(pl.programme.id, f, pl.read, { contractor_id: pl.contractorId }, Number(pl.existing.id));
         result.entries.push(outcome("kept", pl.existing));

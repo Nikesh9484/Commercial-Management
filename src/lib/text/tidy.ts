@@ -141,3 +141,51 @@ export function needsTidy(raw: unknown): boolean {
   const s = String(raw ?? "");
   return s.trim() !== "" && tidyText(s) !== s;
 }
+
+/** Legal forms and initialisms that keep their capitals inside a company name. */
+const NAME_CAPS = new Set([
+  "LLC", "LLP", "SL", "SA", "SAL", "SPA", "SAS", "GMBH", "AG", "BV", "NV", "SAE", "WLL", "FZE", "FZC", "FZCO", "DMCC", "JV", "KSA", "UAE", "USA", "UK",
+  "RSG", "AMAALA", "MME", "ALS", "WSP", "HKS", "GST", "STH", "MEGS", "EPC", "MEP", "FFE", "OSE", "AV", "IT", "ICT", "ELV", "HVAC", "BIM", "RSMLI", "NEOM", "TB", "VBH", "BOQ", "KPI",
+]);
+/** Small words that stay lower case inside a name. */
+const NAME_MINOR = new Set(["and", "of", "for", "the", "de", "del", "la", "le", "van", "von", "bin", "al", "e", "y", "fo"]);
+
+/**
+ * A company or person's name in title case – "FOSTER AND PARTNERS" → "Foster and Partners", "green" →
+ * "Green", "CONTEMPORAIN STUDIO SL" → "Contemporain Studio SL". A name already in mixed case is left as
+ * typed apart from a lower-case start ("eReg" stays), and legal forms and initialisms keep their capitals.
+ */
+export function tidyName(raw: unknown): string {
+  let s = String(raw ?? "").replace(/[\u00a0\u2007\u202f]/g, " ").replace(/\s*[\r\n]+\s*/g, " ").replace(/\s{2,}/g, " ").trim();
+  if (!s) return "";
+  const letters = s.replace(/[^A-Za-z]/g, "");
+  if (!letters) return s;
+  const shouting = letters === letters.toUpperCase();
+  const whispering = letters === letters.toLowerCase();
+  const word = (w: string, first: boolean): string => {
+    const core = w.replace(/[^A-Za-z]/g, "");
+    if (!core) return w;
+    const up = core.toUpperCase();
+    // "L.L.C", "S.L", "F.Z.E" – dotted initials
+    if (/^(?:[A-Za-z]\.){2,}[A-Za-z]?\.?$/.test(w)) return w.toUpperCase();
+    if (NAME_CAPS.has(up) || ACRONYM_SET.has(up)) return w.replace(/[A-Za-z]+/g, (m) => m.toUpperCase());
+    if (!shouting && !whispering) {
+      // mixed case: only a word typed entirely in lower case is lifted ("foster + Partners")
+      if (core === core.toLowerCase() && !(NAME_MINOR.has(core) && !first)) return w.replace(/[a-z]/, (m) => m.toUpperCase());
+      return w;
+    }
+    const lower = w.toLowerCase();
+    if (!first && NAME_MINOR.has(core.toLowerCase())) return lower;
+    // a digit-led word ("2modern") is capitalised at its first letter
+    return lower.replace(/[a-z]/, (m) => m.toUpperCase());
+  };
+  let first = true;
+  s = s.replace(/[A-Za-z0-9][A-Za-z0-9'’.]*/g, (w) => {
+    const out = word(w, first);
+    first = false;
+    return out;
+  });
+  // the word after a hyphen or a bracket starts a new part of the name
+  s = s.replace(/([-–(\/]\s*)([a-z])/g, (m, a: string, b: string) => `${a}${b.toUpperCase()}`);
+  return s;
+}

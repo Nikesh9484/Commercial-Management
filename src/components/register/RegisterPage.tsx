@@ -1062,11 +1062,11 @@ function Cell({ field: f, row: r }: { field: FieldDef; row: RecordRow }) {
   const tone = r[`${f.key}__tone`] as string | null | undefined;
   const wrap = (node: React.ReactNode) => (tone && TONE_CLASS[tone] ? <span className={TONE_CLASS[tone]}>{node}</span> : <>{node}</>);
   if (f.key === "documents" && Array.isArray(r.__docs)) {
-    const docs = r.__docs as { id: number; name: string; note?: string }[];
+    const docs = r.__docs as { id: number; name: string; note?: string; href?: string }[];
     return (
       <span className="flex flex-col gap-0.5">
         {docs.map((d) => (
-          <a key={d.id} href={`/api/bonds/documents/${d.id}`} target="_blank" rel="noreferrer" className="text-accent hover:underline" title={d.note ? `${d.name} – ${d.note}` : d.name}>
+          <a key={d.id} href={d.href ?? `/api/bonds/documents/${d.id}`} target="_blank" rel="noreferrer" className="text-accent hover:underline" title={d.note ? `${d.name} – ${d.note}` : d.name}>
             {d.name.length > 48 ? `${d.name.slice(0, 45)}…` : d.name}
           </a>
         ))}

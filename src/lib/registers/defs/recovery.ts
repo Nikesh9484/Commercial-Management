@@ -17,7 +17,7 @@ const RECOVERY = "Recovery";
 const CUSTOMS = "Customs paid";
 const CONTRACT = "Contract";
 
-export const RECOVERY_STATUSES = ["Open", "Closed"] as const;
+export const RECOVERY_STATUSES = ["Open", "Recovered", "Closed"] as const;
 
 export const accommodationRecovery: RegisterDef = {
   key: "accommodation_recovery",
@@ -40,7 +40,7 @@ export const accommodationRecovery: RegisterDef = {
     { key: "cost_line_id", label: "Cost report line", type: "lookup", lookup: { register: "cost_lines" }, section: TRACKER, hideInTable: true, help: "The contract the accommodation is recovered against (filled in from the contractor when it has one contract)." },
     { key: "program_name", label: "Program (tracker)", type: "text", section: TRACKER, hideInTable: true },
     { key: "asset_ref", label: "Asset code (tracker)", type: "text", section: TRACKER, width: "8rem" },
-    { key: "status", label: "Status", type: "select", options: [...RECOVERY_STATUSES], required: true, defaultValue: "Open", chip: true, filter: true, section: TRACKER, help: "Closed when the tracker notes the agreement as closed." },
+    { key: "status", label: "Status", type: "select", options: [...RECOVERY_STATUSES], required: true, defaultValue: "Open", chip: true, filter: true, section: TRACKER, help: "Recovered once the money is fully back (set from the Mark fully recovered button on the summary, or here); Closed when the tracker notes the agreement as closed." },
     { key: "tracker_date", label: "Tracker as of", type: "date", section: TRACKER, hideInTable: true },
     { key: "lease_sum", label: "Lease agreement sum", type: "money", section: TRACKER, hideInTable: true, help: "Including amendments." },
     { key: "commercial_lead", label: "Commercial lead", type: "text", section: TRACKER, hideInTable: true },

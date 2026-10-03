@@ -30,7 +30,7 @@ export const LIBRARY_INFO: Record<LibraryKey, { title: string; short: string; su
     title: "Contract Library – Contract documents",
     short: "Contract Library",
     subtitle: "The contract documents of every contract: agreement, letter of award, conditions, specifications, pricing schedules, amendments. Upload the PDF or Word files, or a whole folder; the dashboard reads each one and files it under its contractor and contract code.",
-    types: ["Contract Agreement", "Letter of Award / Acceptance", "Conditions of Contract", "Particular Conditions", "Scope of Work / Specification", "Pricing Schedule / BoQ", "Amendment / Addendum", "Variation / Change Order", "Bond / Guarantee", "Lease Agreement", "Lease Amendment", "Other"],
+    types: ["Contract Agreement", "Letter of Award / Acceptance", "Conditions of Contract", "Particular Conditions", "Scope of Work / Specification", "Pricing Schedule / BoQ", "Amendment / Addendum", "Variation / Change Order", "Bond / Guarantee", "Lease Agreement", "Lease Amendment", "Final Account Statement", "Final Account Correspondence", "Other"],
     hint: "PDF or Word files (contract agreement, LOA, conditions, amendments). A folder can be dropped in at once – sub-folders are kept as the document's location.",
   },
 };

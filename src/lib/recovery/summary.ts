@@ -51,14 +51,16 @@ export interface AccommodationSummary {
 function accTotals(rows: RecordRow[]): AccommodationTotals {
   const t: AccommodationTotals = { rows: rows.length, open: 0, leaseSum: 0, invoiced: 0, received: 0, offset: 0, outstanding: 0, withheld: 0, settleInFa: 0, exposed: 0 };
   for (const r of rows) {
-    if (r.status !== "Closed") t.open++;
+    // a row marked as fully recovered has nothing outstanding any more: what was owed counts as received
+    const done = r.status === "Recovered";
+    if (r.status !== "Closed" && !done) t.open++;
     t.leaseSum += n(r.lease_sum);
     t.invoiced += n(r.invoiced_gross);
-    t.received += n(r.received_total);
+    t.received += n(r.received_total) + (done ? Math.max(0, n(r.outstanding)) : 0);
     t.offset += n(r.offset_via_ipc);
-    t.outstanding += n(r.outstanding);
-    t.withheld += n(r.withheld_in_ipc);
-    t.settleInFa += n(r.deemed_settled_fa);
+    t.outstanding += done ? 0 : n(r.outstanding);
+    t.withheld += done ? 0 : n(r.withheld_in_ipc);
+    t.settleInFa += done ? 0 : n(r.deemed_settled_fa);
   }
   t.exposed = Math.max(0, t.outstanding - t.withheld);
   for (const k of Object.keys(t) as (keyof AccommodationTotals)[]) t[k] = r2(t[k]);
@@ -94,7 +96,7 @@ export function getAccommodationSummary(rows: RecordRow[], invoices: RecordRow[]
   const byContractor = [...groups]
     .map(([contractor, list]) => ({ contractor, rows: list, totals: accTotals(list), note: [...new Set(list.map((r) => String(r.note ?? "").trim()).filter(Boolean))].join(" · "), detail: invoiceDetail(list, invoicesOf.get(contractor) ?? []) }))
     .sort((a, b) => b.totals.outstanding - a.totals.outstanding);
-  const outstanding = rows.filter((r) => Math.abs(n(r.outstanding)) >= 0.5).sort((a, b) => n(b.outstanding) - n(a.outstanding));
+  const outstanding = rows.filter((r) => r.status !== "Recovered" && Math.abs(n(r.outstanding)) >= 0.5).sort((a, b) => n(b.outstanding) - n(a.outstanding));
   return { asOf, totals: accTotals(rows), byContractor, outstanding };
 }
 
@@ -185,6 +187,11 @@ export function customsWithDvo(rows: RecordRow[], changes: RecordRow[]): (Record
         source = `${String(r.pvo_ref ?? "PVO / DVO on the tracker")}${r.pvo_date ? ` approved ${String(r.pvo_date)}` : ""}`;
       }
       const toRecover = n(r.to_recover) || n(r.recoverable_via_contractor);
+      if (r.status === "Recovered") {
+        // marked as fully recovered on the summary: the whole amount is back, whatever the DVOs say
+        recovered = Math.max(recovered, toRecover);
+        source = source ? `${source}; marked as fully recovered` : "marked as fully recovered";
+      }
       return { ...r, recovered_by_dvo: r2(recovered), still_to_recover: r2(Math.max(0, toRecover - recovered)), dvo_source: source };
     });
   return out;
@@ -193,7 +200,7 @@ export function customsWithDvo(rows: RecordRow[], changes: RecordRow[]): (Record
 function custTotals(rows: ReturnType<typeof customsWithDvo>): CustomsTotals {
   const t: CustomsTotals = { rows: rows.length, open: 0, rsgPaid: 0, contractorPaid: 0, toRecover: 0, unrecoverable: 0, recoverable: 0, pvo: 0, ewn: 0, remainingToPay: 0, recoveredByDvo: 0, stillToRecover: 0 };
   for (const r of rows) {
-    if (r.status !== "Closed") t.open++;
+    if (r.status !== "Closed" && r.status !== "Recovered") t.open++;
     t.rsgPaid += n(r.customs_rsg_paid);
     t.contractorPaid += n(r.customs_contractor_paid);
     t.toRecover += n(r.to_recover);

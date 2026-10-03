@@ -134,6 +134,22 @@ export function enrichRows(def: RegisterDef, rows: RecordRow[]) {
       r.days_remaining__tone = days === null ? null : days < 0 ? "red" : days <= FA_AMBER_DAYS ? "amber" : "green";
       r.status__tone = r.status === "Closed" ? "green" : open ? (days !== null && days < 0 ? "red" : "amber") : null;
     }
+    // the final account statement and its transmittals filed in the Contract Library, by contract code
+    try {
+      const docs = db.prepare("SELECT id, name, contract_code, contract_id, doc_type, doc_date FROM library_docs WHERE programme_id = ? AND library = 'contract' AND doc_type LIKE 'Final Account%' ORDER BY doc_date, id").all(programmeId) as { id: number; name: string; contract_code: string | null; contract_id: number | null; doc_type: string; doc_date: string | null }[];
+      if (docs.length) {
+        const lineCode = new Map((db.prepare("SELECT id, code FROM cost_lines WHERE programme_id = ?").all(programmeId) as { id: number; code: string | null }[]).map((l) => [l.id, String(l.code ?? "")]));
+        const frag = (code: unknown) => /(\d{3}[A-Z]\d{2})/i.exec(String(code ?? "").toUpperCase())?.[1] ?? null;
+        for (const r of rows) {
+          const mine = frag(r.acc_ref) ?? frag(lineCode.get(Number(r.cost_line_id)));
+          const list = docs.filter((d) => (mine && String(d.contract_code ?? "").toUpperCase() === mine) || (r.contract_id && Number(d.contract_id) === Number(r.contract_id)));
+          r.documents = list.map((d) => d.name).join("; ") || null;
+          r.__docs = list.map((d) => ({ id: d.id, name: d.name, note: `${d.doc_type}${d.doc_date ? ` – ${d.doc_date}` : ""}`, href: `/api/library/contract/${d.id}/download` }));
+        }
+      }
+    } catch (e) {
+      console.warn("final account documents could not be listed:", e);
+    }
   }
 }
 

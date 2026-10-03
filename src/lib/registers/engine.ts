@@ -7,6 +7,7 @@ import { isEditorRole } from "./types";
 import type { FieldDef, LookupOption, RecordRow, RegisterDef, UserInfo } from "./types";
 import { canEditRegister, canViewRegister, canCreateRegister } from "./types";
 import { logAudit } from "../audit";
+import { tidyName } from "../text/tidy";
 import { hashPassword, AuthError } from "../auth";
 import { nowIso, parseDateInput, formatMonthYear } from "../format";
 import { enrichRows } from "./enrich";
@@ -283,7 +284,24 @@ function prepareInput(def: RegisterDef, input: Record<string, unknown>, mode: "c
 /* Register-specific rules (kept small; bigger logic lives in modules) */
 /* ------------------------------------------------------------------ */
 
+/** The name columns that are written in title case whatever the spreadsheet or the typist gave. */
+export const NAME_FIELDS: Record<string, string[]> = {
+  contractors: ["name"],
+  customs_recovery: ["vendor"],
+  accommodation_recovery: ["tracker_name"],
+  customs_declarations: ["vendor", "supplier"],
+  accommodation_invoices: ["tracker_name"],
+};
+
 function applyRules(def: RegisterDef, prepared: Prepared, mode: "create" | "update", existing: RecordRow | undefined, user: UserInfo) {
+  for (const k of NAME_FIELDS[def.key] ?? []) {
+    const v = prepared.values[k];
+    if (typeof v === "string" && v.trim()) {
+      const tidy = tidyName(v);
+      prepared.values[k] = tidy;
+      prepared.display[k] = tidy;
+    }
+  }
   if (def.key === "reporting_periods") {
     const end = (prepared.values.period_end as string | undefined) ?? (existing?.period_end as string | undefined);
     const no = (prepared.values.report_no as number | undefined) ?? (existing?.report_no as number | undefined);

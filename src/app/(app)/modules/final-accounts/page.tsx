@@ -9,6 +9,7 @@ import { RegisterPage } from "@/components/register/RegisterPage";
 import { ExportButtons } from "@/components/ui/ExportButtons";
 import { EmailReportButton } from "@/components/dashboard/EmailReportButton";
 import { FileText } from "lucide-react";
+import { AddFromDocuments } from "@/components/changes/AddFromDocuments";
 
 export const metadata = { title: "Final Account Status" };
 
@@ -32,10 +33,21 @@ export default async function FinalAccountsPage() {
         subtitle="One row per contract: is the final account statement open, signed or not required, and when is closure expected. Committed cost and the anticipated final account are read from the cost report line, so the totals tie to Schedule B."
         actions={
           ctx.period ? (
+            <span className="inline-flex flex-wrap items-center gap-2">
+              {["admin", "editor", "contributor", "reporter"].includes(user.role) && (
+                <AddFromDocuments
+                  endpoint="/api/final-accounts/from-documents"
+                  title="Add final account documents"
+                  button="Add from documents"
+                  intro="Drop the Final Account Statement (the signed AMA-CM-FRM-0020 form), the Aconex workflow transmittal that records its acceptance, and the transmittal that issued it to the contractor – for one contract or several at once. The contract is matched by its code (031C12…) and contractor; the row here is closed with the signed date, the statement reference and the final contract price, the contract is closed in Payment Tracking with the final account adjustment that brings its revised value to the agreed figure, its bonds are released and its open changes closed, and every document is filed in the Contract Library under the contract."
+                  tip="A statement on its own closes the account on its statement date; the workflow transmittal gives the acceptance date instead. A transmittal that only issues the statement to the contractor is noted on the row and filed, without closing it."
+                />
+              )}
             <span className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-2 py-1 shadow-sm" title="Executive final account status report for the month: headline figures, narrative, closure programme, actions">
               <FileText size={14} className="text-navy" />
               <ExportButtons section="fa_report" label="Final account status report" />
               <EmailReportButton kind="final_accounts" label="Email final account status report" attachments="Final Account Status Report.pdf" />
+            </span>
             </span>
           ) : undefined
         }

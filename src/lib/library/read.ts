@@ -224,6 +224,7 @@ function guessType(library: LibraryKey, fileName: string, text: string): string 
     return "Other";
   }
   if (/accommodation lease agreement|lease agreement/.test(s)) return /amendment/.test(s) ? "Lease Amendment" : "Lease Agreement";
+  if (/financial account statement|final account statement|statement of final account/.test(s)) return /mail type|transmittal/.test(s) ? "Final Account Correspondence" : "Final Account Statement";
   if (/letter of award|letter of acceptance|\bloa\b/.test(s)) return "Letter of Award / Acceptance";
   if (/particular conditions/.test(s)) return "Particular Conditions";
   if (/conditions of contract|general conditions/.test(s)) return "Conditions of Contract";

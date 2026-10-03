@@ -130,6 +130,40 @@ export function buildCustomsEmail(data: ReportData, sender: { name: string; emai
       html.push(`<tr><td ${td} colspan="6"><b>Total paid by RSG</b></td><td ${tdr}><b>${formatMoney(g.rsgPaidListed)}</b></td></tr></table>`);
       text.push(`  Total paid by RSG: ${formatMoney(g.rsgPaidListed)}`);
     }
+    // how the amount is made up, contract by contract, from the tracker's own columns – so the figure
+    // is never a bare total, even before the declaration-level Breakdown sheet is uploaded
+    const cols: [string, (r: RecordRow) => number][] = [
+      ["Customs (Fasah)", (r) => n(r.customs_fasah)],
+      ["Customs (Naif)", (r) => n(r.customs_naif)],
+      ["VAT deferred", (r) => n(r.vat_deferred)],
+      ["VAT definitive", (r) => n(r.vat_definitive)],
+      ["Paid by RSG", (r) => n(r.customs_rsg_paid)],
+      ["Paid by contractor", (r) => n(r.customs_contractor_paid)],
+      ["To recover", (r) => n(r.to_recover)],
+      ["Unrecoverable", (r) => n(r.unrecoverable)],
+      ["Recovered by DVO", (r) => n(r.recovered_by_dvo)],
+      ["Still to recover", (r) => n(r.still_to_recover)],
+    ];
+    const used = cols.filter(([, f]) => g.rows.some((r) => Math.abs(f(r)) > 0.004));
+    both(`<p>How the amount is made up, per contract, from the customs recovery tracker${asOf ? ` as at ${esc(asOf)}` : ""} (SAR, excl. VAT unless stated):</p>`, `How the amount is made up, per contract, from the customs recovery tracker${asOf ? ` as at ${asOf}` : ""} (SAR):`);
+    html.push(`<table cellspacing="0" cellpadding="0" style="border-collapse:collapse;min-width:640px"><tr><th ${th}>Contract</th><th ${th}>Scope / note</th>${used.map(([l]) => `<th ${th}>${esc(l)}</th>`).join("")}</tr>`);
+    text.push(`  Contract | Scope / note | ${used.map(([l]) => l).join(" | ")}`);
+    for (const r of g.rows) {
+      const note = [r.other_contract_note, r.customs_payer ? `customs per contract: ${r.customs_payer}` : "", r.pvo_ref ? `PVO ${r.pvo_ref}` : "", r.ewn_ref ? `EWN ${r.ewn_ref}` : ""].filter(Boolean).join(" · ");
+      html.push(`<tr><td ${td}>${esc(r.contract_code ?? r.asset_ref ?? "–")}</td><td ${td}>${esc(note)}</td>${used.map(([, f]) => `<td ${tdr}>${formatMoney(f(r))}</td>`).join("")}</tr>`);
+      text.push(`  ${String(r.contract_code ?? r.asset_ref ?? "–")} | ${note} | ${used.map(([, f]) => formatMoney(f(r))).join(" | ")}`);
+    }
+    if (g.rows.length > 1) {
+      html.push(`<tr><td ${td} colspan="2"><b>Total</b></td>${used.map(([, f]) => `<td ${tdr}><b>${formatMoney(g.rows.reduce((t, r) => t + f(r), 0))}</b></td>`).join("")}</tr>`);
+      text.push(`  Total | | ${used.map(([, f]) => formatMoney(g.rows.reduce((t, r) => t + f(r), 0))).join(" | ")}`);
+    }
+    html.push("</table>");
+    if (!g.rsgPaidList.length) {
+      both(
+        `<p style="font-size:12px;color:#555">The declaration-by-declaration list (Bayan number, port, supplier, invoice, duty paid) is added to this letter once the Breakdown sheet of the customs recovery tracker is uploaded; the figures above are the tracker's own per-contract totals.</p>`,
+        "  (The declaration-by-declaration list – Bayan number, port, supplier, invoice, duty paid – is added once the Breakdown sheet of the customs recovery tracker is uploaded.)",
+      );
+    }
     const parts = [`amount to recover SAR ${formatMoney(g.totals.toRecover)}`];
     if (g.totals.recoveredByDvo > 0.5) parts.push(`less SAR ${formatMoney(g.totals.recoveredByDvo)} already recovered through ${g.dvoNote || "the DVO recorded"}`);
     if (g.totals.unrecoverable > 0.5) parts.push(`SAR ${formatMoney(g.totals.unrecoverable)} treated as unrecoverable`);

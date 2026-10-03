@@ -9,6 +9,7 @@ import { nowIso, formatMonthYear } from "./format";
 import { tidyRegisters } from "./text/tidy-registers";
 import { rederiveOverallStatuses } from "./changes/status";
 import { syncContractClosedChanges } from "./changes/auto-close";
+import { tidyName } from "./text/tidy";
 import { personalSetting, personalRequest, isSharedContextKey } from "./personal-context";
 
 /**
@@ -455,6 +456,37 @@ function seed(db: Database.Database) {
     if (r.closed || r.reopened) console.log(`[migration] ${r.closed} change(s) closed with their contract, ${r.reopened} reopened`);
   } catch (e) {
     console.warn("[migration] contract-closure sync skipped:", e);
+  }
+
+  // Company names arrive from the trackers in every case there is ("FOSTER AND PARTNERS", "green"):
+  // the ones already in are put into title case once; new ones are tidied as they are saved.
+  if (getSetting(db, "tidied_names_v1") !== "1") {
+    try {
+      let n = 0;
+      const tables: [string, string[]][] = [["contractors", ["name"]], ["customs_recovery", ["vendor"]], ["accommodation_recovery", ["tracker_name"]], ["customs_declarations", ["vendor", "supplier"]], ["accommodation_invoices", ["tracker_name"]]];
+      for (const [table, cols] of tables) {
+        if (!(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table))) continue;
+        const have = new Set((db.prepare(`PRAGMA table_info("${table}")`).all() as { name: string }[]).map((c) => c.name));
+        for (const col of cols) {
+          if (!have.has(col)) continue;
+          const rows = db.prepare(`SELECT id, "${col}" AS v FROM "${table}"`).all() as { id: number; v: unknown }[];
+          const taken = new Set(rows.map((r) => String(r.v ?? "").trim().toLowerCase()));
+          for (const r of rows) {
+            if (typeof r.v !== "string" || !r.v.trim()) continue;
+            const tidy = tidyName(r.v);
+            if (tidy === r.v) continue;
+            // a unique name never collides with another row's by a change of case alone
+            if (col === "name" && tidy.toLowerCase() !== r.v.trim().toLowerCase() && taken.has(tidy.toLowerCase())) continue;
+            db.prepare(`UPDATE "${table}" SET "${col}" = ? WHERE id = ?`).run(tidy, r.id);
+            n++;
+          }
+        }
+      }
+      if (n) console.log(`[migration] ${n} name(s) put into title case`);
+    } catch (e) {
+      console.warn("[migration] name tidy skipped:", e);
+    }
+    setSetting(db, "tidied_names_v1", "1");
   }
 
   if (getSetting(db, "deduped_early_warnings") !== "1") {

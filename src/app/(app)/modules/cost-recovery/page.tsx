@@ -11,6 +11,8 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { RegisterPage } from "@/components/register/RegisterPage";
 import { AddFromDocuments } from "@/components/changes/AddFromDocuments";
 import { LeaseAlertsCard } from "@/components/recovery/LeaseAlertsCard";
+import { MarkRecoveredButton } from "@/components/recovery/MarkRecoveredButton";
+import { canEditRegister } from "@/lib/registers/types";
 import { getLeaseSummary } from "@/lib/leases/summary";
 import { ExportButtons } from "@/components/ui/ExportButtons";
 
@@ -24,6 +26,7 @@ type Tab = "accommodation" | "customs" | "leases";
  */
 export default async function CostRecoveryPage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
   const user = (await getCurrentUser())!;
+  const canMark = canEditRegister(getRegisterDef("customs_recovery")!, user.role);
   const mod = getModule("cost-recovery")!;
   const ctx = getAppContext();
   const { tab: tabParam } = await searchParams;
@@ -117,6 +120,7 @@ export default async function CostRecoveryPage({ searchParams }: { searchParams:
                       <th className="px-3 py-2 text-right">Withheld in IPC</th>
                       <th className="px-3 py-2 text-right">To settle in FA</th>
                       <th className="px-3 py-2">Tracker note</th>
+                      <th className="px-3 py-2">Recovery</th>
                       <th className="px-3 py-2">Email</th>
                     </tr>
                   </thead>
@@ -144,6 +148,9 @@ export default async function CostRecoveryPage({ searchParams }: { searchParams:
                         <td className="px-3 py-1.5 text-right tnum">{money(c.totals.withheld)}</td>
                         <td className="px-3 py-1.5 text-right tnum">{money(c.totals.settleInFa)}</td>
                         <td className="max-w-[22rem] truncate px-3 py-1.5 text-xs text-muted" title={c.note}>{c.note}</td>
+                        <td className="px-3 py-1.5 whitespace-nowrap">
+                          {canMark ? <MarkRecoveredButton register="accommodation_recovery" contractor={c.contractor} recovered={c.rows.length > 0 && c.rows.every((r) => r.status === "Recovered")} what="accommodation charges" /> : c.rows.every((r) => r.status === "Recovered") ? <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">Recovered</span> : null}
+                        </td>
                         <td className="px-3 py-1.5">
                           {c.totals.outstanding > 0.5 && ctx.period && (
                             <a className="btn btn-xs btn-secondary" href={`/api/email-report?format=eml&kind=accommodation&period=${ctx.period.id}&contractor=${encodeURIComponent(c.contractor)}`} title="Download a ready-to-send email draft (.eml) chasing this contractor's outstanding accommodation charges – opens in Outlook">
@@ -262,8 +269,9 @@ export default async function CostRecoveryPage({ searchParams }: { searchParams:
                       <th className="px-3 py-2 text-right">Recovered by DVO</th>
                       <th className="px-3 py-2 text-right">Still to recover</th>
                       <th className="px-3 py-2 text-right">EWN</th>
-                      <th className="px-3 py-2 text-right">Remaining to pay</th>
+                      <th className="px-3 py-2 text-right" title="From the customs tracker: the balance of the contract value RSG still has to pay the contractor – the room left to recover the duty through its coming payment certificates. Not a customs figure.">Remaining to pay (contract)</th>
                       <th className="px-3 py-2">DVO</th>
+                      <th className="px-3 py-2">Recovery</th>
                       <th className="px-3 py-2">Email</th>
                     </tr>
                   </thead>
@@ -279,6 +287,9 @@ export default async function CostRecoveryPage({ searchParams }: { searchParams:
                         <td className="px-3 py-1.5 text-right tnum">{money(c.totals.ewn)}</td>
                         <td className="px-3 py-1.5 text-right tnum">{money(c.totals.remainingToPay)}</td>
                         <td className="max-w-[16rem] truncate px-3 py-1.5 text-xs text-muted" title={c.dvoNote}>{c.dvoNote}</td>
+                        <td className="px-3 py-1.5 whitespace-nowrap">
+                          {canMark ? <MarkRecoveredButton register="customs_recovery" contractor={c.contractor} recovered={c.rows.length > 0 && c.rows.every((r) => r.status === "Recovered")} what="customs duty" /> : c.rows.every((r) => r.status === "Recovered") ? <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">Recovered</span> : null}
+                        </td>
                         <td className="px-3 py-1.5">
                           {c.totals.stillToRecover > 0.5 && ctx.period && (
                             <a className="btn btn-xs btn-secondary" href={`/api/email-report?format=eml&kind=customs&period=${ctx.period.id}&contractor=${encodeURIComponent(c.contractor)}`} title="Download a ready-to-send email draft (.eml) with the customs declarations RSG paid on this contractor's imports and the balance to recover – opens in Outlook">

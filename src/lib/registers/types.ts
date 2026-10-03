@@ -174,6 +174,8 @@ export const REPORTER_PATHS = [
   "/api/registers",
   "/api/kpi",
   "/api/cost-report",
+  "/api/final-accounts",
+  "/api/recovery",
   "/api/cashflow",
   "/api/context",
   "/api/auth",
@@ -201,6 +203,8 @@ const REPORTER_WRITES: { method: string; path: string }[] = [
   { method: "PUT", path: "/api/registers/bonds" },
   { method: "POST", path: "/api/registers/bonds" },
   { method: "POST", path: "/api/payments/from-documents" },
+  { method: "POST", path: "/api/final-accounts/from-documents" },
+  { method: "POST", path: "/api/recovery/mark-recovered" },
   { method: "POST", path: "/api/feed/from-documents" },
   // the accommodation lease agreements: uploaded, added and corrected by the user account (deleting stays with the admin and editors)
   { method: "POST", path: "/api/leases/from-documents" },
@@ -251,7 +255,7 @@ export type ChipTone = "green" | "amber" | "red" | "blue" | "grey";
 export function statusTone(value: unknown): ChipTone {
   const v = String(value ?? "").toLowerCase();
   if (!v) return "grey";
-  if (["approved", "review complete", "locked", "active", "yes", "expended", "closed", "paid", "current", "opportunity", "realised"].some((k) => v === k || v.includes(k))) return "green";
+  if (["approved", "review complete", "locked", "active", "yes", "expended", "closed", "paid", "current", "opportunity", "realised", "recovered"].some((k) => v === k || v.includes(k))) return "green";
   if (["rejected", "cancelled", "overdue", "expired", "no", "not active", "disputed"].some((k) => v === k || v.includes(k))) return "red";
   if (["pending", "revised", "partially", "open", "submitted", "in progress", "under review", "draft", "risk", "mitigating", "converted"].some((k) => v === k || v.includes(k))) return "amber";
   if (["superseded", "transferred", "inactive", "withdrawn"].some((k) => v === k || v.includes(k))) return "grey";
