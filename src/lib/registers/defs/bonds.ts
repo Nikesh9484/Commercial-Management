@@ -17,7 +17,7 @@ export const bonds: RegisterDef = {
   snapshot: false,
   // the user accounts ("View & reports only") upload the bond documents, so they correct the entries too; deleting stays with the admin and editors
   editRoles: ["admin", "editor", "contributor", "reporter"],
-  defaultSort: { field: "expiry_date", dir: "asc" },
+  defaultSort: { field: "ref", dir: "asc" },
   totals: ["original_contract_sum", "required_amount", "amount_provided", "variance"],
   fields: [
     { key: "programme_id", label: "Programme", type: "lookup", lookup: { register: "programmes" }, required: true, hideInTable: true, hideInForm: true },

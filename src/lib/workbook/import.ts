@@ -12,6 +12,8 @@ import { lockPeriod, getPeriod, latestPeriod, takeSnapshot, restoreFromSnapshot,
 import { logAudit } from "../audit";
 import { mergeDuplicateContractors } from "../contractors/merge";
 import { tidyText } from "../text/tidy";
+import { contractorKey } from "../bonds/name-key";
+import { tableExists } from "../cost-report/feeds";
 
 /** The free-prose fields whose wording is tidied on the way in. Everything else arrives untouched. */
 const TIDY_FIELDS = new Set(["description", "scope", "remark", "comments", "last_action"]);
@@ -290,6 +292,8 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo, progres
     const programmeCol = recoveryOnly ? (ws.rows.get(m.headerRow) ?? []).findIndex((v) => /\[programme_id\]\s*$/i.test(cellText(v))) : -1;
     const programmeByCode = new Map(programmeCol >= 0 ? (db.prepare("SELECT id, code FROM programmes").all() as { id: number; code: string }[]).map((p) => [p.code.toUpperCase(), p.id] as const) : []);
     const existingRows = recoveryOnly ? listRecords(def, { allScopes: true }).filter((r) => programmeCol >= 0 || Number(r.programme_id) === programmeId) : listRecords(def);
+    const contractorNames = def.key === "bonds" ? new Map((db.prepare("SELECT id, name FROM contractors").all() as { id: number; name: string }[]).map((c) => [c.id, c.name])) : new Map<number, string>();
+    const contractorName = (id: unknown) => (id ? contractorNames.get(Number(id)) ?? "" : "");
     const projectsFed = recoveryScope.get(def.key) ?? new Set<number>();
     recoveryScope.set(def.key, projectsFed);
     const touched = touchedByRegister.get(def.key) ?? new Set<number>();
@@ -421,6 +425,32 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo, progres
           // a "23", a blank), so a renumbered row must update the one already here, not sit beside it
           // one AMAALA-wide tracker holds every project: a row only ever matches a row of its own project
           let match = existingRows.find((e) => (programmeCol < 0 || Number(e.programme_id) === Number(input.programme_id)) && keyFields.every((k) => String(e[k] ?? "").trim().toLowerCase() === String(input[k] ?? "").trim().toLowerCase()));
+          if (def.key === "bonds") {
+            // A bond or policy is the same bond whatever ref the report gives it this month: the same
+            // policy number for the same contractor (else, with no number, the same type for the same
+            // contractor), so a renumbered Schedule G updates the row instead of sitting beside it.
+            const policy = String(input.policy_no ?? "").replace(/\s+/g, "").toUpperCase();
+            const sameCo = (e: RecordRow) => (input.contractor_id && Number(e.contractor_id) === Number(input.contractor_id)) || (!!contractorKey(e.contractor_id__label) && !!contractorKey(contractorName(input.contractor_id)) && (contractorKey(e.contractor_id__label).includes(contractorKey(contractorName(input.contractor_id))) || contractorKey(contractorName(input.contractor_id)).includes(contractorKey(e.contractor_id__label))));
+            const cands = (policy
+              ? existingRows.filter((e) => !touched.has(e.id) && String(e.policy_no ?? "").replace(/\s+/g, "").toUpperCase() === policy && sameCo(e))
+              : existingRows.filter((e) => !touched.has(e.id) && !String(e.policy_no ?? "").trim() && Number(e.type_id) === Number(input.type_id) && sameCo(e))
+            ) // one policy covering two contracts (the same plant policy on the main works and the jetty): the row on the same package first
+              .sort((x, y) => Number(Number(y.package_id) === Number(input.package_id)) - Number(Number(x.package_id) === Number(input.package_id)));
+            const byPolicy = cands[0];
+            if (byPolicy) {
+              match = byPolicy;
+              // the report's values win; a link the report does not give (contractor, package, cost line) is kept
+              for (const k of ["contractor_id", "package_id", "cost_line_id"]) if (!input[k] && match[k]) delete input[k];
+            } else if (match && touched.has(match.id)) match = undefined;
+            // the ref the report gives this bond may still be on another row (an old copy): that row is renamed out of the way
+            const ref = String(input.ref ?? "").trim().toLowerCase();
+            const holder = ref ? existingRows.find((e) => e !== match && !touched.has(e.id) && String(e.ref ?? "").trim().toLowerCase() === ref) : undefined;
+            if (holder) {
+              const tmp = `${input.ref} (old)`;
+              db.prepare(`UPDATE "${def.table}" SET ref = ? WHERE id = ?`).run(tmp, holder.id);
+              holder.ref = tmp;
+            }
+          }
           if (def.key === "early_warnings" && syntheticEwNo(input.ew_no)) {
             // Only for numbers the converter made up (a blank, reused or corrected column A): a number
             // this import already gave to another row is not a match, and a number now on a
@@ -495,6 +525,21 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo, progres
       if (!def || !fed?.size || results.some((r) => r.register === key && r.errors.length)) continue;
       const list = [...ids];
       pruned += db.prepare(`DELETE FROM "${def.table}" WHERE programme_id IN (${[...fed].map(() => "?").join(",")}) AND id NOT IN (${list.map(() => "?").join(",") || "-1"})`).run(...fed, ...list).changes;
+    }
+  }
+  // The Bonds & Insurance tracker mirrors Schedule G of the report: once the sheet has gone in without an
+  // error, the project's rows the report no longer carries (old copies, superseded refs) are removed.
+  {
+    const ids = touchedByRegister.get("bonds");
+    const fedBonds = (monthly && !standalone.includes("bonds")) || !!req.allowedRegisters?.includes("bonds");
+    if (fedBonds && ids && ids.size && !results.some((r) => r.register === "bonds" && r.errors.length)) {
+      const list = [...ids];
+      const gone = db.prepare(`SELECT id FROM bonds WHERE programme_id = ? AND id NOT IN (${list.map(() => "?").join(",")})`).all(programmeId, ...list) as { id: number }[];
+      if (gone.length) {
+        const goneIds = gone.map((g) => g.id);
+        if (tableExists(db, "bond_documents")) db.prepare(`DELETE FROM bond_documents WHERE bond_id IN (${goneIds.map(() => "?").join(",")})`).run(...goneIds);
+        pruned += db.prepare(`DELETE FROM bonds WHERE id IN (${goneIds.map(() => "?").join(",")})`).run(...goneIds).changes;
+      }
     }
   }
   if (older && monthly) {

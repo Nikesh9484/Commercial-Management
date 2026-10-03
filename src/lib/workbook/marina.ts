@@ -667,7 +667,8 @@ export function convertMarinaReport(sheets: Sheet[]): ConversionResult {
     const seen = new Map<string, number>();
     for (const [r, v] of rows(G)) {
       if (r <= hdr || !isNum(cell(v, 2)) || !txt(v, 7)) continue;
-      const base = `G-${String(Math.trunc(cell(v, 2) as number)).padStart(2, "0")}`;
+      // the ref is the number printed on Schedule G; a number the report uses twice gets a letter (10, 10a)
+      const base = String(Math.trunc(cell(v, 2) as number));
       const dup = (seen.get(base) ?? 0) + 1;
       seen.set(base, dup);
       const req = money(v, 9);

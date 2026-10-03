@@ -123,14 +123,13 @@ export function BondsWorkspace({ rows, isAdmin, hasPeriod, canUpload = false, du
         </p>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-3">
         <Stat
           label={filtered ? "Filtered bonds & policies" : "Bonds & policies"}
           value={String(summary.total)}
           sub={`${summary.expired} expired · ${summary.red} within 30 days · ${summary.amber} in 31–60 days${summary.released ? ` · ${summary.released} released (contract closed)` : ""}${summary.superseded ? ` · ${summary.superseded} superseded` : ""}`}
           tone={summary.expired + summary.red > 0 ? "red" : summary.amber > 0 ? "amber" : undefined}
         />
-        <Stat label="Provided vs required" value={`${formatMoney(summary.provided)} / ${formatMoney(summary.required)}`} sub="total face value held vs total contract requirement" small />
         <Stat label="Shortfalls" value={String(summary.shortfall)} sub={summary.shortfall ? `${formatMoney(summary.shortfallValue)} below requirement in total` : "every item meets its requirement"} tone={summary.shortfall ? "red" : "green"} />
         <div className="card min-w-0 p-4">
           <div className="text-xs font-medium uppercase tracking-wide text-muted">Checks outstanding</div>

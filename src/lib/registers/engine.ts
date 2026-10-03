@@ -84,6 +84,11 @@ export function scopeDefaults(def: RegisterDef): Record<string, number> {
   return out;
 }
 
+/** A ref or number sorts by its number first (1, 2, 10, 10b), not letter by letter (1, 10, 10b, 2). */
+function orderBy(field: string): string {
+  return /^(ref|item|claim_no|ew_no|sr_no)$/.test(field) ? `CASE WHEN "${field}" GLOB '[0-9]*' THEN CAST("${field}" AS INTEGER) ELSE 2147483647 END, "${field}"` : `"${field}"`;
+}
+
 /** All rows of a register with lookup labels attached as `<field>__label`. */
 export function listRecords(def: RegisterDef, options: { allScopes?: boolean } = {}): RecordRow[] {
   const db = getDb();
@@ -92,7 +97,7 @@ export function listRecords(def: RegisterDef, options: { allScopes?: boolean } =
   const [scopeKey, scopeValue] = Object.entries(scope)[0] ?? [];
   const where = scopeKey ? `WHERE "${scopeKey}" = ?` : "";
   const rows = db
-    .prepare(`SELECT ${selectColumns(def)} FROM "${def.table}" ${where} ORDER BY "${sort.field}" ${sort.dir === "desc" ? "DESC" : "ASC"}, id ASC`)
+    .prepare(`SELECT ${selectColumns(def)} FROM "${def.table}" ${where} ORDER BY ${orderBy(sort.field)} ${sort.dir === "desc" ? "DESC" : "ASC"}, id ASC`)
     .all(...(scopeKey ? [scopeValue] : [])) as RecordRow[];
   attachLabels(db, def, rows);
   const out = rows.map(normaliseRow(def));
