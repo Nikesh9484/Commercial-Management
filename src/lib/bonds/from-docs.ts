@@ -12,6 +12,7 @@ import { ocrAvailable, ocrPdfPages } from "../ocr";
 import type { Decisions, Duplicate, FromDocsResult, Outcome, ReadValue } from "../from-docs-shared";
 import { decide } from "../from-docs-shared";
 import { attachBondDocuments } from "./documents";
+import { contractorKey } from "./name-key";
 
 /**
  * A bond or an insurance policy read from its own document – the policy schedule, the certificate of
@@ -282,7 +283,17 @@ export async function addBondsFromDocuments(files: DocFile[], user: UserInfo, de
     const packageId = line?.package_id ?? contract?.package_id ?? (contractorId ? ((db.prepare("SELECT package_id FROM contractors WHERE id = ?").get(contractorId) as { package_id: number | null } | undefined)?.package_id ?? null) : null);
     const contractorName = contractorId ? ((db.prepare("SELECT name FROM contractors WHERE id = ?").get(contractorId) as { name: string } | undefined)?.name ?? "") : "";
     const rows = db.prepare("SELECT * FROM bonds WHERE programme_id = ?").all(programme.id) as RecordRow[];
-    const mine = rows.filter((r) => contractorId && r.contractor_id === contractorId);
+    // the contractor's bonds: by our contractor record, or by the same company name – the register can hold the
+    // same company twice ("Al Saad General Contracting Co. Ltd." and "… (Jetty Works Package)")
+    const nameOfId = new Map((db.prepare("SELECT id, name FROM contractors").all() as { id: number; name: string }[]).map((c) => [c.id, c.name]));
+    const coKey = (n: unknown) => contractorKey(String(n ?? "").replace(/\(.*?\)/g, " ").split(/\s[-–]\s/)[0]);
+    const myKey = coKey(contractorName || p.fromCompany);
+    const sameCompany = (r: RecordRow) => {
+      if (contractorId && Number(r.contractor_id) === contractorId) return true;
+      const k = coKey(nameOfId.get(Number(r.contractor_id)));
+      return !!k && !!myKey && (k === myKey || k.includes(myKey) || myKey.includes(k));
+    };
+    const mine = rows.filter(sameCompany);
     const typeId = typeIdOf(p.typeName, mine.map((r) => Number(r.type_id)));
     const typeLabel = types.find((t) => t.id === typeId)?.label ?? p.typeName;
     // the same policy, or a policy of the same type for the same contractor, already held
@@ -290,11 +301,13 @@ export async function addBondsFromDocuments(files: DocFile[], user: UserInfo, de
     const digits = (v: unknown) => String(v ?? "").replace(/\D/g, "");
     const sameType = (r: RecordRow) => !!typeId && normType(types.find((t) => t.id === Number(r.type_id))?.label ?? "") === normType(typeLabel);
     const ofType = mine.filter(sameType);
+    const squashed = (v: unknown) => String(v ?? "").replace(/\s+/g, "").toUpperCase();
     const byNumber =
-      mine.find((r) => p.policyNo && String(r.policy_no ?? "").replace(/\s+/g, "") === p.policyNo.replace(/\s+/g, "")) ??
-      mine.find((r) => base.length > 6 && String(r.policy_no ?? "").replace(/\s+/g, "").startsWith(base)) ??
+      mine.find((r) => p.policyNo && squashed(r.policy_no) === squashed(p.policyNo)) ??
+      mine.find((r) => base.length > 6 && squashed(r.policy_no).startsWith(squashed(base))) ??
       mine.find((r) => digits(r.policy_no).length > 6 && digits(p.policyNo).startsWith(digits(r.policy_no))) ??
-      null;
+      // a distinctive number is the bond whatever contractor record it sits under
+      (p.policyNo.replace(/\s+/g, "").length >= 6 ? rows.find((r) => squashed(r.policy_no) === squashed(p.policyNo)) ?? null : null);
     // the same number; else the bond of this type on the same contract line; else the contractor's only
     // bond of this type – never one of several (a contractor with three contracts has three performance bonds)
     const existing =

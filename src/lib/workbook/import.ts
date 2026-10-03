@@ -292,6 +292,7 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo, progres
     const programmeCol = recoveryOnly ? (ws.rows.get(m.headerRow) ?? []).findIndex((v) => /\[programme_id\]\s*$/i.test(cellText(v))) : -1;
     const programmeByCode = new Map(programmeCol >= 0 ? (db.prepare("SELECT id, code FROM programmes").all() as { id: number; code: string }[]).map((p) => [p.code.toUpperCase(), p.id] as const) : []);
     const existingRows = recoveryOnly ? listRecords(def, { allScopes: true }).filter((r) => programmeCol >= 0 || Number(r.programme_id) === programmeId) : listRecords(def);
+    const hasBondDocs = (bondId: number) => tableExists(db, "bond_documents") && !!db.prepare("SELECT 1 FROM bond_documents WHERE bond_id = ? LIMIT 1").get(bondId);
     const contractorNames = def.key === "bonds" ? new Map((db.prepare("SELECT id, name FROM contractors").all() as { id: number; name: string }[]).map((c) => [c.id, c.name])) : new Map<number, string>();
     const contractorName = (id: unknown) => (id ? contractorNames.get(Number(id)) ?? "" : "");
     const projectsFed = recoveryScope.get(def.key) ?? new Set<number>();
@@ -441,6 +442,12 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo, progres
               match = byPolicy;
               // the report's values win; a link the report does not give (contractor, package, cost line) is kept
               for (const k of ["contractor_id", "package_id", "cost_line_id"]) if (!input[k] && match[k]) delete input[k];
+              // an extension already recorded from the amendment letter (a document is attached and the row's
+              // expiry is later than the sheet's) is newer than the report: the sheet does not wind it back
+              if (input.expiry_date && match.expiry_date && String(match.expiry_date) > String(input.expiry_date) && hasBondDocs(Number(match.id))) {
+                input.expiry_date = match.expiry_date;
+                if (typeof input.comments === "string" && !/validity extended/i.test(input.comments)) input.comments = `${input.comments} Expiry kept at ${String(match.expiry_date)} from the amendment on file.`.trim();
+              }
             } else if (match && touched.has(match.id)) match = undefined;
             // the ref the report gives this bond may still be on another row (an old copy): that row is renamed out of the way
             const ref = String(input.ref ?? "").trim().toLowerCase();
