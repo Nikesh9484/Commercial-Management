@@ -4,7 +4,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { getAppContext } from "@/lib/context";
 import { getDb } from "@/lib/db";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { LIBRARIES, LIBRARY_INFO, listDocs, canManageLibrary, type LibraryKey } from "@/lib/library/store";
+import { LIBRARIES, LIBRARY_INFO, listDocs, canManageLibrary, canRemoveLibrary, type LibraryKey } from "@/lib/library/store";
 import { readerConfigured } from "@/lib/library/read";
 import { DocumentLibrary } from "@/components/library/DocumentLibrary";
 
@@ -36,7 +36,7 @@ export default async function LibraryPage({ params }: { params: Promise<{ kind: 
           <AlertTriangle size={16} /> Select a project in the top bar first.
         </div>
       ) : (
-        <DocumentLibrary library={key} info={{ short: info.short, types: info.types, hint: info.hint }} docs={docs} contracts={contracts} contractors={contractors} canManage={canManageLibrary(user)} engine={readerConfigured()} />
+        <DocumentLibrary library={key} info={{ short: info.short, types: info.types, hint: info.hint }} docs={docs} contracts={contracts} contractors={contractors} canManage={canManageLibrary(user)} canRemove={canRemoveLibrary(user)} engine={readerConfigured()} />
       )}
     </div>
   );

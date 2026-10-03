@@ -2,6 +2,8 @@
 
 import { Fragment, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { DropZone } from "@/components/ui/DropZone";
+import { relPathOf } from "@/lib/dnd-client";
 import { FilePlus2, FolderOpen, Trash2, Pencil, RefreshCw, ExternalLink, Search, X, Save, ChevronDown, ChevronUp, Filter } from "lucide-react";
 import { Chip } from "@/components/ui/Chip";
 import { useToast } from "@/components/ui/Toast";
@@ -35,7 +37,7 @@ interface Group {
 const fmtBytes = (b: number) => (b >= 1024 * 1024 ? `${(b / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`);
 const CONF_TONE: Record<string, ChipTone> = { High: "green", Confirmed: "green", Medium: "amber", Low: "amber", None: "red" };
 
-export function DocumentLibrary({ library, info, docs: initial, contracts, contractors, canManage, engine }: { library: LibraryKey; info: { short: string; types: string[]; hint: string }; docs: LibraryDoc[]; contracts: ContractOption[]; contractors: ContractorOption[]; canManage: boolean; engine: boolean }) {
+export function DocumentLibrary({ library, info, docs: initial, contracts, contractors, canManage, canRemove = canManage, engine }: { library: LibraryKey; info: { short: string; types: string[]; hint: string }; docs: LibraryDoc[]; contracts: ContractOption[]; contractors: ContractorOption[]; canManage: boolean; canRemove?: boolean; engine: boolean }) {
   const router = useRouter();
   const toast = useToast();
   const [docs, setDocs] = useState<LibraryDoc[]>(initial);
@@ -128,7 +130,7 @@ export function DocumentLibrary({ library, info, docs: initial, contracts, contr
   const contractsForFilter = fContractor ? contracts.filter((c) => String(c.contractor_id ?? "") === fContractor) : contracts;
   const usedTypes = Array.from(new Set([...info.types, ...docs.map((d) => d.doc_type).filter(Boolean)]));
 
-  async function upload(list: FileList | null) {
+  async function upload(list: FileList | File[] | null, under?: { contractId?: number; contractorId?: number; label?: string }) {
     if (!list || !list.length) return;
     const picked = Array.from(list).filter((f) => !/^(\.|~\$|thumbs\.db$|desktop\.ini$)/i.test(f.name));
     if (!picked.length) return toast("No PDF or Word files were selected.", "error");
@@ -143,7 +145,7 @@ export function DocumentLibrary({ library, info, docs: initial, contracts, contr
         break;
       }
       const f = picked[n];
-      const rel = (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name;
+      const rel = relPathOf(f);
       const count = Math.max(1, Math.ceil(f.size / CHUNK));
       let uploadId = "";
       let ok = true;
@@ -158,7 +160,7 @@ export function DocumentLibrary({ library, info, docs: initial, contracts, contr
         let j: { error?: string; uploadId?: string; doc?: LibraryDoc } = {};
         try {
           abortRef.current = new AbortController();
-          const r = await fetch(`/api/library/${library}`, { method: "POST", headers: { "Content-Type": "application/json" }, signal: abortRef.current.signal, body: JSON.stringify({ uploadId, name: f.name, relPath: rel, mime: f.type, size: f.size, index: i, count, data }) });
+          const r = await fetch(`/api/library/${library}`, { method: "POST", headers: { "Content-Type": "application/json" }, signal: abortRef.current.signal, body: JSON.stringify({ uploadId, name: f.name, relPath: rel, mime: f.type, size: f.size, index: i, count, data, ...(under?.contractId ? { contract_id: under.contractId } : {}), ...(under?.contractorId ? { contractor_id: under.contractorId } : {}) }) });
           j = await r.json().catch(() => ({}));
           if (!r.ok) {
             toast(`${rel}: ${j.error ?? "upload failed"}`, "error");
@@ -190,7 +192,7 @@ export function DocumentLibrary({ library, info, docs: initial, contracts, contr
     setStopping(false);
     cancelRef.current = false;
     if (stopped) toast(`Stopped. ${added} document${added === 1 ? "" : "s"} added before you stopped; nothing further was uploaded or read.`);
-    else if (added) toast(`${added} document${added === 1 ? "" : "s"} added to the ${info.short}.`);
+    else if (added) toast(`${added} document${added === 1 ? "" : "s"} added to the ${info.short}${under?.label ? ` under ${under.label}` : ""}.`);
     router.refresh();
   }
 
@@ -284,13 +286,13 @@ export function DocumentLibrary({ library, info, docs: initial, contracts, contr
   const unfiled = docs.filter((d) => !d.contractor_id).length;
 
   return (
-    <div className="space-y-4">
+    <DropZone onFiles={(files) => void upload(files)} disabled={!canManage || !!progress} label={`Drop to add to the ${info.short} – or drop on a contract's heading to file under it`} className="space-y-4">
       {canManage && (
         <div className="card p-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="text-sm font-semibold text-ink">Add documents</h2>
-              <p className="mt-1 text-xs text-muted">{info.hint} Each document is read as it arrives and filed under its contractor and contract code; you can correct the filing afterwards with <b>Change</b>.</p>
+              <p className="mt-1 text-xs text-muted">{info.hint} Each document is read as it arrives and filed under its contractor and contract code; you can correct the filing afterwards with <b>Change</b>. You can also drag files or a folder anywhere onto this page – or onto a contract&apos;s heading below to file them straight under that contract.</p>
               {!engine && (
                 <p className="mt-1 text-xs text-amber-800">
                   Reading engine off: documents are filed from the references found in them (ACC code, PO number, contractor name) but not summarised. Switch the AI features back on under <b>Customise my reports</b>, or add <code>ANTHROPIC_API_KEY</code> in the hosting settings if no key is set.
@@ -395,7 +397,12 @@ export function DocumentLibrary({ library, info, docs: initial, contracts, contr
                 <Fragment key={g.key}>
                   <tr className="border-t-2 border-line bg-slate-50/80">
                     <td colSpan={6} className="py-2">
-                      <div className="flex items-center gap-2">
+                      <DropZone
+                        disabled={!canManage || !!progress}
+                        label={g.unfiled ? `Drop to add to the ${info.short}` : `Drop to file under ${g.contractor}${g.code ? ` · ${g.code}` : ""}`}
+                        onFiles={(files) => void upload(files, g.unfiled ? undefined : { contractId: g.key.startsWith("c") ? Number(g.key.slice(1)) : undefined, contractorId: g.key.startsWith("x") ? Number(g.key.slice(1)) : undefined, label: `${g.contractor}${g.code ? ` · ${g.code}` : ""}` })}
+                        className="flex items-center gap-2 rounded-lg"
+                      >
                         <button className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={() => toggleGroup(g.key)} aria-expanded={isOpen}>
                           {isOpen ? <ChevronUp size={15} className="shrink-0 text-navy" /> : <ChevronDown size={15} className="shrink-0 text-navy" />}
                           <span className="truncate font-semibold text-ink">{g.unfiled ? "Not yet filed under a contract" : g.contractor}</span>
@@ -406,7 +413,7 @@ export function DocumentLibrary({ library, info, docs: initial, contracts, contr
                             {latest ? ` · latest ${formatDate(latest)}` : ""}
                           </span>
                         </button>
-                        {canManage && (
+                        {canRemove && (
                           <button
                             className="btn btn-ghost btn-sm shrink-0 text-red-600"
                             onClick={() => removeGroup(g)}
@@ -416,7 +423,7 @@ export function DocumentLibrary({ library, info, docs: initial, contracts, contr
                             <Trash2 size={14} /> {removingGroup === g.key ? "Removing…" : "Remove all"}
                           </button>
                         )}
-                      </div>
+                      </DropZone>
                     </td>
                   </tr>
                   {isOpen &&
@@ -487,9 +494,11 @@ export function DocumentLibrary({ library, info, docs: initial, contracts, contr
                                 <button className="btn btn-ghost btn-sm" onClick={() => reread(d)} disabled={busy === d.id} title="Read the document again">
                                   <RefreshCw size={14} className={busy === d.id ? "animate-spin" : ""} />
                                 </button>
-                                <button className="btn btn-ghost btn-sm text-red-600" onClick={() => remove(d)} disabled={busy === d.id} title="Remove">
-                                  <Trash2 size={14} />
-                                </button>
+                                {canRemove && (
+                                  <button className="btn btn-ghost btn-sm text-red-600" onClick={() => remove(d)} disabled={busy === d.id} title="Remove">
+                                    <Trash2 size={14} />
+                                  </button>
+                                )}
                               </>
                             )}
                           </div>
@@ -558,7 +567,7 @@ export function DocumentLibrary({ library, info, docs: initial, contracts, contr
           </div>
         </div>
       )}
-    </div>
+    </DropZone>
   );
 }
 

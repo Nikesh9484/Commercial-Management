@@ -1,4 +1,5 @@
 "use client";
+import { GlobalDrop } from "@/components/layout/GlobalDrop";
 
 import { useState } from "react";
 import { Sidebar } from "./Sidebar";
@@ -18,6 +19,7 @@ export function AppShell({ context, user, children }: { context: AppContext; use
           <TopBar context={context} user={user} onMenu={() => setMenuOpen(true)} />
           <main className="flex-1 p-4 sm:p-6">
             <ScopeProvider value={`${context.programme?.id ?? ""}:${context.asset?.id ?? ""}:${context.period?.id ?? ""}`}>{children}</ScopeProvider>
+            <GlobalDrop enabled={["admin", "editor", "contributor", "reporter"].includes(user.role) && !!context.programme} />
           </main>
         </div>
       </div>

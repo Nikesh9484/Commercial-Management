@@ -7,6 +7,7 @@ import { useToast } from "@/components/ui/Toast";
 import { Chip } from "@/components/ui/Chip";
 import { formatDate } from "@/lib/format";
 import type { TemplateInspection } from "@/lib/packs/shared";
+import { DropZone } from "@/components/ui/DropZone";
 
 interface Field {
   key: string;
@@ -35,7 +36,7 @@ export function PackTemplateCard({ type, template, inspection, canManage }: { ty
   const unmatchedLabels = inspection?.labels.filter((l) => !l.field) ?? [];
   const byKey = new Map(type.fields.map((f) => [f.key, f]));
 
-  async function upload(list: FileList | null) {
+  async function upload(list: FileList | File[] | null) {
     const f = list?.[0];
     if (!f) return;
     setBusy(true);
@@ -67,7 +68,7 @@ export function PackTemplateCard({ type, template, inspection, canManage }: { ty
   }
 
   return (
-    <div className="card p-4 text-xs">
+    <DropZone onFiles={(files) => void upload(files)} disabled={!canManage || busy} label="Drop the RSG template here (Excel, Word or PDF)" className="card p-4 text-xs">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <div className="text-[11px] font-semibold uppercase tracking-wide text-muted">RSG template · {type.formRef}</div>
@@ -157,6 +158,6 @@ export function PackTemplateCard({ type, template, inspection, canManage }: { ty
           </table>
         )}
       </div>
-    </div>
+    </DropZone>
   );
 }

@@ -8,6 +8,7 @@ import { useToast } from "@/components/ui/Toast";
 import { Chip } from "@/components/ui/Chip";
 import { formatDate, formatMoney } from "@/lib/format";
 import { KPI_SECTIONS, KPI_SECTION_LABEL, KPI_SECTION_HINT, KPI_SECTION_NO, MOVEMENT_LABEL, kpiSectionsFor, type KpiDoc, type KpiItem, type KpiSection } from "@/lib/kpi/shared";
+import { DropZone } from "@/components/ui/DropZone";
 
 export interface KpiRow {
   item: KpiItem;
@@ -99,7 +100,7 @@ function Row({ r, periodId, category, canManage, open, onToggle }: { r: KpiRow; 
     else router.refresh();
   }
 
-  async function upload(list: FileList | null, section?: KpiSection) {
+  async function upload(list: FileList | File[] | null, section?: KpiSection) {
     if (!list || !list.length) return;
     const picked = Array.from(list).filter((f) => !/^(\.|~\$|thumbs\.db$|desktop\.ini$)/i.test(f.name));
     if (!picked.length) return;
@@ -237,7 +238,7 @@ function Row({ r, periodId, category, canManage, open, onToggle }: { r: KpiRow; 
                   </label>
                 </div>
               </div>
-              <div className="rounded-lg border border-line bg-white p-3 text-xs">
+              <DropZone onFiles={(files) => void upload(files)} disabled={!canManage || !!progress} label="Drop the files or the folder – each is filed under the part its folder or name says" className="rounded-lg border border-line bg-white p-3 text-xs">
                 <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                   <div className="text-[11px] font-semibold uppercase tracking-wide text-muted">Supporting documents · {docs.length}</div>
                   <div className="flex flex-wrap gap-1.5">
@@ -315,7 +316,7 @@ function Row({ r, periodId, category, canManage, open, onToggle }: { r: KpiRow; 
                     </li>
                   )}
                 </ol>
-              </div>
+              </DropZone>
             </div>
           </td>
         </tr>

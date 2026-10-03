@@ -179,6 +179,10 @@ export const REPORTER_PATHS = [
   "/api/auth",
   "/api/health",
   "/imports/documents",
+  // the document libraries: the user accounts read them and add the contract documents they receive
+  "/library",
+  "/api/library",
+  "/api/leases",
   "/user-guide.pdf",
   "/login",
   "/account",
@@ -198,6 +202,15 @@ const REPORTER_WRITES: { method: string; path: string }[] = [
   { method: "POST", path: "/api/registers/bonds" },
   { method: "POST", path: "/api/payments/from-documents" },
   { method: "POST", path: "/api/feed/from-documents" },
+  // the accommodation lease agreements: uploaded, added and corrected by the user account (deleting stays with the admin and editors)
+  { method: "POST", path: "/api/leases/from-documents" },
+  { method: "PUT", path: "/api/registers/lease_agreements" },
+  { method: "POST", path: "/api/registers/lease_agreements" },
+  { method: "PUT", path: "/api/registers/lease_amendments" },
+  { method: "POST", path: "/api/registers/lease_amendments" },
+  // the document libraries: adding, correcting the filing and re-reading (removing stays with the admin and editors)
+  { method: "POST", path: "/api/library" },
+  { method: "PATCH", path: "/api/library" },
 ];
 const under = (pathname: string, p: string) => pathname === p || pathname.startsWith(p + "/") || pathname.startsWith(p + "?");
 

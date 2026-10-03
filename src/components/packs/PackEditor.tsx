@@ -7,6 +7,7 @@ import { useToast } from "@/components/ui/Toast";
 import { Chip } from "@/components/ui/Chip";
 import { formatDate, formatMoney } from "@/lib/format";
 import { PACK_STATUSES, REFERENCE_SLOT, slotsFor, type PackDoc, type PackSlot, type PackValues } from "@/lib/packs/shared";
+import { DropZone } from "@/components/ui/DropZone";
 
 interface Field {
   key: string;
@@ -134,7 +135,7 @@ export function PackEditor({ type, initial, docs: initialDocs, canManage, templa
     router.push(`/packs/${type.key}`);
   }
 
-  async function upload(list: FileList | null, slot?: string) {
+  async function upload(list: FileList | File[] | null, slot?: string) {
     if (!list || !list.length) return;
     const picked = Array.from(list).filter((f) => !/^(\.|~\$|thumbs\.db$|desktop\.ini$)/i.test(f.name));
     if (!picked.length) return;
@@ -287,7 +288,7 @@ export function PackEditor({ type, initial, docs: initialDocs, canManage, templa
 
       <div className="grid gap-4 xl:grid-cols-[1fr_1.15fr]">
         {/* the uploads – the only input */}
-        <div className="card p-4 text-xs">
+        <DropZone onFiles={(files) => void upload(files)} disabled={!canManage} label="Drop the files or the folder – each is filed under the entry its folder or name says" className="card p-4 text-xs">
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <div className="text-[11px] font-semibold uppercase tracking-wide text-muted">Upload entries · {docs.length} files</div>
             {canManage && (
@@ -315,7 +316,7 @@ export function PackEditor({ type, initial, docs: initialDocs, canManage, templa
               <Plus size={12} /> Add attachment entry
             </button>
           )}
-        </div>
+        </DropZone>
 
         {/* what was read */}
         <div className="space-y-3">
@@ -410,12 +411,12 @@ function hasFormPages(d: PackDoc, typeKey: string): boolean {
   }
 }
 
-function SlotRow({ typeKey, slot, docs, slots, canManage, busy, onUpload, onMove, onPages, onRemove }: { typeKey: string; slot: PackSlot; docs: PackDoc[]; slots: PackSlot[]; canManage: boolean; busy: boolean; onUpload: (files: FileList | null) => void; onMove: (d: PackDoc, slot: string) => void; onPages: (d: PackDoc, pages: string) => void; onRemove: (d: PackDoc) => void }) {
+function SlotRow({ typeKey, slot, docs, slots, canManage, busy, onUpload, onMove, onPages, onRemove }: { typeKey: string; slot: PackSlot; docs: PackDoc[]; slots: PackSlot[]; canManage: boolean; busy: boolean; onUpload: (files: FileList | File[] | null) => void; onMove: (d: PackDoc, slot: string) => void; onPages: (d: PackDoc, pages: string) => void; onRemove: (d: PackDoc) => void }) {
   const input = useRef<HTMLInputElement>(null);
   const dirInput = useRef<HTMLInputElement>(null);
   const reads = slot.key === REFERENCE_SLOT ? "read for the particulars, figures, wording and signatories" : slot.key === "rfc" || slot.key === "details" ? "read for the subject, scope and justification" : slot.key === "cost" ? "read for the value" : slot.key === "pvo" ? "read for the PVO number, value and title" : null;
   return (
-    <li className="rounded border border-line">
+    <DropZone as="li" onFiles={(files) => onUpload(files)} disabled={!canManage || busy} label={`Drop into ${slot.no}. ${slot.label}`} className="rounded border border-line">
       <div className="flex flex-wrap items-center gap-2 bg-slate-50 px-2 py-1.5">
         <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-slate-700 text-[11px] font-semibold text-white">{slot.no}</span>
         <div className="min-w-0 flex-1">
@@ -465,7 +466,7 @@ function SlotRow({ typeKey, slot, docs, slots, canManage, busy, onUpload, onMove
           ))}
         </ul>
       )}
-    </li>
+    </DropZone>
   );
 }
 

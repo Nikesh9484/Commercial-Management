@@ -1,8 +1,10 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, FolderUp, FilePlus2, Upload } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
+import { DropZone } from "@/components/ui/DropZone";
+import { relPathOf } from "@/lib/dnd-client";
 import { useToast } from "@/components/ui/Toast";
 import type { Decisions, FromDocsResult } from "@/lib/from-docs-shared";
 
@@ -20,7 +22,7 @@ const toBase64 = (blob: Blob) =>
  * what the files did not give is listed for the row to be completed by hand. An entry already in the
  * register stops the upload with the two side by side: replace it with the new details, or keep the old.
  */
-export function AddFromDocuments({ endpoint, title, button = "Add from documents", intro, tip }: { endpoint: string; title: string; button?: string; intro: string; tip?: string }) {
+export function AddFromDocuments({ endpoint, title, button = "Add from documents", intro, tip, hideButton = false, openWith = null, onClosed }: { endpoint: string; title: string; button?: string; intro: string; tip?: string; /** no button of its own: opened by files handed in (a drop on the page) */ hideButton?: boolean; openWith?: File[] | null; onClosed?: () => void }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState("");
   const [batch, setBatch] = useState("");
@@ -47,7 +49,7 @@ export function AddFromDocuments({ endpoint, title, button = "Add from documents
     toast(n ? `${n} entr${n === 1 ? "y" : "ies"} ${j.entries.every((e) => e.action === "updated") ? "updated" : "written"}.` : "No entry could be made from these files.");
   }
 
-  async function run(list: FileList | null) {
+  async function run(list: FileList | File[] | null) {
     if (!list || !list.length) return;
     const files = Array.from(list).filter((f) => f.size > 0 && !/^\./.test(f.name));
     const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
@@ -66,7 +68,7 @@ export function AddFromDocuments({ endpoint, title, button = "Add from documents
           let j: { uploadId?: string } = {};
           for (let attempt = 0; attempt < 4; attempt++) {
             try {
-              j = await post({ batch: id, uploadId, name: f.name, index: i, count, data });
+              j = await post({ batch: id, uploadId, name: relPathOf(f).split("/").pop() ?? f.name, index: i, count, data });
               break;
             } catch (e) {
               if (attempt === 3) throw e;
@@ -104,16 +106,28 @@ export function AddFromDocuments({ endpoint, title, button = "Add from documents
 
   function close() {
     setOpen(false);
+    onClosed?.();
     if (result?.entries.some((e) => e.action !== "kept")) window.location.reload();
   }
+  // files handed in from a drop on the page: the dialog opens and reads them straight away
+  /* eslint-disable react-hooks/set-state-in-effect, react-hooks/exhaustive-deps */
+  useEffect(() => {
+    if (openWith && openWith.length) {
+      setOpen(true);
+      void run(openWith);
+    }
+  }, [openWith]);
+  /* eslint-enable react-hooks/set-state-in-effect, react-hooks/exhaustive-deps */
 
   return (
     <>
-      <button className="btn btn-sm btn-primary" onClick={() => setOpen(true)} title={intro}>
-        <FilePlus2 size={14} /> {button}
-      </button>
+      {!hideButton && (
+        <button className="btn btn-sm btn-primary" onClick={() => setOpen(true)} title={intro}>
+          <FilePlus2 size={14} /> {button}
+        </button>
+      )}
       <Modal open={open} title={title} onClose={close} size="lg">
-        <div className="space-y-3 text-sm">
+        <DropZone onFiles={(files) => void run(files)} label="Drop the files or the folder here" disabled={!!busy} className="space-y-3 rounded-xl text-sm">
           <p className="text-muted">{intro}</p>
           {tip && <p className="text-xs text-muted">{tip}</p>}
           <div className="flex flex-wrap items-center gap-2">
@@ -226,7 +240,7 @@ export function AddFromDocuments({ endpoint, title, button = "Add from documents
               </div>
             </div>
           )}
-        </div>
+        </DropZone>
       </Modal>
     </>
   );

@@ -6,6 +6,7 @@ import { listRecords } from "../registers/engine";
 import { recordsForView, paymentSourceForView } from "../view-mode";
 import type { ContractRow, ApplicationRow } from "../payments/compute";
 import { getBondsSummary, type BondsSummary } from "../bonds/summary";
+import { getLeaseSummary, type LeaseSummary } from "../leases/summary";
 import { getChecklist } from "../checklist";
 import { CHANGE_STAGES } from "../registers/defs/changes";
 import type { RecordRow } from "../registers/types";
@@ -20,6 +21,8 @@ export interface DashboardData {
   openEarlyWarnings: number;
   ewOpenValue: number;
   bonds: BondsSummary;
+  /** the accommodation lease agreements: expiries, extensions, deposits, overdue invoices */
+  leases: LeaseSummary;
   openRisks: number;
   checklist: { done: number; total: number };
   keyIssues: string;
@@ -42,6 +45,7 @@ export function getDashboard(db: Database.Database, programmeId: number, periodI
   const ews = recordsForView(getRegisterDef("early_warnings")!);
   const risks = recordsForView(getRegisterDef("risks")!);
   const bonds = getBondsSummary(recordsForView(getRegisterDef("bonds")!));
+  const leases = getLeaseSummary(listRecords(getRegisterDef("lease_agreements")!));
   const actions = listRecords(getRegisterDef("actions")!)
     .filter((a) => a.status !== "Closed")
     .sort((a, b) => String(a.due_date ?? "9999").localeCompare(String(b.due_date ?? "9999")));
@@ -59,6 +63,7 @@ export function getDashboard(db: Database.Database, programmeId: number, periodI
     openEarlyWarnings: ews.filter((e) => e.status === "Open").length,
     ewOpenValue: ews.filter((e) => e.status === "Open").reduce((t, e) => t + num(e.cost_impact), 0),
     bonds,
+    leases,
     openRisks: risks.filter((r) => r.type === "Risk" && (r.status === "Open" || r.status === "Mitigating")).length,
     checklist: { done: checklist.filter((c) => c.done).length, total: checklist.length },
     keyIssues: period?.key_issues ?? "",

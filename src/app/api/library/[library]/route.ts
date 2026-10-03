@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { withUser } from "@/lib/api";
 import { AuthError } from "@/lib/auth";
 import { getAppContext } from "@/lib/context";
+import { getDb } from "@/lib/db";
 import { backupFileLimit } from "@/lib/file-store";
 import { appendUploadPart, finishUploadParts } from "@/lib/workbook/import";
 import { extractText } from "@/lib/ear/extract";
@@ -32,7 +33,7 @@ export async function POST(req: Request, ctx: Ctx) {
     const key = assertLibrary(library);
     const app = getAppContext();
     if (!app.programme) return NextResponse.json({ error: "Select a project in the top bar first." }, { status: 400 });
-    const body = (await req.json().catch(() => ({}))) as { uploadId?: string; name?: string; relPath?: string; mime?: string; size?: number; index?: number; count?: number; data?: string };
+    const body = (await req.json().catch(() => ({}))) as { uploadId?: string; name?: string; relPath?: string; mime?: string; size?: number; index?: number; count?: number; data?: string; contract_id?: number; contractor_id?: number };
     const part = Buffer.from(body.data ?? "", "base64");
     if (typeof body.size === "number" && body.size > LIBRARY_MAX_FILE_BYTES) return NextResponse.json({ error: `${body.name ?? "This file"} is larger than ${Math.round(LIBRARY_MAX_FILE_BYTES / 1024 / 1024)} MB.` }, { status: 400 });
     const uploadId = appendUploadPart(body.uploadId || null, part, LIBRARY_MAX_FILE_BYTES);
@@ -47,6 +48,15 @@ export async function POST(req: Request, ctx: Ctx) {
     const ceiling = backupFileLimit();
     if (ceiling !== null && bytes.length > ceiling) extracted.note = [extracted.note, `Kept on this server only: at ${Math.round(bytes.length / 1048576)} MB the file is above the ${Math.round(ceiling / 1048576)} MB the backup store takes, so it would need uploading again after a restart of the hosting. Split the pack or reduce its size to have it backed up.`].filter(Boolean).join(" ");
     const reading = await readDocument(app.programme.id, key, name, extracted.text);
+    // dropped on a contract's heading: it is filed there whatever the text says
+    if (body.contract_id || body.contractor_id) {
+      const c = body.contract_id ? (getDb().prepare("SELECT id, contractor_id, acc_ref FROM contracts WHERE id = ? AND programme_id = ?").get(Number(body.contract_id), app.programme.id) as { id: number; contractor_id: number | null; acc_ref: string | null } | undefined) : undefined;
+      reading.contract_id = c?.id ?? null;
+      reading.contractor_id = c?.contractor_id ?? (body.contractor_id ? Number(body.contractor_id) : reading.contractor_id);
+      reading.contract_code = c?.acc_ref || reading.contract_code;
+      reading.matched_by = "dropped under the contract";
+      reading.confidence = "Confirmed";
+    }
     const doc = addDoc(app.programme.id, key, { name, relPath: body.relPath, bytes, mime: String(body.mime ?? "") }, extracted, reading, user);
     return NextResponse.json({ doc }, { status: 201 });
   })(req, ctx);

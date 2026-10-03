@@ -8,6 +8,7 @@ import type { WorkbookAnalysis, SheetAnalysis } from "@/lib/workbook/analyze";
 import type { ImportResult } from "@/lib/workbook/import";
 import { Chip } from "@/components/ui/Chip";
 import { useToast } from "@/components/ui/Toast";
+import { DropZone } from "@/components/ui/DropZone";
 
 interface RegisterMeta {
   key: string;
@@ -261,10 +262,12 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo,
             Choose all the monthly report workbooks you want in the library (hold Ctrl / ⌘ while picking). Each file is read, its report number and cut-off are taken from the workbook itself, and the reports are imported from the lowest number up – every month is stored as its own report and the highest becomes the live one. A report that already exists and is open is replaced; a locked one is skipped. Files in a layout the app does not recognise are listed so you can import them one at a time below.
           </p>
           <div className="flex flex-wrap items-end gap-3">
-            <label className="flex min-w-64 flex-1 flex-col gap-1 text-xs text-muted">
-              Excel files (.xlsx) – as many as you like
-              <input type="file" accept=".xlsx,.xlsm" multiple className="input" onChange={(e) => { setBatchFiles(Array.from(e.target.files ?? [])); setBatch([]); }} disabled={batchBusy} />
-            </label>
+            <DropZone onFiles={(files) => { setBatchFiles(files.filter((f) => /\.xls[xm]$/i.test(f.name))); setBatch([]); }} disabled={batchBusy} label="Drop the workbooks here" className="flex min-w-64 flex-1">
+              <label className="flex flex-1 flex-col gap-1 text-xs text-muted">
+                Excel files (.xlsx) – as many as you like, or drop them here
+                <input type="file" accept=".xlsx,.xlsm" multiple className="input" onChange={(e) => { setBatchFiles(Array.from(e.target.files ?? [])); setBatch([]); }} disabled={batchBusy} />
+              </label>
+            </DropZone>
             {isAdmin && (
               <label className="inline-flex items-center gap-2 text-sm">
                 <input type="checkbox" className="h-4 w-4 accent-navy" checked={lock} onChange={(e) => setLock(e.target.checked)} /> <Lock size={14} /> Lock each report after importing
@@ -319,10 +322,12 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo,
         </h2>
         <p className="mb-3 text-xs text-muted">{standalone ? standalone.intro : "Your monthly report workbook (.xlsx). The app reads every sheet it recognises: cost report lines, change tracker, claims, early warnings, risks, provisional sums, bonds, contracts, IPC log, budget transfers, project team."}</p>
         <div className="grid gap-4 lg:grid-cols-2">
-          <label className="flex flex-col gap-1 text-xs text-muted">
-            Excel file{standalone ? ` – ${standalone.fileHint}` : ""}
-            <input type="file" accept=".xlsx,.xlsm,.csv" className="input" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
-          </label>
+          <DropZone onFiles={(files) => setFile(files[0] ?? null)} label="Drop the file here">
+            <label className="flex flex-col gap-1 text-xs text-muted">
+              Excel file{standalone ? ` – ${standalone.fileHint}` : ""} – choose it, or drop it here
+              <input type="file" accept=".xlsx,.xlsm,.csv" className="input" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+            </label>
+          </DropZone>
           {standalone?.project ? (
             <div className="rounded-lg border border-line bg-slate-50 p-3 text-xs text-ink">
               <div className="font-semibold text-muted">Stand-alone tracker – not tied to any report</div>

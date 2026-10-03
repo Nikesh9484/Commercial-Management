@@ -223,6 +223,7 @@ function guessType(library: LibraryKey, fileName: string, text: string): string 
     if (/claim/.test(s)) return "Claim submission";
     return "Other";
   }
+  if (/accommodation lease agreement|lease agreement/.test(s)) return /amendment/.test(s) ? "Lease Amendment" : "Lease Agreement";
   if (/letter of award|letter of acceptance|\bloa\b/.test(s)) return "Letter of Award / Acceptance";
   if (/particular conditions/.test(s)) return "Particular Conditions";
   if (/conditions of contract|general conditions/.test(s)) return "Conditions of Contract";

@@ -254,4 +254,96 @@ export const customsDeclarations: RegisterDef = {
   ],
 };
 
-export const recoveryRegisters = [accommodationRecovery, accommodationInvoices, customsRecovery, customsDeclarations, aconexControlAccounts];
+const LEASE = "Lease agreement";
+const TERM = "Term and fee";
+const RATES = "Room rates (SAR per person-night)";
+const STANDING = "Current position (after amendments)";
+export const LEASE_STATUSES = ["Active", "Extended", "Expired", "Terminated", "Closed"] as const;
+export const LEASE_BILLING = ["Deducted from the tendered price", "Monthly invoice on actual occupancy", "Other"] as const;
+
+/**
+ * The Labour Accommodation Lease Agreements themselves – one row per agreement with the tenant
+ * (our contractor), the works contract it serves, the term, the lease fee, the deposit and the room
+ * rates – and the amendments that extend or re-price them. The current position (fee and expiry after
+ * amendments) is what the tracker chases; the accommodation invoice tracker rows and invoices of the
+ * same contractor are tied to the agreement for what has been invoiced, received and is overdue.
+ */
+export const leaseAgreements: RegisterDef = {
+  key: "lease_agreements",
+  table: "lease_agreements",
+  title: "Accommodation Lease Agreements",
+  singular: "Lease agreement",
+  description: "Labour Accommodation Lease Agreements with their term, lease fee, security deposit and room rates, and the amendments that change them; tied to the accommodation cost recovery of the same contractor.",
+  displayField: "agreement_no",
+  displayFields: ["agreement_no", "contractor_id"],
+  scope: "programme",
+  snapshot: false,
+  editRoles: ["admin", "editor", "contributor", "reporter"],
+  defaultSort: { field: "current_expiry", dir: "asc" },
+  totals: ["lease_fee", "current_fee", "security_deposit", "invoiced_to_date", "outstanding"],
+  fields: [
+    { key: "programme_id", label: "Programme", type: "lookup", lookup: { register: "programmes" }, required: true, hideInTable: true, hideInForm: true },
+    { key: "agreement_no", label: "Agreement no", type: "text", required: true, unique: true, width: "9rem", section: LEASE, help: "As printed on the agreement, e.g. 1TB01006C45." },
+    { key: "contractor_id", label: "Tenant (contractor)", type: "lookup", lookup: { register: "contractors" }, required: true, filter: true, section: LEASE },
+    { key: "contract_code", label: "Works contract code", type: "text", width: "7rem", filter: true, section: LEASE, help: "The works agreement the accommodation serves, e.g. 006C45 – ties the lease to the cost report line and the recovery rows." },
+    { key: "cost_line_id", label: "Cost report line", type: "lookup", lookup: { register: "cost_lines" }, hideInTable: true, section: LEASE },
+    { key: "works_description", label: "Works agreement", type: "textarea", hideInTable: true, section: LEASE, help: "The proposal the lease is attached to, as recited in the agreement." },
+    { key: "agreement_date", label: "Agreement date", type: "date", hideInTable: true, section: LEASE },
+    { key: "billing_basis", label: "How the fee is charged", type: "select", options: [...LEASE_BILLING], defaultValue: LEASE_BILLING[0], hideInTable: true, section: LEASE },
+    { key: "aconex_ref", label: "Aconex ref", type: "text", hideInTable: true, section: LEASE },
+    { key: "commencement_date", label: "Commencement", type: "date", required: true, section: TERM },
+    { key: "term_months", label: "Term (months)", type: "number", section: TERM, help: "Lease term from the commencement date." },
+    { key: "expiry_date", label: "Original expiry", type: "date", hideInTable: true, section: TERM, help: "Commencement plus the term (filled automatically when left blank)." },
+    { key: "lease_fee", label: "Original lease fee", type: "money", section: TERM, help: "SAR, as agreed in the original term sheet." },
+    { key: "security_deposit", label: "Security deposit", type: "money", hideInTable: true, section: TERM, help: "Usually 5% of the lease fee, payable on or before the commencement date." },
+    { key: "deposit_received", label: "Deposit received", type: "boolean", defaultValue: false, filter: true, section: TERM },
+    { key: "person_nights", label: "Person-nights contracted", type: "number", hideInTable: true, section: TERM },
+    { key: "rate_worker", label: "Worker (4-share)", type: "money", hideInTable: true, section: RATES },
+    { key: "rate_junior", label: "Junior (twin)", type: "money", hideInTable: true, section: RATES },
+    { key: "rate_senior", label: "Senior (single)", type: "money", hideInTable: true, section: RATES },
+    { key: "rate_executive", label: "Executive (single)", type: "money", hideInTable: true, section: RATES },
+    { key: "histogram", label: "Monthly fee histogram", type: "textarea", hideInTable: true, section: RATES, help: "Month by month lease fee from the Tenant's Services Usage Histogram (Attachment A.1), e.g. May-25: 10,500; Jun-25: 40,300." },
+    { key: "current_fee", label: "Current lease fee", type: "money", section: STANDING, help: "After the latest amendment (the original fee until one is recorded)." },
+    { key: "current_expiry", label: "Current expiry", type: "date", section: STANDING, help: "After the latest amendment (the original expiry until one is recorded)." },
+    { key: "amendments_count", label: "Amendments", type: "number", defaultValue: 0, width: "6rem", section: STANDING },
+    { key: "status", label: "Status", type: "select", options: [...LEASE_STATUSES], required: true, defaultValue: "Active", chip: true, filter: true, section: STANDING },
+    { key: "days_to_expiry", label: "Days to expiry", type: "number", virtual: true, readonly: true, hideInForm: true, help: "Amber within 60 days, red within 30 days or expired." },
+    { key: "lease_status", label: "Position", type: "text", virtual: true, readonly: true, hideInForm: true, chip: true, help: "Active, Expiring, Expired, Extension needed (the works run past the lease), Closed." },
+    { key: "works_completion", label: "Works completion", type: "date", virtual: true, readonly: true, hideInForm: true, hideInTable: true, help: "The works contract's revised completion date (original + EOT granted)." },
+    { key: "invoiced_to_date", label: "Invoiced to date (incl. VAT)", type: "money", virtual: true, readonly: true, hideInForm: true, help: "From the accommodation invoice tracker rows of the same contractor." },
+    { key: "outstanding", label: "Outstanding", type: "money", virtual: true, readonly: true, hideInForm: true, help: "From the accommodation invoice tracker: invoiced less received and recovered." },
+    { key: "overdue_invoices", label: "Overdue invoices", type: "number", virtual: true, readonly: true, hideInForm: true, hideInTable: true },
+    { key: "alerts", label: "Attention", type: "text", virtual: true, readonly: true, hideInForm: true, help: "What needs doing: expiry, extension, deposit, overdue invoices, fee exceeded." },
+    { key: "library_doc_id", label: "Library document", type: "number", hideInTable: true, hideInForm: true },
+    { key: "comments", label: "Comments", type: "textarea", hideInTable: true },
+  ],
+};
+
+export const leaseAmendments: RegisterDef = {
+  key: "lease_amendments",
+  table: "lease_amendments",
+  title: "Lease Agreement Amendments",
+  singular: "Lease amendment",
+  description: "Each amendment to a Labour Accommodation Lease Agreement: what it changed (fee, term, rates) and when.",
+  displayField: "amendment_no",
+  displayFields: ["agreement_id", "amendment_no"],
+  scope: "programme",
+  snapshot: false,
+  editRoles: ["admin", "editor", "contributor", "reporter"],
+  defaultSort: { field: "amendment_date", dir: "desc" },
+  fields: [
+    { key: "programme_id", label: "Programme", type: "lookup", lookup: { register: "programmes" }, required: true, hideInTable: true, hideInForm: true },
+    { key: "agreement_id", label: "Lease agreement", type: "lookup", lookup: { register: "lease_agreements" }, required: true, filter: true },
+    { key: "amendment_no", label: "Amendment no", type: "number", required: true, width: "6rem" },
+    { key: "amendment_date", label: "Date", type: "date" },
+    { key: "new_fee", label: "Lease fee after amendment", type: "money", help: "Leave blank when the fee is unchanged." },
+    { key: "new_term_months", label: "Term after amendment (months)", type: "number", hideInTable: true },
+    { key: "new_expiry", label: "Expiry after amendment", type: "date", help: "Leave blank when the term is unchanged." },
+    { key: "changes", label: "What changed", type: "textarea" },
+    { key: "aconex_ref", label: "Aconex ref", type: "text", hideInTable: true },
+    { key: "library_doc_id", label: "Library document", type: "number", hideInTable: true, hideInForm: true },
+    { key: "comments", label: "Comments", type: "textarea", hideInTable: true },
+  ],
+};
+
+export const recoveryRegisters = [accommodationRecovery, accommodationInvoices, customsRecovery, customsDeclarations, aconexControlAccounts, leaseAgreements, leaseAmendments];

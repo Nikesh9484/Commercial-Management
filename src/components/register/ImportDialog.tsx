@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Modal } from "@/components/ui/Modal";
 import { Download, Upload } from "lucide-react";
+import { DropZone } from "@/components/ui/DropZone";
 
 interface Result {
   created: number;
@@ -68,7 +69,9 @@ export function ImportDialog({ registerKey, title, open, onClose, onDone }: { re
           <li>Fill in one record per row. Leave ID blank for new records; keep the ID to update an existing one.</li>
           <li>Save as .xlsx and choose the file below.</li>
         </ol>
-        <input type="file" accept=".xlsx" className="input" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+        <DropZone onFiles={(files) => setFile(files[0] ?? null)} label="Drop the .xlsx here">
+          <input type="file" accept=".xlsx" className="input" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+        </DropZone>
         {error && <p className="rounded-md bg-red-50 px-3 py-2 text-red-700">{error}</p>}
         {result && (
           <div className="rounded-md border border-line bg-page p-3">

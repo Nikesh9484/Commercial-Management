@@ -10,6 +10,7 @@ import { Chip } from "@/components/ui/Chip";
 import { PackageBreakdown } from "@/components/cost-report/PackageBreakdown";
 import { PaymentChart } from "@/components/payments/PaymentChart";
 import { ExpiringSoonCard } from "@/components/bonds/ExpiringSoonCard";
+import { LeaseAlertsCard } from "@/components/recovery/LeaseAlertsCard";
 import { KeyIssues } from "@/components/dashboard/KeyIssues";
 import { ActionsList } from "@/components/dashboard/ActionsList";
 import { MovementPanel } from "@/components/dashboard/MovementPanel";
@@ -123,6 +124,15 @@ export default async function HomePage() {
           sub={`${d.bonds.expired} expired · ${d.bonds.red} within 30 days · ${d.bonds.amber} within 60 days${d.bonds.released + d.bonds.superseded ? ` · ${d.bonds.released + d.bonds.superseded} released / superseded` : ""}`}
           tone={d.bonds.expired + d.bonds.red ? "red" : d.bonds.amber ? "amber" : "green"}
         />
+        {d.leases.total > 0 && (
+          <Count
+            href="/modules/cost-recovery?tab=leases"
+            label="Accommodation leases needing attention"
+            value={d.leases.alerts.length}
+            sub={`${d.leases.active} active of ${d.leases.total} · ${d.leases.expired} expired · ${d.leases.extensionNeeded} to extend · ${d.leases.overdueInvoices} invoice(s) overdue`}
+            tone={d.leases.expired + d.leases.extensionNeeded + d.leases.overdueInvoices ? "red" : d.leases.alerts.length ? "amber" : "green"}
+          />
+        )}
       </div>
 
       {/* What changed since the last issued report */}
@@ -152,6 +162,7 @@ export default async function HomePage() {
       </div>
 
       {(d.bonds.expiring.length > 0 || d.bonds.expired > 0) && <ExpiringSoonCard items={d.bonds.expiring} expired={d.bonds.expired} released={d.bonds.released} superseded={d.bonds.superseded} />}
+      <LeaseAlertsCard s={d.leases} compact />
     </div>
   );
 }

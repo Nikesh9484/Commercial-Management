@@ -10,6 +10,7 @@ import { PROBABILITY_BANDS, IMPACT_BANDS, bandIndex, severity } from "./defs/ris
 import { EXPIRY_AMBER_DAYS, EXPIRY_RED_DAYS } from "./defs/bonds";
 import { revisedContractValues } from "../bonds/revised";
 import { closedContracts, closureByName, contractorKey, type ClosedContracts } from "../bonds/closed";
+import { enrichLeases } from "../leases/summary";
 import { listBondDocuments } from "../bonds/documents";
 import { getDb, getSetting } from "../db";
 import { computeCostReport } from "../cost-report/compute";
@@ -30,6 +31,7 @@ export function enrichRows(def: RegisterDef, rows: RecordRow[]) {
     for (const r of rows) markContractClosed(r, closed);
   }
   if (def.key === "claims") rows.forEach(enrichClaim);
+  if (def.key === "lease_agreements" && rows.length) enrichLeases(rows, getDb());
   if (def.key === "risks") rows.forEach(enrichRisk);
   if (def.key === "provisional_sums") rows.forEach(enrichProvisionalSum);
   if ((def.key === "contracts" || def.key === "payment_applications") && rows.length) {

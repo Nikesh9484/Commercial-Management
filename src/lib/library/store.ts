@@ -30,7 +30,7 @@ export const LIBRARY_INFO: Record<LibraryKey, { title: string; short: string; su
     title: "Contract Library – Contract documents",
     short: "Contract Library",
     subtitle: "The contract documents of every contract: agreement, letter of award, conditions, specifications, pricing schedules, amendments. Upload the PDF or Word files, or a whole folder; the dashboard reads each one and files it under its contractor and contract code.",
-    types: ["Contract Agreement", "Letter of Award / Acceptance", "Conditions of Contract", "Particular Conditions", "Scope of Work / Specification", "Pricing Schedule / BoQ", "Amendment / Addendum", "Variation / Change Order", "Bond / Guarantee", "Other"],
+    types: ["Contract Agreement", "Letter of Award / Acceptance", "Conditions of Contract", "Particular Conditions", "Scope of Work / Specification", "Pricing Schedule / BoQ", "Amendment / Addendum", "Variation / Change Order", "Bond / Guarantee", "Lease Agreement", "Lease Amendment", "Other"],
     hint: "PDF or Word files (contract agreement, LOA, conditions, amendments). A folder can be dropped in at once – sub-folders are kept as the document's location.",
   },
 };
@@ -128,11 +128,19 @@ function db() {
   return d;
 }
 
+/** Adding documents and correcting their filing: the admin, the editors and the user accounts that receive the contract documents. */
 export function canManageLibrary(user: UserInfo): boolean {
+  return user.role === "admin" || user.role === "editor" || user.role === "reporter";
+}
+/** Removing documents stays with the admin and the editors. */
+export function canRemoveLibrary(user: UserInfo): boolean {
   return user.role === "admin" || user.role === "editor";
 }
 function assertManage(user: UserInfo) {
-  if (!canManageLibrary(user)) throw new AuthError("Only Editors and Admins can add or change library documents.");
+  if (!canManageLibrary(user)) throw new AuthError("Only Editors, Admins and the user accounts can add or change library documents.");
+}
+function assertRemove(user: UserInfo) {
+  if (!canRemoveLibrary(user)) throw new AuthError("Only an Admin or Editor can remove library documents.");
 }
 export function assertLibrary(key: string): LibraryKey {
   if (!(LIBRARIES as readonly string[]).includes(key)) throw new ValidationError("Unknown library.");
@@ -304,7 +312,9 @@ export function updateDoc(id: number, input: Record<string, unknown>, user: User
 }
 
 export function removeDoc(id: number, user: UserInfo, quiet = false) {
-  assertManage(user);
+  // a re-upload of the same file replaces the earlier copy quietly; an outright removal is for the admin and editors
+  if (quiet) assertManage(user);
+  else assertRemove(user);
   const cur = getDoc(id);
   if (!cur) return;
   const d = db();

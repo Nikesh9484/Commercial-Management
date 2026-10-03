@@ -4,6 +4,7 @@ import { convertToPdf, convertible } from "./packs/convert";
 import { addChangesFromDocuments } from "./changes/from-docs";
 import { addBondsFromDocuments } from "./bonds/from-docs";
 import { addPaymentsFromDocuments } from "./payments/from-docs";
+import { addLeasesFromDocuments } from "./leases/from-docs";
 import type { Decisions, FromDocsResult } from "./from-docs-shared";
 import type { UserInfo } from "./registers/types";
 
@@ -18,8 +19,8 @@ export interface DocFile {
   name: string;
   bytes: Buffer;
 }
-type Lane = "changes" | "bonds" | "payments" | "other";
-const LANE_LABEL: Record<Lane, string> = { changes: "Change Management", bonds: "Bonds & Insurance", payments: "Invoices & Payments", other: "not sorted" };
+type Lane = "changes" | "bonds" | "payments" | "leases" | "other";
+const LANE_LABEL: Record<Lane, string> = { changes: "Change Management", bonds: "Bonds & Insurance", payments: "Invoices & Payments", leases: "Accommodation leases", other: "not sorted" };
 
 async function laneOf(f: DocFile): Promise<{ lane: Lane; why: string }> {
   const isPdf = f.bytes.subarray(0, 5).toString("latin1") === "%PDF-";
@@ -45,6 +46,8 @@ async function laneOf(f: DocFile): Promise<{ lane: Lane; why: string }> {
   const PAY = /Interim Payment|Payment Application|Payment Certificate|\bIPA\b|\bIPC\b|Proposes to pay|Recommendation No\.|Payment Recommendation/i;
   const BOND = /CERTIFICATE OF INSURANCE|POLICY\s*(NUMBER|NO|SCHEDULE)|RENEWAL SCHEDULE|BANK GUARANTEE|PERFORMANCE (BOND|GUARANTEE)|ADVANCE PAYMENT (BOND|GUARANTEE)|INSURANCE|WORKMEN|INDEMNITY|LIABILITY POLICY|\bPOLICY\b/i;
   const CHANGE = /Emergency Variation Order|Request for Change|Change Decision Pack|Proposed Variation Order|Determined Variation Order|Employer.?s Instruction|Request for Approval|\b(RFC|PVO|DVO|EVO|EI|RFA)\b/i;
+  const LEASE = /ACCOMMODATION\s*LEASE\s*AGREEMENT|LEASE\s*AGREEMENT/i;
+  if (LEASE.test(head.slice(0, 3000))) return { lane: "leases", why: /AMENDMENT\s*No/i.test(head.slice(0, 1500)) ? "lease agreement amendment" : "accommodation lease agreement" };
   if (/-(PAY|INV|IPA|IPC|PC)-/i.test(name)) return { lane: "payments", why: "payment document (file code)" };
   if (/-(INS|BND|BOND|INSC|GTE)-/i.test(name)) return { lane: "bonds", why: "bond / insurance (file code)" };
   if (/-(RFC|CRF|PVO|DVO|EVO|EMI|EI|RFA|VOR)-/i.test(name)) return { lane: "changes", why: "change document (file code)" };
@@ -60,7 +63,7 @@ async function laneOf(f: DocFile): Promise<{ lane: Lane; why: string }> {
 
 export async function feedDocuments(files: DocFile[], user: UserInfo, decisions: Decisions = {}): Promise<FromDocsResult> {
   const out: FromDocsResult = { entries: [], duplicates: [], needsDecision: false, files: [], periods: [], warnings: [] };
-  const lanes: Record<Lane, DocFile[]> = { changes: [], bonds: [], payments: [], other: [] };
+  const lanes: Record<Lane, DocFile[]> = { changes: [], bonds: [], payments: [], leases: [], other: [] };
   for (const f of files) {
     try {
       const { lane, why } = await laneOf(f);
@@ -88,5 +91,6 @@ export async function feedDocuments(files: DocFile[], user: UserInfo, decisions:
   }
   if (lanes.bonds.length) merge("bonds", await addBondsFromDocuments(lanes.bonds, user, decisions));
   if (lanes.payments.length) merge("payments", await addPaymentsFromDocuments(lanes.payments, user, decisions));
+  if (lanes.leases.length) merge("leases", await addLeasesFromDocuments(lanes.leases, user, decisions));
   return out;
 }

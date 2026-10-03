@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
   ClipboardList,
+  KeyRound,
   Calculator,
   GitBranch,
   Scale,
@@ -95,6 +96,7 @@ export function Sidebar({ open, onClose, role, project }: { open: boolean; onClo
           {link(m.slug === "executive-summary" ? "/" : `/modules/${m.slug}`, m.short, ICONS[m.icon] ?? ClipboardList, String(m.no))}
           {m.slug === "executive-summary" && <div className="pl-4">{link("/modules/executive-summary/minutes", "Minutes of Meeting", FileText)}</div>}
           {m.slug === "invoices-payments" && <div className="pl-4">{link("/modules/final-accounts", "Final Account Status", FileText)}</div>}
+          {m.slug === "cost-recovery" && <div className="pl-4">{link("/modules/cost-recovery?tab=leases", "Accommodation lease agreements", KeyRound)}</div>}
           {m.slug === "monthly-report" && (
             <div className="pl-4">
               {link("/modules/monthly-report/library", "All reports (library)", Library)}
@@ -145,6 +147,9 @@ export function Sidebar({ open, onClose, role, project }: { open: boolean; onClo
               {link("/reports/cashflow-forecast", "Cash Flow Forecast", TrendingUp)}
               {link("/reports/kpi", "KPI Report – F1 VOs", Target)}
               {link("/reports/builder", "Customise my reports", SlidersHorizontal)}
+              <div className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider text-blue-200/50">Libraries</div>
+              {link("/library/eot", "EOT Library (EARs)", BookOpen)}
+              {link("/library/contract", "Contract Library", FileSignature)}
               <div className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider text-blue-200/50">Documents</div>
               {link("/imports/documents", "Feed documents (any files)", Upload)}
               {packsMenu}

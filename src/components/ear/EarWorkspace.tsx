@@ -7,6 +7,7 @@ import { Chip } from "@/components/ui/Chip";
 import { useToast } from "@/components/ui/Toast";
 import type { ChipTone } from "@/lib/registers/types";
 import { fmtBytes } from "./EarCaseList";
+import { DropZone } from "@/components/ui/DropZone";
 
 /* Mirrors src/lib/ear/store.ts (kept here so the browser bundle stays free of server code). */
 type Bucket = "submission" | "template" | "contract" | "prev_ear" | "prev_submission";
@@ -79,7 +80,7 @@ export function EarWorkspace({ initial, files: initialFiles, engine, canEdit }: 
     router.refresh();
   }
 
-  async function upload(bucket: Bucket, list: FileList | null) {
+  async function upload(bucket: Bucket, list: FileList | File[] | null) {
     if (!list || !list.length) return;
     const picked = Array.from(list).filter((f) => !/^(\.|~\$|thumbs\.db$|desktop\.ini$)/i.test(f.name));
     if (!picked.length) return toast("No usable files were selected.", "error");
@@ -281,6 +282,7 @@ export function EarWorkspace({ initial, files: initialFiles, engine, canEdit }: 
                   <Loader2 size={14} className="animate-spin" /> {progress!.text}
                 </div>
               )}
+              <DropZone onFiles={(files) => void upload(b.key, files)} disabled={!canEdit || !!progress} label={b.single ? "Drop the file here" : "Drop the files or the folder here"} className="rounded-lg">
               {list.length === 0 ? (
                 <div className="rounded-lg border border-dashed border-line p-4 text-center text-xs text-muted">{b.single ? "No file yet." : "No documents yet – upload the whole folder; sub-folders are kept."}</div>
               ) : (
@@ -310,6 +312,7 @@ export function EarWorkspace({ initial, files: initialFiles, engine, canEdit }: 
                   ))}
                 </ul>
               )}
+              </DropZone>
               {list.some((f) => f.note && !f.text_chars) && <p className="mt-2 text-[11px] text-amber-700">Files marked with a warning could not be read fully (scanned PDF, image or a format the engine cannot open). Hover to see why.</p>}
             </div>
           );

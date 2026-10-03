@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { FileSpreadsheet, Upload } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
+import { DropZone } from "@/components/ui/DropZone";
 
 const toBase64 = (blob: Blob) =>
   new Promise<string>((resolve, reject) => {
@@ -23,7 +24,7 @@ export function OwnLayoutCard({ periodId, periodLabel, template, canUpload }: { 
   const fileRef = useRef<HTMLInputElement>(null);
   const toast = useToast();
 
-  async function upload(list: FileList | null) {
+  async function upload(list: FileList | File[] | null) {
     const f = list?.[0];
     if (!f) return;
     const CHUNK = 256 * 1024;
@@ -60,7 +61,7 @@ export function OwnLayoutCard({ periodId, periodLabel, template, canUpload }: { 
           </div>
           <div className="mt-1 text-xs text-muted">{tpl ? `Template: ${tpl.name} (kept ${tpl.uploaded_at.slice(0, 10)} by ${tpl.uploaded_by}). Each monthly workbook imported replaces it.` : "No template yet – upload your last report workbook below, or import a month (the imported workbook is kept)."}</div>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <DropZone onFiles={(files) => void upload(files)} disabled={!canUpload || !!busy} label="Drop the report workbook here as the template" className="flex flex-wrap items-center gap-2 rounded-lg">
           <a className={`btn btn-sm btn-excel ${tpl ? "" : "pointer-events-none opacity-50"}`} href={`/api/report/own-layout?period=${periodId}`} title="Download the month's report in your own workbook layout">
             <FileSpreadsheet size={14} /> Full cost report – my template (Excel)
           </a>
@@ -73,7 +74,7 @@ export function OwnLayoutCard({ periodId, periodLabel, template, canUpload }: { 
             </>
           )}
           {busy && <span className="text-xs text-muted">{busy}</span>}
-        </div>
+        </DropZone>
       </div>
     </div>
   );
