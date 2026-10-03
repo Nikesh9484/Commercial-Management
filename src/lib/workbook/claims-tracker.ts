@@ -82,6 +82,8 @@ export interface ClaimsTrackerContext {
   programmeCode: string; // e.g. 1TB01031
   assetCode: string; // e.g. 1TB01031.01
   assetLabel: string; // value written to the Asset column (matched by code on import)
+  /** every asset code of the programme – in the all-projects upload a row is filed under the asset it names */
+  assets?: string[];
   /** Cost lines of the programme keyed by contract fragment, e.g. "031C02" */
   linesByFrag: Map<string, KnownLine>;
   existingClaims: ExistingClaim[];
@@ -108,26 +110,43 @@ export function codeFrag(code: string): string | null {
   return m ? m[1] : null;
 }
 
-export function convertClaimsTracker(sheets: SheetValues[], ctx: ClaimsTrackerContext): ClaimsTrackerResult {
+/** The matching state of one programme: its existing claims by reference and description, and what the file gave it. */
+interface ProgState {
+  ctx: ClaimsTrackerContext;
+  prog: string;
+  byRef: Map<string, string>;
+  byDesc: Map<string, string>;
+  seen: Set<string>;
+  existingNos: Set<string>;
+  kept: number;
+  matchedExisting: number;
+  linked: number;
+}
+
+/**
+ * One programme (the top bar's, with its asset) – or every programme at once, the Claims Tracker
+ * being one AMAALA-wide file: each row is then filed under the programme its contract number or
+ * asset code names, and a "Project [programme_id]" column carries that to the import.
+ */
+export function convertClaimsTracker(sheets: SheetValues[], ctxArg: ClaimsTrackerContext | ClaimsTrackerContext[]): ClaimsTrackerResult {
   const notes: string[] = [];
   const out: unknown[][] = [];
-  const prog = normCode(ctx.programmeCode);
-  const asset = normCode(ctx.assetCode);
+  const ctxs = Array.isArray(ctxArg) ? ctxArg : [ctxArg];
+  const shared = Array.isArray(ctxArg);
+  const states: ProgState[] = ctxs.map((ctx) => {
+    const byRef = new Map<string, string>();
+    for (const c of ctx.existingClaims) {
+      for (const r of [c.detail_letter_ref, c.notice_letter_ref]) if (r && normRef(String(r))) byRef.set(normRef(String(r)), c.claim_no);
+    }
+    const byDesc = new Map<string, string>();
+    for (const c of ctx.existingClaims) {
+      const k = c.description ? descKey(String(c.description)) : "";
+      if (k.length >= 20 && !byDesc.has(k)) byDesc.set(k, c.claim_no);
+    }
+    return { ctx, prog: normCode(ctx.programmeCode), byRef, byDesc, seen: new Set<string>(), existingNos: new Set(ctx.existingClaims.map((c) => c.claim_no)), kept: 0, matchedExisting: 0, linked: 0 };
+  });
   let total = 0;
   let asOf: string | null = null;
-  const byRef = new Map<string, string>();
-  for (const c of ctx.existingClaims) {
-    for (const r of [c.detail_letter_ref, c.notice_letter_ref]) if (r && normRef(String(r))) byRef.set(normRef(String(r)), c.claim_no);
-  }
-  const byDesc = new Map<string, string>();
-  for (const c of ctx.existingClaims) {
-    const k = c.description ? descKey(String(c.description)) : "";
-    if (k.length >= 20 && !byDesc.has(k)) byDesc.set(k, c.claim_no);
-  }
-  const seen = new Set<string>();
-  const existingNos = new Set(ctx.existingClaims.map((c) => c.claim_no));
-  let matchedExisting = 0;
-  let linked = 0;
 
   for (const sheet of sheets) {
     const hdr = headerRow(sheet);
@@ -142,14 +161,24 @@ export function convertClaimsTracker(sheets: SheetValues[], ctx: ClaimsTrackerCo
       total++;
       const contractNo = txt(v, 4);
       const assetCode = normCode(txt(v, 5));
-      const mine = (contractNo && normCode(contractNo).startsWith(prog)) || (assetCode && assetCode === asset);
-      if (!mine) continue;
+      // the programme the row belongs to: by its contract number, else by its asset code
+      const st = shared
+        ? states.find((x) => (contractNo && normCode(contractNo).startsWith(x.prog)) || (assetCode && assetCode.startsWith(x.prog)))
+        : (contractNo && normCode(contractNo).startsWith(states[0].prog)) || (assetCode && assetCode === normCode(states[0].ctx.assetCode))
+          ? states[0]
+          : undefined;
+      if (!st) continue;
+      const ctx = st.ctx;
+      const { byRef, byDesc, seen, existingNos } = st;
+      st.kept++;
+      // the asset the row names, when the programme has it; else the one the page was opened on
+      const assetLabel = (shared && assetCode && ctx.assets?.find((a) => normCode(a) === assetCode)) || ctx.assetLabel;
       const n = Math.trunc(cell(v, 1) as number);
       const kind = txt(v, 2).toUpperCase();
       const isCost = kind.includes("COST");
       const frag = contractNo ? contractFrag(contractNo, ctx.programmeCode) : "";
       const line = frag ? ctx.linesByFrag.get(frag) : undefined;
-      if (line) linked++;
+      if (line) st.linked++;
 
       // Reuse an existing claim when its letter references match, so the monthly report's claims are updated, not duplicated.
       const detailRef = txt(v, 22);
@@ -158,11 +187,11 @@ export function convertClaimsTracker(sheets: SheetValues[], ctx: ClaimsTrackerCo
       const hit = byRef.get(normRef(detailRef)) ?? byRef.get(normRef(noticeRef)) ?? byDesc.get(descKey(txt(v, 3)));
       if (hit && !seen.has(hit)) {
         claimNo = hit;
-        matchedExisting++;
+        st.matchedExisting++;
       } else if (existingNos.has(claimNo)) {
         // imported before under this CT number: the write updates that row, so the preview must not
         // call it new
-        matchedExisting++;
+        st.matchedExisting++;
       }
       seen.add(claimNo);
 
@@ -188,10 +217,11 @@ export function convertClaimsTracker(sheets: SheetValues[], ctx: ClaimsTrackerCo
       const lastAction = [date(v, 56) ?? txt(v, 56), tidyText(txt(v, 57))].filter(Boolean).join(" – ");
 
       out.push([
+        ...(shared ? [ctx.programmeCode] : []),
         claimNo,
         `${tidyText(txt(v, 3))}${isCost ? " [Cost claim]" : kind.includes("TIA") ? " [Time claim]" : ""}`,
         status,
-        ctx.assetLabel,
+        assetLabel,
         line?.contractor || txt(v, 8),
         contractNo,
         txt(v, 6),
@@ -273,11 +303,18 @@ export function convertClaimsTracker(sheets: SheetValues[], ctx: ClaimsTrackerCo
     }
   }
 
-  notes.push(`Claims Tracker${asOf ? ` as of ${asOf}` : ""}: ${total} claim(s) in the file, ${out.length} belong to ${ctx.programmeCode} / ${ctx.assetCode} and were kept; the rest (other assets) were ignored.`);
-  if (out.length) notes.push(`${linked} linked to a cost report line by contract code; ${matchedExisting} matched an existing claim by letter reference or description (updated), ${out.length - matchedExisting} new (numbered CT-###).`);
+  if (shared) {
+    notes.push(`Claims Tracker${asOf ? ` as of ${asOf}` : ""}: ${total} claim(s) in the file, ${out.length} belong to our projects and were kept (${states.map((x) => `${x.ctx.programmeCode}: ${x.kept}`).join(", ")}); the rest (other assets) were ignored. Each is filed under the project its contract number or asset code names.`);
+    for (const x of states) if (x.kept) notes.push(`${x.ctx.programmeCode}: ${x.linked} linked to a cost report line by contract code; ${x.matchedExisting} matched an existing claim by letter reference or description (updated), ${x.kept - x.matchedExisting} new (numbered CT-###).`);
+  } else {
+    const x = states[0];
+    notes.push(`Claims Tracker${asOf ? ` as of ${asOf}` : ""}: ${total} claim(s) in the file, ${out.length} belong to ${x.ctx.programmeCode} / ${x.ctx.assetCode} and were kept; the rest (other assets) were ignored.`);
+    if (out.length) notes.push(`${x.linked} linked to a cost report line by contract code; ${x.matchedExisting} matched an existing claim by letter reference or description (updated), ${out.length - x.matchedExisting} new (numbered CT-###).`);
+  }
   if (out.length) notes.push("Pending claims are not carried in cost report column M (as in the Excel report, where they sit in the early warnings); only approved claims with a determined amount feed the cost report. Tick \"Carry in cost report\" on a claim to change that.");
 
   const columns = [
+    ...(shared ? [["Project [programme_id]", "programme_id"]] : []),
     ["Claim No", "claim_no"], ["Description", "description"], ["Status", "status"], ["Asset code", "asset_id"], ["Contractor / Consultant", "contractor_id"], ["Contract No", "contract_no"], ["Project", "project"], ["Scope", "scope"], ["Package", "package_id"], ["Cost report line", "cost_line_id"], ["Carry in cost report (M)", "in_cost_report"],
     ["Claim type: EOT", "type_eot"], ["Claim type: Prolongation", "type_prolongation"], ["Claim type: Disruption", "type_disruption"], ["Claim type: Acceleration", "type_acceleration"], ["Claim type: Other", "type_other"], ["Other – describe", "type_other_text"],
     ["(A) Date contractor became aware", "notice_aware_date"], ["Notice letter ref", "notice_letter_ref"], ["(B) Date received by RSG", "notice_received_date"], ["Engineer / Employer response ref", "notice_response_ref"], ["Response date", "notice_response_date"],

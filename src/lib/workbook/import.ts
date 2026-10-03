@@ -36,7 +36,9 @@ export function storeUpload(buffer: Buffer): string {
   // tidy old files
   for (const f of fs.readdirSync(TMP)) {
     const p = path.join(TMP, f);
-    if (Date.now() - fs.statSync(p).mtimeMs > 30 * 60_000) fs.rmSync(p, { force: true });
+    // the from-documents batches keep their files in sub-folders here: an old one goes whole, a fresh one is left alone
+    const st = fs.statSync(p);
+    if (Date.now() - st.mtimeMs > 30 * 60_000) fs.rmSync(p, { force: true, recursive: st.isDirectory() });
   }
   return id;
 }
@@ -103,6 +105,8 @@ export interface SheetMapping {
 export const STANDALONE_ONLY = ["claims", "bonds", "final_accounts", "accommodation_recovery", "accommodation_invoices", "customs_recovery", "customs_declarations", "aconex_control_accounts"] as const;
 /** The cost-recovery trackers: uploaded when they change, never part of the monthly workbook, whatever the project's feeds. */
 export const RECOVERY_REGISTERS = ["accommodation_recovery", "accommodation_invoices", "customs_recovery", "customs_declarations", "aconex_control_accounts"] as const;
+/** Every stand-alone tracker: uploaded whenever it changes, whatever report is selected (locked or not), one file for every project. The Claims Tracker is one; its rows are matched and updated, never removed. */
+export const TRACKER_REGISTERS = [...RECOVERY_REGISTERS, "claims"] as const;
 
 /**
  * The registers the monthly workbook must not write for a project: claims always (the Claims Tracker is
@@ -197,7 +201,7 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo, progres
   // Reporting period. Every report keeps its own data: the live registers belong to the latest report.
   // Importing an older month is done "in a sandbox": the latest report's live data is stored first,
   // the older month is imported and stored, and the live registers are put back afterwards.
-  const recoveryOnly = !!req.allowedRegisters?.length && req.allowedRegisters.every((k) => (RECOVERY_REGISTERS as readonly string[]).includes(k));
+  const recoveryOnly = !!req.allowedRegisters?.length && req.allowedRegisters.every((k) => (TRACKER_REGISTERS as readonly string[]).includes(k));
   const chosen = recoveryOnly && req.programmeId ? (db.prepare("SELECT id FROM programmes WHERE id = ?").get(Number(req.programmeId)) as { id: number } | undefined) : undefined;
   const programmeId = chosen?.id ?? Number(getSetting(db, "current_programme_id") ?? (db.prepare("SELECT id FROM programmes ORDER BY id LIMIT 1").get() as { id: number } | undefined)?.id ?? 1);
   let periodId = req.period?.id ?? null;
@@ -415,7 +419,8 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo, progres
           // find existing record by key – then, for early warnings, by what it says: their numbers in the
           // workbook are reused, missing or corrected from month to month (three "23"s, a "22" that became
           // a "23", a blank), so a renumbered row must update the one already here, not sit beside it
-          let match = existingRows.find((e) => keyFields.every((k) => String(e[k] ?? "").trim().toLowerCase() === String(input[k] ?? "").trim().toLowerCase()));
+          // one AMAALA-wide tracker holds every project: a row only ever matches a row of its own project
+          let match = existingRows.find((e) => (programmeCol < 0 || Number(e.programme_id) === Number(input.programme_id)) && keyFields.every((k) => String(e[k] ?? "").trim().toLowerCase() === String(input[k] ?? "").trim().toLowerCase()));
           if (def.key === "early_warnings" && syntheticEwNo(input.ew_no)) {
             // Only for numbers the converter made up (a blank, reused or corrected column A): a number
             // this import already gave to another row is not a match, and a number now on a
@@ -485,6 +490,8 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo, progres
     for (const [key, ids] of touchedByRegister) {
       const def = getRegisterDef(key);
       const fed = recoveryScope.get(key);
+      // the Claims Tracker only adds and updates: a claim entered by hand, or dropped from the tracker, stays
+      if (!(RECOVERY_REGISTERS as readonly string[]).includes(key)) continue;
       if (!def || !fed?.size || results.some((r) => r.register === key && r.errors.length)) continue;
       const list = [...ids];
       pruned += db.prepare(`DELETE FROM "${def.table}" WHERE programme_id IN (${[...fed].map(() => "?").join(",")}) AND id NOT IN (${list.map(() => "?").join(",") || "-1"})`).run(...fed, ...list).changes;

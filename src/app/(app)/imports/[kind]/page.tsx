@@ -21,12 +21,14 @@ export const IMPORT_KINDS: Record<string, { title: string; subtitle: string; onl
   },
   "claims-tracker": {
     title: "Import Claims Tracker",
-    subtitle: "Pick our claims out of the AMAALA Claims Tracker workbook and update Claims & Disputes for the current report.",
+    subtitle: "Upload the AMAALA Claims Tracker whenever it changes – it is not part of any month's report – and Claims & Disputes of every project is brought up to date: The Marina's and VBH's claims are picked out of the one file and each is filed under its own project, whatever report is selected in the top bar.",
     only: ["claims"],
-    intro: "Upload the Claims Tracker workbook (AMA-CM-FRM-0018, the file with the Program_01 sheet). Only the claims whose contract number or asset code belongs to the programme and asset in the top bar are kept; each is linked to our cost report line by its contract code (e.g. 1TB01031C02 → 031C02). Claims already in the dashboard are matched by their letter references and updated; the others are added as CT-###.",
+    intro: "Upload the Claims Tracker workbook (AMA-CM-FRM-0018, the file with the Program_01 sheet). It is one file for every project: the claims whose contract number or asset code belongs to The Marina or to VBH are kept and filed under that project and asset; each is linked to the project's cost report line by its contract code (e.g. 1TB01031C02 → 031C02). Claims already in the dashboard are matched by their letter references and updated; the others are added as CT-###. Nothing is removed: a claim entered by hand stays.",
     fileHint: "Claims Tracker (Program_01 sheet)",
     doneHref: "/modules/claims-disputes",
     doneLabel: "Open Claims & Disputes",
+    anyTime: true,
+    shared: true,
   },
   accommodation: {
     title: "Import accommodation invoice tracker",
