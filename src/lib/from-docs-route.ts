@@ -3,6 +3,9 @@ import os from "node:os";
 import path from "node:path";
 import { NextResponse } from "next/server";
 import { withUser } from "./api";
+
+/** a scanned certificate pack or contract can run to a few hundred MB */
+const FROM_DOCS_MAX_BYTES = 500 * 1024 * 1024;
 import { withHeavyLock } from "./workbook/heavy";
 import { appendUploadPart, finishUploadParts } from "./workbook/import";
 import type { Decisions, FromDocsResult } from "./from-docs-shared";
@@ -43,7 +46,7 @@ export function fromDocumentsRoute(opts: { dir: string; refuse: (user: UserInfo)
         return NextResponse.json(result);
       }
       const part = Buffer.from(String(body.data ?? ""), "base64");
-      const uploadId = appendUploadPart(body.uploadId || null, part);
+      const uploadId = appendUploadPart(body.uploadId || null, part, FROM_DOCS_MAX_BYTES);
       if ((body.index ?? 0) < (body.count ?? 1) - 1) return NextResponse.json({ uploadId });
       const bytes = finishUploadParts(uploadId);
       fs.mkdirSync(dir, { recursive: true });

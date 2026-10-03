@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { withUser } from "@/lib/api";
 import { AuthError } from "@/lib/auth";
 import { getAppContext } from "@/lib/context";
+import { backupFileLimit } from "@/lib/file-store";
 import { appendUploadPart, finishUploadParts } from "@/lib/workbook/import";
 import { extractText } from "@/lib/ear/extract";
 import { addDoc, assertLibrary, canManageLibrary, getDoc, listDocs, removeDoc, LIBRARY_MAX_FILE_BYTES } from "@/lib/library/store";
@@ -34,7 +35,7 @@ export async function POST(req: Request, ctx: Ctx) {
     const body = (await req.json().catch(() => ({}))) as { uploadId?: string; name?: string; relPath?: string; mime?: string; size?: number; index?: number; count?: number; data?: string };
     const part = Buffer.from(body.data ?? "", "base64");
     if (typeof body.size === "number" && body.size > LIBRARY_MAX_FILE_BYTES) return NextResponse.json({ error: `${body.name ?? "This file"} is larger than ${Math.round(LIBRARY_MAX_FILE_BYTES / 1024 / 1024)} MB.` }, { status: 400 });
-    const uploadId = appendUploadPart(body.uploadId || null, part);
+    const uploadId = appendUploadPart(body.uploadId || null, part, LIBRARY_MAX_FILE_BYTES);
     if ((body.index ?? 0) < (body.count ?? 1) - 1) return NextResponse.json({ uploadId });
     const bytes = finishUploadParts(uploadId);
     if (typeof body.size === "number" && bytes.length !== body.size) {
@@ -42,6 +43,9 @@ export async function POST(req: Request, ctx: Ctx) {
     }
     const name = String(body.name ?? "file");
     const extracted = await extractText(name, bytes, String(body.mime ?? ""));
+    // the backup store has its own ceiling: a bigger file is kept on this server only, and the entry says so
+    const ceiling = backupFileLimit();
+    if (ceiling !== null && bytes.length > ceiling) extracted.note = [extracted.note, `Kept on this server only: at ${Math.round(bytes.length / 1048576)} MB the file is above the ${Math.round(ceiling / 1048576)} MB the backup store takes, so it would need uploading again after a restart of the hosting. Split the pack or reduce its size to have it backed up.`].filter(Boolean).join(" ");
     const reading = await readDocument(app.programme.id, key, name, extracted.text);
     const doc = addDoc(app.programme.id, key, { name, relPath: body.relPath, bytes, mime: String(body.mime ?? "") }, extracted, reading, user);
     return NextResponse.json({ doc }, { status: 201 });

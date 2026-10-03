@@ -21,7 +21,7 @@ export { KPI_SECTIONS, KPI_SECTION_LABEL, KPI_SECTION_HINT, kpiSectionsFor, type
  * the VO is instructed to the month the DVO is approved.
  */
 
-export const KPI_MAX_FILE_BYTES = 80 * 1024 * 1024;
+export const KPI_MAX_FILE_BYTES = 500 * 1024 * 1024;
 
 export interface KpiItemDetails {
   change_id: number;

@@ -62,7 +62,52 @@ function stripHtml(s: string): string {
   return s.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, "").replace(/<br\s*\/?>|<\/p>|<\/div>|<\/tr>|<\/h\d>/gi, "\n").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
 }
 
+/** Above this a PDF is read in its own process, with its own memory cap, so a huge scanned pack cannot take the server down. */
+const CHILD_PDF_BYTES = 24 * 1024 * 1024;
+
+async function pdfTextInChild(bytes: Buffer): Promise<{ text: string; total: number }> {
+  const { spawn } = await import("node:child_process");
+  const script = path.join(process.cwd(), "scripts", "pdf-text-child.mjs");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "commercial-pdf-"));
+  const file = path.join(dir, "doc.pdf");
+  fs.writeFileSync(file, bytes);
+  try {
+    const json = await new Promise<string>((resolve, reject) => {
+      const child = spawn(process.execPath, ["--max-old-space-size=320", script, file, String(MAX_CHARS)], { cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] });
+      let stdout = "";
+      let stderr = "";
+      const timer = setTimeout(() => {
+        child.kill("SIGKILL");
+        reject(new Error("reading the PDF took too long"));
+      }, 240_000);
+      child.stdout.on("data", (d) => (stdout += d));
+      child.stderr.on("data", (d) => (stderr += d));
+      child.on("error", (e) => {
+        clearTimeout(timer);
+        reject(e);
+      });
+      child.on("close", (code) => {
+        clearTimeout(timer);
+        if (code === 0) resolve(stdout);
+        else reject(new Error(`the PDF reader stopped (${code}): ${stderr.slice(0, 200)}`));
+      });
+    });
+    return JSON.parse(json) as { text: string; total: number };
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 async function fromPdf(bytes: Buffer): Promise<Extracted> {
+  if (bytes.length > CHILD_PDF_BYTES) {
+    const r = await pdfTextInChild(bytes);
+    const text = clip(r.text);
+    const pages = r.total;
+    if (text.replace(/\s/g, "").length < 40 * Math.max(1, pages) * 0.2) {
+      return { kind: "pdf", text, note: `Large scanned PDF (${Math.round(bytes.length / 1048576)} MB, ${pages} page${pages === 1 ? "" : "s"}) – little or no selectable text. Run OCR in Adobe Acrobat (Scan & OCR → Recognize Text) and upload again so the engine can read it.` };
+    }
+    return { kind: "pdf", text, note: null };
+  }
   const { PDFParse } = await import("pdf-parse");
   const parser = new PDFParse({ data: bytes });
   try {

@@ -73,7 +73,8 @@ export interface LibraryDoc {
   updated_by: string;
 }
 
-export const LIBRARY_MAX_FILE_BYTES = 80 * 1024 * 1024;
+/** a whole contract pack of scanned pages can run to a few hundred MB; the file is kept whatever its size, its text read in a separate process */
+export const LIBRARY_MAX_FILE_BYTES = 500 * 1024 * 1024;
 
 export function libraryDataDir(): string {
   const base = process.env.DATA_DIR || (process.env.DB_PATH ? path.dirname(process.env.DB_PATH) : path.join(process.cwd(), "data"));

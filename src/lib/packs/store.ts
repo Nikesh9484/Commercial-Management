@@ -26,8 +26,8 @@ export * from "./shared";
  * under the data folder; the database holds the rows.
  */
 
-export const PACK_MAX_FILE_BYTES = 80 * 1024 * 1024;
-export const TEMPLATE_MAX_BYTES = 80 * 1024 * 1024;
+export const PACK_MAX_FILE_BYTES = 500 * 1024 * 1024;
+export const TEMPLATE_MAX_BYTES = 500 * 1024 * 1024;
 
 export function packDataDir(): string {
   const base = process.env.DATA_DIR || (process.env.DB_PATH ? path.dirname(process.env.DB_PATH) : path.join(process.cwd(), "data"));

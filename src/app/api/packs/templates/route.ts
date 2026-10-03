@@ -21,7 +21,7 @@ export async function POST(req: Request, ctx: unknown) {
     if (!t) return NextResponse.json({ error: "Which pack category the template is for was not given." }, { status: 400 });
     if (typeof body.size === "number" && body.size > TEMPLATE_MAX_BYTES) return NextResponse.json({ error: `${body.name ?? "This file"} is larger than ${Math.round(TEMPLATE_MAX_BYTES / 1024 / 1024)} MB.` }, { status: 400 });
     const part = Buffer.from(body.data ?? "", "base64");
-    const uploadId = appendUploadPart(body.uploadId || null, part);
+    const uploadId = appendUploadPart(body.uploadId || null, part, TEMPLATE_MAX_BYTES);
     if ((body.index ?? 0) < (body.count ?? 1) - 1) return NextResponse.json({ uploadId });
     const bytes = finishUploadParts(uploadId);
     if (typeof body.size === "number" && bytes.length !== body.size) return NextResponse.json({ error: `The upload of ${body.name ?? "the file"} arrived incomplete. Please try again.` }, { status: 400 });

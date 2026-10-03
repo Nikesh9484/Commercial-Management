@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { backupStore } from "./cloud-backup";
+import { backupStore, provider } from "./cloud-backup";
 import { getDb } from "./db";
 
 /**
@@ -12,7 +12,12 @@ import { getDb } from "./db";
  * written, removed from it when it is deleted, fetched back when it is read and found missing, and
  * everything the database knows of is fetched in the background when the server starts.
  */
-const FILE_LIMIT = 95 * 1024 * 1024;
+/** The largest file the backup store takes: GitHub's contents API stops at 100 MB, a bucket takes far more. */
+export function backupFileLimit(): number | null {
+  const p = provider();
+  if (!p) return null;
+  return p === "github" ? 95 * 1024 * 1024 : 2 * 1024 * 1024 * 1024;
+}
 
 export function dataDir(): string {
   return process.env.DATA_DIR || (process.env.DB_PATH ? path.dirname(process.env.DB_PATH) : path.join(process.cwd(), "data"));
@@ -40,7 +45,7 @@ async function drain() {
           if (job.abs) {
             if (!fs.existsSync(job.abs)) break;
             const bytes = fs.readFileSync(job.abs);
-            if (bytes.length > FILE_LIMIT) {
+            if (bytes.length > (backupFileLimit() ?? Infinity)) {
               console.warn(`[files] ${job.key} is ${Math.round(bytes.length / 1048576)} MB – too large for the backup store, kept on this server only`);
               break;
             }
@@ -144,7 +149,7 @@ export async function uploadUnsentAtStart(): Promise<void> {
     try {
       if (await store.exists(key)) continue;
       const bytes = fs.readFileSync(abs);
-      if (bytes.length > FILE_LIMIT) continue;
+      if (bytes.length > (backupFileLimit() ?? Infinity)) continue;
       await store.put(key, bytes);
       sent++;
     } catch (e) {

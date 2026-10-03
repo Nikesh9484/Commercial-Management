@@ -21,7 +21,7 @@ export async function POST(req: Request, ctx: Ctx) {
     const body = (await req.json().catch(() => ({}))) as { uploadId?: string; bucket?: string; name?: string; relPath?: string; mime?: string; size?: number; index?: number; count?: number; data?: string };
     const part = Buffer.from(body.data ?? "", "base64");
     if (typeof body.size === "number" && body.size > EAR_MAX_FILE_BYTES) return NextResponse.json({ error: `${body.name ?? "This file"} is larger than ${Math.round(EAR_MAX_FILE_BYTES / 1024 / 1024)} MB.` }, { status: 400 });
-    const uploadId = appendUploadPart(body.uploadId || null, part);
+    const uploadId = appendUploadPart(body.uploadId || null, part, EAR_MAX_FILE_BYTES);
     if ((body.index ?? 0) < (body.count ?? 1) - 1) return NextResponse.json({ uploadId });
     const bytes = finishUploadParts(uploadId);
     if (typeof body.size === "number" && bytes.length !== body.size) {
