@@ -4,7 +4,9 @@ import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 
 import { useScopeKey } from "@/components/layout/ScopeContext";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Plus, Search, Download, Upload, Pencil, Trash2, History, RotateCcw, EyeOff, ChevronUp, ChevronDown, ChevronsUpDown, ChevronRight, RefreshCw, Lock, Unlock, Filter, X, ExternalLink, Columns3 } from "lucide-react";
+import { Plus, Search, Download, Upload, Pencil, Trash2, History, RotateCcw, EyeOff, ChevronUp, ChevronDown, ChevronsUpDown, ChevronRight, RefreshCw, Lock, Unlock, Filter, X, ExternalLink, Columns3, Copy, ClipboardPaste } from "lucide-react";
+import { tableClipboard, writeClipboard } from "@/lib/copy-rows";
+import { PasteDialog } from "./PasteDialog";
 import type { FieldDef, LookupOption, RecordRow, RegisterDef } from "@/lib/registers/types";
 import { formatDate, formatMoney, formatNumber, formatPercent } from "@/lib/format";
 import { Chip } from "@/components/ui/Chip";
@@ -112,6 +114,9 @@ export function RegisterPage({
   // column widths dragged on the header, remembered in this browser per register
   const [colWidths, setColWidths] = useState<Record<string, number>>({});
   const [closedLists, setClosedLists] = useState<Set<string>>(new Set());
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [pasteText, setPasteText] = useState("");
   useEffect(() => {
     try {
       const raw = localStorage.getItem(`colwidths:${registerKey}`);
@@ -374,8 +379,44 @@ ${lines.join("\n")}`)) return;
     router.refresh();
   }
 
+  const canPaste = !!data && (data.canEdit || data.canCreate);
+  // Ctrl+V anywhere on the page (outside a box) with rows on the clipboard opens the paste window with them
+  useEffect(() => {
+    if (!canPaste) return;
+    const onPaste = (e: ClipboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && target.closest("input, textarea, select, [contenteditable=true]")) return;
+      if (document.querySelector("[role=dialog]")) return;
+      const text = e.clipboardData?.getData("text/plain") ?? "";
+      if (!/\t/.test(text) || !/\n/.test(text.trim())) return;
+      e.preventDefault();
+      setPasteText(text);
+      setPasteOpen(true);
+    };
+    document.addEventListener("paste", onPaste);
+    return () => document.removeEventListener("paste", onPaste);
+  }, [canPaste]);
+
   if (loadError) return <div className="card p-6 text-sm text-red-700">{loadError}</div>;
   if (!data || !def) return <div className="card p-6 text-sm text-muted">Loading…</div>;
+
+  /** Copies rows as cells (tab-separated text + an HTML table) in the columns shown on the table. */
+  async function copyRows(rows: RecordRow[], what: string) {
+    if (!def) return;
+    const { text, html } = tableClipboard(
+      tableFields.map((f) => f.label),
+      rows.map((r) => tableFields.map((f) => displayValue(f, r))),
+    );
+    const ok = await writeClipboard(text, html);
+    toast(ok ? `${what} copied – paste into Excel, an email, or any tracker's Paste rows.` : "The browser did not allow copying – select the rows and press Ctrl+C instead.");
+  }
+  const toggleSelected = (id: number) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   const activeFilterCount = Object.values(filters).filter((v) => v !== "").length;
   const isPeriods = registerKey === "reporting_periods";
@@ -405,6 +446,22 @@ ${lines.join("\n")}`)) return;
           <button className="btn btn-secondary" onClick={load} title="Refresh">
             <RefreshCw size={16} />
           </button>
+          <button
+            className={`btn btn-secondary ${selected.size ? "border-accent text-accent" : ""}`}
+            onClick={() => {
+              const chosen = selected.size ? visible.filter((r) => selected.has(Number(r.id))) : visible;
+              void copyRows(chosen, selected.size ? `${selected.size} selected row(s)` : `${visible.length} row(s)`);
+            }}
+            disabled={visible.length === 0}
+            title={selected.size ? "Copy the ticked rows as cells – paste into Excel, an email or another tracker" : "Copy every row on this table (as filtered) as cells – tick rows to copy only some"}
+          >
+            <Copy size={16} /> Copy{selected.size ? ` (${selected.size})` : ""}
+          </button>
+          {canPaste && (
+            <button className="btn btn-secondary" onClick={() => { setPasteText(""); setPasteOpen(true); }} title="Add rows copied from another tracker or from Excel (or just press Ctrl+V on this page)">
+              <ClipboardPaste size={16} /> Paste rows
+            </button>
+          )}
           <a className="btn btn-secondary" href={`/api/registers/${registerKey}/export${exportParams ? `?${exportParams}` : ""}`} title={exportParams ? "Download this table as Excel, with the page's filter applied" : "Download this table as Excel"}>
             <Download size={16} /> Export
           </a>
@@ -517,7 +574,7 @@ ${lines.join("\n")}`)) return;
                             <span className={colWidths[f.key] ? "block truncate" : ""}>{f.label}</span>
                           </th>
                         ))}
-                        <th className="text-right">Actions</th>
+                        <th className="text-right" data-nocopy>Actions</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -528,9 +585,12 @@ ${lines.join("\n")}`)) return;
                               <Cell field={f} row={r} />
                             </td>
                           ))}
-                          <td className="text-right">
+                          <td className="text-right" data-nocopy>
                             <div className="inline-flex items-center gap-0.5">
                               {data.canEdit && <ChangePackButtons changeId={Number(r.id)} stage={String(r.current_stage ?? "")} />}
+                              <button className="btn btn-ghost btn-sm" onClick={() => void copyRows([r], "Row")} title="Copy this row as cells">
+                                <Copy size={15} />
+                              </button>
                               <button className="btn btn-ghost btn-sm" onClick={() => setHistoryFor(r)} title="Change history">
                                 <History size={15} />
                               </button>
@@ -558,7 +618,21 @@ ${lines.join("\n")}`)) return;
           <table className="data w-full">
             <thead>
               <tr>
-                {data.canEdit && <th className="w-9" title="Edit" />}
+                <th className="w-8 pr-0" data-nocopy title="Tick rows to copy only those">
+                  <input
+                    type="checkbox"
+                    aria-label="Select every row on this page"
+                    checked={pageRows.length > 0 && pageRows.every((r) => selected.has(Number(r.id)))}
+                    onChange={(e) =>
+                      setSelected((prev) => {
+                        const next = new Set(prev);
+                        for (const r of pageRows) if (e.target.checked) next.add(Number(r.id)); else next.delete(Number(r.id));
+                        return next;
+                      })
+                    }
+                  />
+                </th>
+                {data.canEdit && <th className="w-9" title="Edit" data-nocopy />}
                 {tableFields.map((f) => (
                   <th key={f.key} style={widthStyle(f)} className={`group relative ${isNumeric(f) ? "text-right" : ""} ${stageTint(registerKey, f.key).th}`}>
                     <button className="inline-flex max-w-full items-center gap-1 font-semibold text-muted hover:text-ink" onClick={() => toggleSort(f.key)}>
@@ -603,21 +677,24 @@ ${lines.join("\n")}`)) return;
                     />
                   </th>
                 ))}
-                <th className="text-right">Actions</th>
+                <th className="text-right" data-nocopy>Actions</th>
               </tr>
             </thead>
             <tbody>
               {pageRows.length === 0 && (
                 <tr>
-                  <td colSpan={tableFields.length + 1} className="py-10 text-center text-muted">
+                  <td colSpan={tableFields.length + 2 + (data.canEdit ? 1 : 0)} className="py-10 text-center text-muted">
                     {data.rows.length === 0 ? `No ${def.title.toLowerCase()} yet.` : "Nothing matches your search / filters."}
                   </td>
                 </tr>
               )}
               {pageRows.map((r) => (
-                <tr key={r.id} onDoubleClick={() => data.canEdit && openEdit(r)} className={ROW_TONE[String(r.__row_tone ?? "")] ?? ""}>
+                <tr key={r.id} onDoubleClick={() => data.canEdit && openEdit(r)} className={`${ROW_TONE[String(r.__row_tone ?? "")] ?? ""} ${selected.has(Number(r.id)) ? "bg-sky-50!" : ""}`}>
+                  <td className="w-8 pr-0" data-nocopy>
+                    <input type="checkbox" aria-label={`Select ${String(r[def.displayField ?? "id"] ?? r.id)}`} checked={selected.has(Number(r.id))} onChange={() => toggleSelected(Number(r.id))} />
+                  </td>
                   {data.canEdit && (
-                    <td className="w-9 pr-0">
+                    <td className="w-9 pr-0" data-nocopy>
                       <button className="btn btn-ghost btn-sm" onClick={() => openEdit(r)} title="Edit this entry">
                         <Pencil size={14} />
                       </button>
@@ -628,7 +705,7 @@ ${lines.join("\n")}`)) return;
                       <Cell field={f} row={r} />
                     </td>
                   ))}
-                  <td className="text-right">
+                  <td className="text-right" data-nocopy>
                     <div className="inline-flex items-center gap-0.5">
                       {def.rowLinkTemplate && (
                         <Link href={def.rowLinkTemplate.replace("{id}", String(r.id))} className="btn btn-secondary btn-sm">
@@ -647,6 +724,9 @@ ${lines.join("\n")}`)) return;
                             <Lock size={13} /> Lock
                           </button>
                         ))}
+                      <button className="btn btn-ghost btn-sm" onClick={() => void copyRows([r], "Row")} title="Copy this row as cells – paste into Excel, an email, or another tracker's Paste rows">
+                        <Copy size={15} />
+                      </button>
                       <button className="btn btn-ghost btn-sm" onClick={() => setHistoryFor(r)} title="Change history">
                         <History size={15} />
                       </button>
@@ -772,6 +852,7 @@ ${lines.join("\n")}`)) return;
       </Modal>
 
       <ImportDialog registerKey={registerKey} title={def.title} open={importOpen} onClose={() => setImportOpen(false)} onDone={load} />
+      <PasteDialog registerKey={registerKey} title={def.title} singular={def.singular} fields={def.fields} open={pasteOpen} initialText={pasteText} onClose={() => setPasteOpen(false)} onDone={() => { void load(); router.refresh(); }} />
     </div>
   );
 }
