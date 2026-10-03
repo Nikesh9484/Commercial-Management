@@ -70,6 +70,20 @@ export async function readPositioned(bytes: Buffer): Promise<PosPage[]> {
         const h = Math.round(Math.hypot(it.transform[0], it.transform[1]) * 10) / 10;
         items.push({ x: Math.round(it.transform[4]), y: Math.round(it.transform[5]), w: Math.round(it.width ?? 0), s, h, f: face, b: /bold|black|heavy|semibold/i.test(face), i: /italic|oblique/i.test(face) });
       }
+      // a form filled over an earlier one carries the old run under a white box and the new run on top:
+      // the run painted last is the one that shows, so an earlier run it covers is dropped
+      const visible: Cell[] = [];
+      for (const it of items) {
+        for (let i = visible.length - 1; i >= 0; i--) {
+          const o = visible[i];
+          if (Math.abs(o.y - it.y) > 3 || !o.w || !it.w) continue;
+          const overlap = Math.min(o.x + o.w, it.x + it.w) - Math.max(o.x, it.x);
+          if (overlap > 0.45 * Math.min(o.w, it.w)) visible.splice(i, 1);
+        }
+        visible.push(it);
+      }
+      items.length = 0;
+      items.push(...visible);
       items.sort((a, b) => b.y - a.y || a.x - b.x);
       const rows: Row[] = [];
       for (const it of items) {

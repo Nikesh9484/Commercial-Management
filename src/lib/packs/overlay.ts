@@ -302,7 +302,8 @@ class Sheet {
   }
   /** the right edge of the form's table: the widest band on the page */
   get tableRight(): number {
-    const bands = this.fills.filter((f) => !f.stroke && !f.image && f.w > this.width * 0.5 && f.w < this.width - 5 && f.h < 40);
+    // the coloured bands only: a white box (a cell cleared when the form was last filled) is not a band
+    const bands = this.fills.filter((f) => !f.stroke && !f.image && lum(f.color) < 0.97 && f.w > this.width * 0.5 && f.w < this.width - 5 && f.h < 40);
     return bands.length ? Math.max(...bands.map((f) => f.x + f.w)) - 1.5 : this.width - 22;
   }
   /**
@@ -434,17 +435,20 @@ class Sheet {
     // the old run, a little wider than measured (the measure runs short of the last glyph)
     const oldW = cell.w * 1.01 + 0.8;
     const bold = opts.bold ?? !!cell.b;
-    const fill = this.fillAt(cell.x + 1, cell.y + size / 2);
+    // a white box under the run is the clearing left when the form was last filled, not the cell's own shading
+    const fill0 = this.fillAt(cell.x + 1, cell.y + size / 2);
+    const fill = fill0 && lum(fill0.color) < 0.97 ? fill0 : null;
     const oldCentre = cell.x + oldW / 2;
     let align: "left" | "right" | "center" = "left";
     if (opts.align && opts.align !== "auto") align = opts.align;
     else if (isNumeric(cell.s) || (isNumeric(value) && !isDateLike(value) && cell.s === "")) align = "right";
     else if (fill && Math.abs(fill.x + fill.w / 2 - oldCentre) < Math.max(6, fill.w * 0.08)) align = "center";
-    const right = opts.rightEdge ?? (align === "right" ? cell.x + oldW : fill && fill.w < 400 ? fill.x + fill.w - 2 : Math.min(this.tableRight, cell.x + Math.max(oldW, 120)));
+    // a figure keeps the old run's right edge exactly (so a form filled over and over never creeps into the border)
+    const right = opts.rightEdge ?? (align === "right" ? cell.x + cell.w * 1.01 : fill && fill.w < 400 ? fill.x + fill.w - 2 : Math.min(this.tableRight, cell.x + Math.max(oldW, 120)));
     const left = opts.leftEdge ?? (align === "right" ? Math.max(cell.x - 60, (opts.leftEdge ?? cell.x) - 60) : cell.x);
     // clear the old text (a little wider than it is, never past the cell's right edge)
     const wx = align === "right" ? Math.min(cell.x, right - Math.max(oldW, this.widthOf(value, size, bold, cell) + 2)) - 0.5 : cell.x - 0.5;
-    const ww = align === "right" ? right - wx + 0.8 : Math.max(oldW, Math.min(this.widthOf(value, size, bold, cell) + 2, right - cell.x)) + 1.2;
+    const ww = align === "right" ? Math.max(right, cell.x + oldW) - wx + 0.8 : Math.max(oldW, Math.min(this.widthOf(value, size, bold, cell) + 2, right - cell.x)) + 1.2;
     const wipe = { x: wx, y: cell.y - size * 0.32, w: Math.max(ww, 1) + (align === "right" ? 1.5 : 0), h: size * 1.36 };
     this.page.drawRectangle({ x: wipe.x, y: wipe.y, width: wipe.w, height: wipe.h, color: rgbOf(bg), borderWidth: 0 });
     for (const f of this.fills) {
@@ -780,9 +784,11 @@ export async function overlayPvo(refBytes: Buffer, v: PackValues, opts: { target
       const cOmit = col(/^Omit$/i);
       const cAdd = col(/^Add$/i);
       // right edges of the money columns: the furthest right run in each
+      // the figures sit flush with the old ones' right edge, and never past the column's own edge
       const rightOf = (c: Cell | undefined, fallback: number) => {
-        const runs = c ? dataRows.flatMap((r) => r.cells).filter((k) => isNumeric(k.s) && Math.abs(k.x + k.w / 2 - (c.x + c.w / 2)) < 60).map((k) => k.x + k.w * 1.05) : [];
-        return runs.length ? Math.max(...runs) : fallback;
+        const runs = c ? dataRows.flatMap((r) => r.cells).filter((k) => isNumeric(k.s) && Math.abs(k.x + k.w / 2 - (c.x + c.w / 2)) < 60).map((k) => k.x + k.w) : [];
+        const edge = c ? c.x + c.w + 2 : s1.tableRight - 3;
+        return Math.min(runs.length ? Math.max(...runs) : fallback, Math.max(edge, s1.tableRight - 3));
       };
       const omitR = rightOf(cOmit, cOmit ? cOmit.x + cOmit.w + 30 : 480);
       const addR = rightOf(cAdd, cAdd ? cAdd.x + cAdd.w + 30 : s1.tableRight);
@@ -1050,11 +1056,22 @@ export async function overlayDvo(refBytes: Buffer, v: PackValues): Promise<Buffe
     if (v.project_code) s.replaceRight("Project Code", v.project_code, { align: "left", bold: is27 });
     if (v.project_name) s.replaceRight("Project Name", v.project_name, { notLabels: ["Contract Ref"], align: "left", bold: is27 });
     if (v.contract_ref) s.replaceRight("Contract Ref", v.contract_ref, { align: "left", bold: is27 });
-    if (v.works_package) s.replaceRight(/^Works Package$/, v.works_package, { notLabels: ["Contractor/Consultant"], align: "left", bold: is27 });
-    if (v.contractor) s.replaceRight("Contractor/Consultant", v.contractor, { align: "left", nearRows: true, bold: is27, rightEdge: s.tableRight - 2 });
-    s.block("Variation Order Title", ["Reason for Variation Order"], `DVO ${dvoDigits} - ${title}`, { bold: true, topGap: 5, bottomGap: 4 });
+    if (v.works_package) s.replaceRight(/^Works Package$/, v.works_package, { notLabels: ["Contractor/Consultant"], align: "left", bold: is27, minSize: 3.6 });
+    if (v.contractor) {
+      const hit = s.find("Contractor/Consultant");
+      // the value cell: beside the label, or on a row within a few points of it when the label wrapped
+      const near = hit ? [hit.row, ...s.pos.rows.filter((r) => r !== hit.row && Math.abs(r.y - hit.row.y) <= 9)].flatMap((r) => r.cells).filter((c) => c.x > hit.cell.x + hit.cell.w - 2).sort((a, b) => a.x - b.x)[0] : undefined;
+      const cx = near?.x ?? 0;
+      const room = s.tableRight - 3 - cx;
+      const full = String(v.contractor);
+      const sz = Math.max(3.6, (near?.h ?? 5.8) * 0.7);
+      // "Dar Al-Handasah Consultants (Shair & Partners)" → "Dar Al-Handasah Consultants" when the whole name cannot fit the cell
+      const name = cx && s.widthOf(full, sz, is27) > room ? full.replace(/\s*\([^)]*\)\s*$/, "") || full : full;
+      s.replaceRight("Contractor/Consultant", name, { align: "left", nearRows: true, bold: is27, rightEdge: s.tableRight - 3, minSize: 3.6 });
+    }
+    s.block("Variation Order Title", ["Reason for Variation Order"], `DVO ${dvoDigits} - ${title}`, { bold: true, topGap: 5, bottomGap: 4, right: s.tableRight - 6 });
     const reason = [String(v.description ?? "").trim(), String(v.reason ?? "").trim()].filter(Boolean).join("\n\n");
-    s.block("Reason for Variation Order", ["Instruction Reference"], reason, { topGap: 8, bottomGap: 4, firstBold: true });
+    s.block("Reason for Variation Order", ["Instruction Reference"], reason, { topGap: 8, bottomGap: 4, firstBold: true, right: s.tableRight - 6 });
     // the instruction table
     const header = s.find(/^Instruction Reference$/);
     const dataRows = s.rowsBetween(/^Instruction Reference$/, /^Sub-Total$/);
@@ -1063,12 +1080,15 @@ export async function overlayDvo(refBytes: Buffer, v: PackValues): Promise<Buffe
       const cDesc = H.find((c) => /^Description$/i.test(c.s));
       const cOmit = H.find((c) => /^Omit/i.test(c.s));
       const cAdd = H.find((c) => /^Add/i.test(c.s));
-      const rightOf = (c: Cell | undefined, fallback: number) => {
-        const runs = c ? dataRows.flatMap((r) => r.cells).filter((k) => isNumeric(k.s) && Math.abs(k.x + k.w / 2 - (c.x + c.w / 2)) < 60).map((k) => k.x + k.w * 1.05) : [];
-        return runs.length ? Math.max(...runs) : fallback;
+      // the figures sit flush with the old ones' right edge, and never past the column's own edge
+      const rightOf = (c: Cell | undefined, fallback: number, cap: number) => {
+        const runs = c ? dataRows.flatMap((r) => r.cells).filter((k) => isNumeric(k.s) && Math.abs(k.x + k.w / 2 - (c.x + c.w / 2)) < 60).map((k) => k.x + k.w) : [];
+        return Math.min(runs.length ? Math.max(...runs) : fallback, cap);
       };
-      const omitR = rightOf(cOmit, cOmit ? cOmit.x + cOmit.w + 20 : 470);
-      const addR = rightOf(cAdd, cAdd ? cAdd.x + cAdd.w + 20 : s.tableRight);
+      // the border between the two money columns sits midway between their headings
+      const omitCap = cOmit && cAdd ? (cOmit.x + cOmit.w / 2 + cAdd.x + cAdd.w / 2) / 2 - 4 : cOmit ? cOmit.x + cOmit.w + 20 : 470;
+      const omitR = rightOf(cOmit, cOmit ? cOmit.x + cOmit.w + 20 : 470, omitCap);
+      const addR = rightOf(cAdd, cAdd ? cAdd.x + cAdd.w + 20 : s.tableRight, s.tableRight - 4);
       let its = items(v.cost_items);
       if (!its.length && dvoValue) its = [{ ref: "", desc: title, omit: dvoValue < 0 ? -dvoValue : 0, add: dvoValue > 0 ? dvoValue : 0 }];
       const size = header.cell.h ?? 5.8;
@@ -1076,13 +1096,15 @@ export async function overlayDvo(refBytes: Buffer, v: PackValues): Promise<Buffe
       const refFace = old.find((c) => /^1TB|^[A-Z]{2,}-/.test(c.s)) ?? old[0] ?? null;
       const descFace = old.find((c) => /[A-Za-z]{3}/.test(c.s) && c !== refFace) ?? old[0] ?? null;
       const numFace = old.find((c) => isNumeric(c.s) && c.s !== "-") ?? old.find((c) => isNumeric(c.s)) ?? descFace;
+      // every old cell is whited out first, then the new rows are written – a white box of a lower row
+      // must never cover the top of a value written just above it
+      for (const r of dataRows) for (const c of r.cells) s.replaceCell(c, "", { size: c.h });
       dataRows.forEach((r, i) => {
-        for (const c of r.cells) s.replaceCell(c, "", { size: c.h });
         const it = its[i];
         if (!it) return;
         const ref = it.ref || (i === 0 ? String(v.instruction_ref ?? "") : "");
         const descX = cDesc ? cDesc.x : 124;
-        s.text(ref, header.cell.x, r.y, refFace?.h ?? size * 0.88, { maxWidth: descX - header.cell.x - 4, cell: refFace });
+        s.text(ref, header.cell.x, r.y, Math.max(refFace?.h ?? 0, size * 0.9), { maxWidth: descX - header.cell.x - 4, cell: refFace });
         s.text(it.desc || title, descX, r.y, size, { maxWidth: (cOmit ? cOmit.x - 8 : 380) - descX, cell: descFace });
         s.text(mny(it.omit), omitR, r.y, size, { align: "right", cell: numFace });
         s.text(mny(it.add), addR, r.y, size, { align: "right", cell: numFace });
@@ -1116,9 +1138,10 @@ export async function overlayDvo(refBytes: Buffer, v: PackValues): Promise<Buffe
     info.forEach((r, i) => {
       const dates = r.cells.filter((c) => isDateLike(c.s));
       for (const d of dates) s.replaceCell(d, dmy(v.date) || d.s, { align: "left" });
-      if (i === 1) {
-        const desc = r.cells.find((c) => /^Final Proposal/i.test(c.s));
-        if (desc) s.replaceCell(desc, `Final Proposal for ${title}`, { align: "left", rightEdge: (r.cells.find((c) => isNumeric(c.s) && c.x > desc.x + 20)?.x ?? s.tableRight - 90) - 8 });
+      if (i >= 1) {
+        // the earlier DVO's own proposal line ("Cost proposal for …", "Final Proposal for …") becomes this change's
+        const desc = r.cells.find((c) => /^(Final|Cost|Revised|Contractor'?s)?\s*(Proposal|Cost Proposal|Quotation)/i.test(c.s) || (/proposal|quotation/i.test(c.s) && c.s.length > 12));
+        if (desc) s.replaceCell(desc, `${/^Final/i.test(desc.s) ? "Final Proposal" : "Cost proposal"} for ${title}`, { align: "left", rightEdge: (r.cells.find((c) => isNumeric(c.s) && c.x > desc.x + 20)?.x ?? s.tableRight - 90) - 8 });
       }
     });
     // the earlier DVO's signatures, stamps and notes are not carried into the draft
@@ -1146,11 +1169,11 @@ export async function overlayDvo(refBytes: Buffer, v: PackValues): Promise<Buffe
         const i = Math.max(l.lastIndexOf(" – "), l.lastIndexOf(" - "));
         return i >= 0 ? { name: l.slice(i + 3).trim(), position: l.slice(0, i).trim() } : { name: l.trim(), position: "" };
       });
-      const all = [{ name: String(v.contractor_rep ?? ""), position: String(v.contractor_rep_position ?? "") }, ...panel];
+      const all = [{ name: String(v.contractor_rep ?? ""), position: String(v.contractor_rep_position ?? "") || "Contractor's Representative" }, ...panel];
       sign("Review and Recommendation Panel", [/^RSG-CM-FRM/], all.map((p) => p.name), all.map((p) => p.position));
     } else {
       sign(/^Final Determination by the Employer/, [/^Agreement for Final Determination/], [String(v.employer_rep ?? "")], [String(v.employer_rep_position ?? "")]);
-      sign(/^Agreement for Final Determination/, [/^RSG-CM-FRM/], [String(v.contractor_rep ?? "")], [String(v.contractor_rep_position ?? "")]);
+      sign(/^Agreement for Final Determination/, [/^RSG-CM-FRM/], [String(v.contractor_rep ?? "")], [String(v.contractor_rep_position ?? "") || "Contractor's Representative"]);
     }
   }
   return Buffer.from(await o.l.pdf.save({ useObjectStreams: true }));

@@ -334,6 +334,18 @@ async function copiedIndexPage(ctx: Ctx, ref: RefPages, rows: IndexRow[]): Promi
     .filter((r): r is NonNullable<typeof r> => !!r)
     .sort((a, b) => b.y - a.y);
   if (!found.length) return false;
+  // the approved pack's page is kept only when it already lists exactly these rows with these words:
+  // rows drawn on top of it in another hand never sit right, so a pack that differs gets a page of its own
+  const sameRows = rows.every((r) => {
+    const hit = found.find((f) => f.no === r.no);
+    if (!hit) return false;
+    const refDesc = pg.rows.find((x) => x.y === hit.y)?.cells.filter((c) => c.x >= hit.descX - 1 && !/[☑☐☒✓✔]/.test(c.s)).map((c) => c.s).join(" ") ?? "";
+    return norm(refDesc).replace(/\s*-\s*/g, " ") === norm(r.label).replace(/\s*-\s*/g, " ");
+  });
+  if (!sameRows || found.length !== rows.length) {
+    ctx.pdf.removePage(ctx.pdf.getPageCount() - 1);
+    return false;
+  }
   const boxX = found.find((r) => r.boxes.length >= 2)?.boxes ?? [width * 0.76, width * 0.89];
   const [onX, offX] = [Math.min(...boxX), Math.max(...boxX)];
   const step = found.length > 1 ? Math.abs(found[0].y - found[1].y) : 20;
@@ -374,36 +386,46 @@ async function copiedIndexPage(ctx: Ctx, ref: RefPages, rows: IndexRow[]): Promi
   return true;
 }
 
-/** The index of annexures drawn in the RSG layout, for a pack without an approved pack to copy from. */
+/** The index of annexures drawn in the RSG layout: the title band, the index band, the column heads and one row per annexure. */
 function drawnIndexPage(ctx: Ctx, title: string, rows: IndexRow[]) {
-  const page = ctx.pdf.addPage(LETTER);
-  const [w, h] = LETTER;
-  const x0 = 23;
-  const x1 = w - 21;
-  let y = h - 233;
-  page.drawRectangle({ x: x0, y: y - 31, width: x1 - x0, height: 31, color: RSG_NAVY });
-  text(page, ctx, title, w / 2, y - 21, 13, { bold: true, color: WHITE, align: "center" });
-  y -= 31;
-  page.drawRectangle({ x: x0, y: y - 23, width: x1 - x0, height: 23, borderColor: RSG_NAVY, borderWidth: 0.8, color: WHITE });
-  text(page, ctx, "INDEX OF ANNEXURES", w / 2, y - 16, 10.5, { bold: true, color: INK_RGB, align: "center" });
-  y -= 23;
-  const cols = [x0, 101, 431, 511, x1];
-  page.drawRectangle({ x: x0, y: y - 62, width: x1 - x0, height: 62, color: RSG_NAVY });
-  text(page, ctx, "SECTION", (cols[0] + cols[1]) / 2, y - 34, 6.5, { bold: true, color: WHITE, align: "center" });
-  text(page, ctx, "DESCRIPTION", (cols[1] + cols[2]) / 2, y - 34, 6.5, { bold: true, color: WHITE, align: "center" });
-  page.drawText("ATTACHED", { x: (cols[2] + cols[3]) / 2 + 3, y: y - 48, size: 6.5, font: ctx.bold, color: WHITE, rotate: degrees(90) });
-  page.drawText("NOT", { x: (cols[3] + cols[4]) / 2 - 4, y: y - 40, size: 6.5, font: ctx.bold, color: WHITE, rotate: degrees(90) });
-  page.drawText("APPLICABLE", { x: (cols[3] + cols[4]) / 2 + 5, y: y - 52, size: 6.5, font: ctx.bold, color: WHITE, rotate: degrees(90) });
-  for (let i = 1; i < cols.length - 1; i++) page.drawLine({ start: { x: cols[i], y: y - 62 }, end: { x: cols[i], y }, thickness: 0.6, color: WHITE });
-  y -= 62;
-  for (const r of rows) {
-    const rh = 20;
-    page.drawRectangle({ x: x0, y: y - rh, width: x1 - x0, height: rh, borderColor: RSG_NAVY, borderWidth: 0.6, color: WHITE });
-    for (let i = 1; i < cols.length - 1; i++) page.drawLine({ start: { x: cols[i], y: y - rh }, end: { x: cols[i], y }, thickness: 0.6, color: RSG_NAVY });
-    text(page, ctx, annexureLabel(r), cols[0] + 4, y - 13, 7.5, { bold: true });
-    text(page, ctx, fit(r.label.toUpperCase(), ctx.bold, 7.5, cols[2] - cols[1] - 8), cols[1] + 4, y - 13, 7.5, { bold: true });
-    tickBox(page, (cols[2] + cols[3]) / 2 - 4, y - 14, r.attached);
-    tickBox(page, (cols[3] + cols[4]) / 2 - 4, y - 14, !r.attached);
+  const page = ctx.pdf.addPage(A4);
+  const [w, h] = A4;
+  const GRAPHITE = rgb(0.29, 0.29, 0.29);
+  const GREY = rgb(0.55, 0.55, 0.55);
+  const HEAD = rgb(0.86, 0.86, 0.86);
+  const BORDER = rgb(0.15, 0.15, 0.15);
+  const x0 = 36;
+  const x1 = w - 36;
+  text(page, ctx, "AMAALA", x1, h - 60, 11, { color: GREY, align: "right" });
+  let y = h - 250;
+  page.drawRectangle({ x: x0, y: y - 40, width: x1 - x0, height: 40, color: GRAPHITE });
+  text(page, ctx, title, w / 2, y - 27, 16, { bold: true, color: WHITE, align: "center" });
+  y -= 44;
+  page.drawRectangle({ x: x0, y: y - 24, width: x1 - x0, height: 24, color: GREY });
+  text(page, ctx, "INDEX OF ANNEXURES", w / 2, y - 16.5, 12, { bold: true, color: WHITE, align: "center" });
+  y -= 28;
+  const cols = [x0, x0 + 86, x1 - 132, x1 - 66, x1];
+  const headH = 70;
+  page.drawRectangle({ x: x0, y: y - headH, width: x1 - x0, height: headH, color: HEAD, borderColor: BORDER, borderWidth: 0.8 });
+  text(page, ctx, "SECTION", (cols[0] + cols[1]) / 2, y - headH / 2 - 3, 8, { bold: true, color: INK_RGB, align: "center" });
+  text(page, ctx, "DESCRIPTION", (cols[1] + cols[2]) / 2, y - headH / 2 - 3, 8, { bold: true, color: INK_RGB, align: "center" });
+  page.drawText("ATTACHED", { x: (cols[2] + cols[3]) / 2 + 4, y: y - headH / 2 - 18, size: 8, font: ctx.bold, color: INK_RGB, rotate: degrees(90) });
+  page.drawText("NOT", { x: (cols[3] + cols[4]) / 2 - 5, y: y - headH / 2 - 7, size: 8, font: ctx.bold, color: INK_RGB, rotate: degrees(90) });
+  page.drawText("APPLICABLE", { x: (cols[3] + cols[4]) / 2 + 6, y: y - headH / 2 - 22, size: 8, font: ctx.bold, color: INK_RGB, rotate: degrees(90) });
+  for (let i = 1; i < cols.length - 1; i++) page.drawLine({ start: { x: cols[i], y: y - headH }, end: { x: cols[i], y }, thickness: 0.8, color: BORDER });
+  y -= headH;
+  const rh = 30;
+  const all = [...rows];
+  while (all.length < Math.max(rows.length, 6)) all.push({ no: 0, label: "", style: "annexure", attached: false });
+  for (const r of all) {
+    page.drawRectangle({ x: x0, y: y - rh, width: x1 - x0, height: rh, color: WHITE, borderColor: BORDER, borderWidth: 0.8 });
+    for (let i = 1; i < cols.length - 1; i++) page.drawLine({ start: { x: cols[i], y: y - rh }, end: { x: cols[i], y }, thickness: 0.8, color: BORDER });
+    if (r.no) {
+      text(page, ctx, annexureLabel(r), cols[0] + 8, y - 19, 8.5, { bold: true });
+      text(page, ctx, fit(r.label.toUpperCase(), ctx.bold, 8.5, cols[2] - cols[1] - 14), cols[1] + 7, y - 19, 8.5, { bold: true });
+      tickBox(page, (cols[2] + cols[3]) / 2 - 3.75, y - rh / 2 - 3.75, r.attached);
+      tickBox(page, (cols[3] + cols[4]) / 2 - 3.75, y - rh / 2 - 3.75, !r.attached);
+    }
     y -= rh;
     if (y < 60) break;
   }

@@ -1,3 +1,4 @@
+import { formatDate } from "../format";
 import { getDb, getSetting } from "../db";
 import { computeCostReport } from "../cost-report/compute";
 import { todayIso } from "../format";
@@ -74,6 +75,13 @@ function contractNo(programmeCode: string, accRef: string): string {
   return `${programmeCode.slice(0, 5)}-${acc}`;
 }
 
+/** "006F01" + "006F01 – Construction Supervision Services" → the name alone when it already carries the code. */
+function worksPackage(code: string, name: string): string {
+  const key = (x: string) => x.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (code && name && key(name).startsWith(key(code))) return name;
+  return [code, name].filter(Boolean).join(" ");
+}
+
 function common(programmeId: number, sur: Surround, user: UserInfo): PackValues {
   const db = getDb();
   const code = s(sur.programme?.code);
@@ -92,9 +100,10 @@ function common(programmeId: number, sur: Surround, user: UserInfo): PackValues 
     development_no: "TB",
     contract_no: contractNo(code, s(sur.contract?.acc_ref) || s(sur.contractor?.acc_ref)),
     contract_title: s(sur.contract?.title) || s(sur.package?.name),
-    works_package: [s(sur.contract?.acc_ref) || s(sur.package?.code), s(sur.package?.name)].filter(Boolean).join(" "),
+    works_package: worksPackage(s(sur.contract?.acc_ref) || s(sur.package?.code), s(sur.package?.name)),
     ewbs_code: s(sur.line?.code),
     contractor: s(sur.contractor?.name),
+    contractor_rep: s(sur.contractor?.contact_name),
     requesting_department: "Commercial",
     date: todayIso(),
     prepared_by: user.name,
@@ -262,10 +271,19 @@ function changeValues(type: PackTypeKey, programmeId: number, id: number, user: 
       v.total_eot = String((n(sur.contract?.eot_granted_days) ?? 0) + (timeImpact ?? 0));
       v.date = s(c.dvo_date) || s(c.dvo_agreement_date) || v.date;
       v.pvo_value = money(pvoValue);
+      v.pvo_date = s(c.pvo_date) ? formatDate(s(c.pvo_date)) : "";
+      v.pvo_aconex = s(c.pvo_aconex_ref);
+      v.pvo_status = status(c.pvo_status_id);
+      v.pvo_time_impact = n(c.pvo_time_impact) === null ? "" : String(n(c.pvo_time_impact));
+      v.vo_value = money(voValue);
+      v.vo_date = s(c.vo_date) || s(c.ei_date) ? formatDate(s(c.vo_date) || s(c.ei_date)) : "";
+      v.vo_aconex = s(c.vo_aconex_ref) || s(c.ei_aconex_ref);
+      v.dvo_aconex = s(c.dvo_aconex_ref);
+      v.dvo_status = status(c.dvo_status_id) || (c.dvo_closed ? "Closed" : "");
       v.contract_ref = v.contract_no;
       v.commencement_date = "";
       v.revised_completion = s(sur.contract?.revised_completion_date) || s(sur.contract?.original_completion_date);
-      v.description = `This ${v.dvo_no || "DVO"} confirms the change associated with the following instruction issued:\n1. Variation Order ${s(c.vo_ref) || "No. -"}${s(c.vo_aconex_ref) ? ` Ref: ${s(c.vo_aconex_ref)}` : ""}${s(c.vo_date) ? ` dated ${s(c.vo_date)}` : ""} for ${title}.`;
+      v.description = `This ${v.dvo_no || "DVO"} confirms the change associated with the following instruction issued:\n1. Variation Order ${s(c.vo_ref) || "No. -"}${s(c.vo_aconex_ref) ? ` Ref: ${s(c.vo_aconex_ref)}` : ""}${s(c.vo_date) ? ` dated ${formatDate(s(c.vo_date))}` : ""} for ${title}.`;
       v.cost_items = dvoValue === null ? "" : `${s(c.vo_ref) || "VO"} – ${title} – 0 – ${money(dvoValue)}`;
       if (pvoValue !== null && dvoValue !== null) {
         const diff = Math.round((pvoValue - dvoValue) * 100) / 100;

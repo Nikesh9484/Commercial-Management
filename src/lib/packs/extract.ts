@@ -374,14 +374,14 @@ export function readReferenceDvo(pages: PosPage[]): Reading {
   // the budget particulars annexure
   const bp = valueRight(pages, "SOURCE OF THE BUDGET");
   if (bp) {
-    const m = bp.match(/(1TB\d{5}\.\d{2}\.[A-Z]{2}\.\S+)\s*:?\s*SAR\s*([\d,]+\.\d{2})/);
+    const m = bp.match(/(1TB\d{5}\.\d{2}\.[A-Z]{2}\.[A-Za-z0-9.]*[A-Za-z0-9])\s*:?\s*SAR\s*([\d,]+\.\d{2})/);
     if (m) {
       set(r, "budget_line", m[1], src);
       set(r, "budget_available", money(m[2]), src);
     }
   }
   const bd = valueRight(pages, "DESTINATION OF THE BUDGET");
-  if (bd) set(r, "budget_to_line", bd.match(/1TB\d{5}\.\d{2}\.[A-Z]{2}\.\S+/)?.[0] ?? "", src);
+  if (bd) set(r, "budget_to_line", bd.match(/1TB\d{5}\.\d{2}\.[A-Z]{2}\.[A-Za-z0-9.]*[A-Za-z0-9]/)?.[0] ?? "", src);
   const log = readChangeLogPage(pages, { no: r.values.pvo_no ?? r.values.vo_no ?? "", title: r.values.title ?? "", dvo: r.values.dvo_no ?? "" });
   if (log.rows.length) set(r, "change_log_rows", JSON.stringify(log.rows), src);
   return r;

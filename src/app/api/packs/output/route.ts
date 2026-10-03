@@ -3,7 +3,7 @@ import { withUser } from "@/lib/api";
 import { withHeavyLock } from "@/lib/workbook/heavy";
 import { renderOutput, renderPackDocument, type OutputFormat } from "@/lib/packs/output";
 import type { DocFormat } from "@/lib/packs/documents";
-import { getCase } from "@/lib/packs/store";
+import { getCase, rebuildValues } from "@/lib/packs/store";
 
 /**
  * GET /api/packs/output?case=ID&format=docx|xlsx|pdf|pack – the Word form, the Excel form, the PDF form or the compiled pack of one document.
@@ -12,8 +12,15 @@ import { getCase } from "@/lib/packs/store";
 async function heavyGET(req: Request, ctx: unknown) {
   return withUser(async (user) => {
     const url = new URL(req.url);
-    const c = getCase(Number(url.searchParams.get("case") || 0));
+    let c = getCase(Number(url.searchParams.get("case") || 0));
     if (!c) return NextResponse.json({ error: "That pack is no longer here." }, { status: 404 });
+    // every value is read again at output time: the register, the template and the files as they are today
+    try {
+      await rebuildValues(c.id, user);
+      c = getCase(c.id) ?? c;
+    } catch (e) {
+      console.error("pack values not refreshed:", e instanceof Error ? e.message : e);
+    }
     const format = String(url.searchParams.get("format") || "pdf") as OutputFormat;
     if (!["docx", "xlsx", "pdf", "pack"].includes(format)) return NextResponse.json({ error: "Unknown format." }, { status: 400 });
     const doc = String(url.searchParams.get("doc") || "");

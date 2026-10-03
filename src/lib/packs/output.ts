@@ -5,7 +5,7 @@ import { buildDocx, buildEarDocx, fillTemplate } from "./word";
 import { fillExcelTemplate, isExcelTemplate } from "./excel";
 import { buildCompiledPack, noticePdf, renderFormPdf, safeFileName, type FormMeta, type PackPart, type PartItem } from "./pdf";
 import { appendix01Xlsx, assessmentDocx, basisDocx, budgetXlsx, changeLogXlsx, formXlsx, letterDocx, mimeOf, packDocuments, summaryDocx, voFormDocx, type DocFormat } from "./documents";
-import { renderBudgetParticulars, renderEarReport, renderRfaForm } from "./forms";
+import { renderBudgetParticulars, renderEarReport, renderPvoDvoComparison, renderRfaForm } from "./forms";
 import { renderAppendix01, renderAssessment, renderBudgetParticularsNova, renderChangeLogNova, renderContractualBasis, renderEmployerLetter, renderExecutiveSummary, renderVoForm, renderVoFormEmergency } from "./annexures";
 import { withNarrative } from "./narrative";
 import { changeLogRows, type ChangeLogRow } from "./data";
@@ -300,7 +300,8 @@ async function assemble(c: PackCase, t: PackType, values: PackValues, meta: Form
       { no: 3, label: "BUDGET PARTICULARS", hint: "Where the budget comes from and where it goes", style: "annexure", items: [await sg("Budget particulars", () => renderBudgetParticulars(t, values, meta))] },
       { no: 4, label: "CHANGE LOG", hint: "Every change on the contract with its RFC, PVO, VO and DVO", style: "annexure", items: [await sg("Change log", () => renderChangeLogNova(values, logRows(c)))] },
     ];
-    return { front: [{ name: "PVO to DVO movement summary, DVO form (RSG-CM-FRM-0014) and review & recommendation (RSG-CM-FRM-0027)", bytes: form }], parts: [...ann, ...number(others, 5)], index: { title: "DETERMINED VARIATION ORDER (DVO)" } };
+    const comparison = await quiet("PVO to DVO comparison", () => renderPvoDvoComparison(t, values, meta), null as Buffer | null);
+    return { front: [...(comparison ? [{ name: "PVO to DVO comparison – values, references and contract position", bytes: comparison }] : []), { name: "DVO form (RSG-CM-FRM-0014) and review & recommendation (RSG-CM-FRM-0027)", bytes: form }], parts: [...ann, ...number(others, 5)], index: { title: "DETERMINED VARIATION ORDER (DVO)" } };
   }
   if (t.key === "vo") {
     values = await quiet("narrative", () => withNarrative(c, values), values);

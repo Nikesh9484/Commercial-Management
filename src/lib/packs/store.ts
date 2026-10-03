@@ -444,6 +444,21 @@ export async function rebuildValues(caseId: number, user: UserInfo): Promise<{ v
     }
   }
   const own = ["pvo_no", "dvo_no", "rfa_no", "date", "title", "scope", "reason", "total_value", "dvo_value", "add", "omit", "cost_items", "rfc_ref", "eac_explanation", "letter_ref", "report_ref", "claim_no", "eot_no", "emergency_circumstances", "instruction_ref", "description", "information_provided"];
+  // what belongs to the contract: an earlier pack of another contract lends its layout, wording and
+  // signatories, never its contract particulars, figures, dates or budget lines
+  const CONTRACT = ["contract_no", "contract_ref", "contractor", "works_package", "project_code", "project_name", "program_name", "program_no", "contract_title", "ewbs_code", "contract_price", "original_contract", "previous_dvos", "interim_vos", "revised_contract", "vo_pct", "commencement_date", "original_completion", "revised_completion", "previous_eot", "this_eot", "total_eot", "current_completion", "approved_eot", "approved_dvos", "approved_pvos", "current_revised", "potential_revised", "budget_line", "budget_available", "budget_to_line", "contractor_rep", "contractor_rep_position", "change_log", "change_log_rows", "stage1_price", "stage2_price", "acc_table"];
+  const contractKey = (x: string | undefined) => String(x ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const firstWord = (x: string | undefined) => String(x ?? "").toLowerCase().replace(/[^a-z0-9 ]/g, " ").trim().split(/\s+/)[0] ?? "";
+  /** is the earlier document about this contract? (unknown counts as yes, as before) */
+  const sameContract = (ref: Reading) => {
+    const a = contractKey(ref.values.contract_no || ref.values.contract_ref);
+    const b = contractKey(values.contract_no || values.contract_ref);
+    if (a && b) return a.startsWith(b) || b.startsWith(a);
+    const ca = firstWord(ref.values.contractor);
+    const cb = firstWord(values.contractor);
+    return !ca || !cb || ca === cb;
+  };
+  const keepFor = (ref: Reading, keep: string[]) => (sameContract(ref) ? keep : [...keep, ...CONTRACT]);
   const nextNumber = (key: string, ref: Reading, label: string) => {
     if (!values[key] && ref.values[key] && /^\d+$/.test(ref.values[key])) {
       values[key] = String(Number(ref.values[key]) + 1).padStart(3, "0");
@@ -452,7 +467,8 @@ export async function rebuildValues(caseId: number, user: UserInfo): Promise<{ v
   };
   for (const ref of workbooks) {
     if (!Object.keys(ref.values).length) continue;
-    apply(ref, own);
+    apply(ref, keepFor(ref, own));
+    if (!sameContract(ref)) continue;
     if (t.key === "pvo") nextNumber("pvo_no", ref, "previous PVO + 1");
     if (t.key === "vo") nextNumber("pvo_no", ref, "previous EVO + 1");
   }
@@ -472,27 +488,29 @@ export async function rebuildValues(caseId: number, user: UserInfo): Promise<{ v
     // what names the earlier document itself is not carried over: its number, its date, its title and value are this pack's own
     if (t.key === "pvo") {
       const ref = readReferencePvo(pages);
-      refContractor = ref.values.contractor || refContractor;
-      apply(ref, own);
+      const same = sameContract(ref);
+      if (same) refContractor = ref.values.contractor || refContractor;
+      apply(ref, keepFor(ref, own));
       // the next number after the previous PVO, unless the register already names this one
-      if (!values.pvo_no && ref.values.pvo_no && /^\d+$/.test(ref.values.pvo_no)) {
+      if (same && !values.pvo_no && ref.values.pvo_no && /^\d+$/.test(ref.values.pvo_no)) {
         values.pvo_no = String(Number(ref.values.pvo_no) + 1).padStart(3, "0");
         sources.pvo_no = "previous PVO + 1";
       }
     } else if (t.key === "dvo") {
       const ref = readReferenceDvo(pages);
-      apply(ref, [...own, "previous_dvos", "revised_contract", "vo_pct", "this_eot", "total_eot", "revised_completion", "previous_eot"]);
+      const same = sameContract(ref);
+      apply(ref, keepFor(ref, [...own, "previous_dvos", "revised_contract", "vo_pct", "this_eot", "total_eot", "revised_completion", "previous_eot"]));
       // the previous determination's [b] plus its own [d] are this one's sum of previous determinations; likewise the days
       const n = (x: string | undefined) => Number(String(x ?? "").replace(/[^0-9.\-]/g, "")) || 0;
-      if (ref.values.previous_dvos || ref.values.dvo_value) {
+      if (same && (ref.values.previous_dvos || ref.values.dvo_value)) {
         values.previous_dvos = String(Math.round((n(ref.values.previous_dvos) + n(ref.values.dvo_value)) * 100) / 100);
         sources.previous_dvos = "previous DVO [b] + [d]";
       }
-      if (ref.values.previous_eot || ref.values.this_eot) {
+      if (same && (ref.values.previous_eot || ref.values.this_eot)) {
         values.previous_eot = String(n(ref.values.previous_eot) + n(ref.values.this_eot));
         sources.previous_eot = "previous DVO [y] + [z]";
       }
-      if (!values.dvo_no && ref.values.dvo_no) {
+      if (same && !values.dvo_no && ref.values.dvo_no) {
         const m = ref.values.dvo_no.match(/^(.*?)(\d+)$/);
         if (m) {
           values.dvo_no = `${m[1]}${String(Number(m[2]) + 1).padStart(m[2].length, "0")}`;
@@ -500,12 +518,16 @@ export async function rebuildValues(caseId: number, user: UserInfo): Promise<{ v
         }
       }
     }
-    else if (t.key === "rfa") apply(readReferenceRfa(pages), own);
-    else if (t.key === "eot_ear" || t.key === "cost_ear") apply(readReferenceEar(pages), own);
-    else {
+    else if (t.key === "rfa") {
+      const ref = readReferenceRfa(pages);
+      apply(ref, keepFor(ref, own));
+    } else if (t.key === "eot_ear" || t.key === "cost_ear") {
+      const ref = readReferenceEar(pages);
+      apply(ref, keepFor(ref, own));
+    } else {
       const ref = readReferencePvo(pages);
-      apply(ref, own);
-      if (t.key === "vo" && !values.pvo_no && ref.values.pvo_no && /^\d+$/.test(ref.values.pvo_no)) {
+      apply(ref, keepFor(ref, own));
+      if (t.key === "vo" && sameContract(ref) && !values.pvo_no && ref.values.pvo_no && /^\d+$/.test(ref.values.pvo_no)) {
         values.pvo_no = String(Number(ref.values.pvo_no) + 1).padStart(3, "0");
         sources.pvo_no = "previous EVO + 1";
       }

@@ -1,5 +1,5 @@
 import PDFDocument from "pdfkit";
-import { formatMoney } from "../format";
+import { formatDate, formatMoney } from "../format";
 import { formattedValues } from "./word";
 import { packRefLabel, type PackType, type PackValues } from "./shared";
 import type { ChangeLogRow } from "./data";
@@ -376,6 +376,171 @@ export async function renderPvoForm(type: PackType, values: PackValues, meta: Fo
     ...pairs("Checked by (Pre-Approval):", v.checked_by, v.checked_position, "Note: Signatures for approval are already received on attached CRF forms"),
     ...pairs("Approved by:", v.approved_by, v.approved_position, "- Routed through Aconex Workflow -"),
   ]);
+  finish(ctx);
+  return done;
+}
+
+/* ------------------------------------------------------------------ */
+/* DVO – PVO vs DVO comparison: values, references, contract position  */
+
+const GREEN = "#2E7D32";
+const RED = "#B3261E";
+const SAND = "#EFE6D8";
+const SLATE = "#E6E8EB";
+
+/**
+ * The page that opens a DVO pack: the approved PVO against the determined DVO side by side – the
+ * references and dates, the values, the time impact, the contract position before and after – with
+ * the movement coloured (a determination below the PVO in green, above it in red) and the
+ * documents behind each figure named.
+ */
+export async function renderPvoDvoComparison(type: PackType, values: PackValues, meta: FormMeta): Promise<Buffer> {
+  const { doc, done } = newDoc(meta, `${packRefLabel("DVO", meta.ref)} – PVO to DVO comparison`);
+  const ctx = ctxFor(doc, type, values, meta, (d) => {
+    d.y = 60;
+  });
+  const raw = ctx.raw;
+  // the particulars of the PVO, the VO and the DVO are not form fields of the pack: they come straight from the values
+  const R = (k: string) => String(raw[k] ?? "").trim();
+  const v: Record<string, string> = { ...ctx.v, pvo_no: R("pvo_no") || ctx.v.pvo_no || "", vo_no: R("vo_no") || ctx.v.vo_no || "", pvo_date: R("pvo_date"), pvo_aconex: R("pvo_aconex"), pvo_status: R("pvo_status"), vo_date: R("vo_date"), vo_aconex: R("vo_aconex"), dvo_aconex: R("dvo_aconex"), dvo_status: R("dvo_status"), rfc_ref: R("rfc_ref") || ctx.v.rfc_ref || "", item_no: R("item_no"), budget_line: R("budget_line") || ctx.v.budget_line || "", budget_available: R("budget_available") || ctx.v.budget_available || "", instruction_ref: R("instruction_ref") || ctx.v.instruction_ref || "" };
+  const pvo = num(raw.pvo_value);
+  const dvo = num(raw.dvo_value) || num(raw.add) - num(raw.omit);
+  const move = Math.round((dvo - pvo) * 100) / 100;
+  const movePct = pvo ? (move / pvo) * 100 : 0;
+  const tone = Math.abs(move) < 0.005 ? INK : move < 0 ? GREEN : RED;
+  const moneyOrDash = (n: number) => (n ? sar(n) : "-");
+  const signed = (n: number) => (Math.abs(n) < 0.005 ? "-" : `${n < 0 ? "-" : "+"} ${sar(Math.abs(n))}`);
+  const dvoNo = v.dvo_no ? (/^DVO/i.test(v.dvo_no) ? v.dvo_no : `DVO-${v.dvo_no.replace(/\D/g, "").padStart(3, "0")}`) : "DVO";
+  const pvoNo = v.pvo_no ? (/^PVO/i.test(v.pvo_no) ? v.pvo_no : `PVO-${v.pvo_no.replace(/\D/g, "").padStart(3, "0")}`) : "PVO";
+
+  // title band
+  doc.rect(M, 40, TW, 34).fill(GRAPHITE);
+  doc.rect(M, 40, 4, 34).fill(BRONZE);
+  doc.fillColor("#FFFFFF").font("Helvetica-Bold").fontSize(13).text("PVO TO DVO – COST MOVEMENT AND REFERENCES", M + 12, 47, { lineBreak: false });
+  doc.fillColor("#D8D9D6").font("Helvetica").fontSize(8).text(`${dvoNo} - ${v.title}`, M + 12, 62, { width: TW - 24, height: 10, lineBreak: false, ellipsis: true });
+  doc.y = 84;
+  doc.fillColor(MUTED).font("Helvetica").fontSize(8).text([v.contractor, v.works_package, v.contract_no || v.contract_ref, v.project_name].filter(Boolean).join("  ·  "), M, doc.y, { width: TW, height: 10, lineBreak: false, ellipsis: true });
+  doc.y = 102;
+
+  // the four figures
+  const boxW = (TW - 30) / 4;
+  const boxes: [string, string, string, string][] = [
+    ["APPROVED PVO VALUE", `SAR ${sar(pvo)}`, pvoNo, BRONZE],
+    ["DETERMINED DVO VALUE", `SAR ${sar(dvo)}`, dvoNo, GRAPHITE],
+    ["MOVEMENT (DVO - PVO)", Math.abs(move) < 0.005 ? "SAR 0.00" : `${move < 0 ? "-" : "+"} SAR ${sar(Math.abs(move))}`, move < -0.005 ? "determination below the PVO" : move > 0.005 ? "determination above the PVO" : "no change", tone],
+    ["MOVEMENT % OF PVO", pvo ? `${move < 0 ? "-" : move > 0 ? "+" : ""}${Math.abs(movePct).toFixed(2)}%` : "-", pvo ? "of the approved PVO value" : "PVO value not recorded", tone],
+  ];
+  const top = doc.y;
+  boxes.forEach(([label, val, sub, colour], i) => {
+    const x = M + i * (boxW + 10);
+    doc.rect(x, top, boxW, 58).fill(PALE);
+    doc.rect(x, top, boxW, 4).fill(colour);
+    doc.fillColor(MUTED).font("Helvetica").fontSize(6.8).text(label, x + 8, top + 10, { width: boxW - 16, height: 9, lineBreak: false });
+    doc.fillColor(colour).font("Helvetica-Bold").fontSize(12.5).text(val, x + 8, top + 22, { width: boxW - 16, height: 15, lineBreak: false });
+    doc.fillColor(MUTED).font("Helvetica").fontSize(7).text(sub, x + 8, top + 42, { width: boxW - 16, height: 9, lineBreak: false, ellipsis: true });
+  });
+  doc.y = top + 70;
+
+  // side by side
+  const colX = [M, M + TW * 0.26, M + TW * 0.56, M + TW * 0.86];
+  const colW = [TW * 0.26, TW * 0.3, TW * 0.3, TW * 0.14];
+  const headRow = (y: number) => {
+    doc.rect(colX[0], y, colW[0], 18).fill(SLATE);
+    doc.rect(colX[1], y, colW[1], 18).fill(SAND);
+    doc.rect(colX[2], y, colW[2], 18).fill(GRAPHITE);
+    doc.rect(colX[3], y, colW[3], 18).fill(SLATE);
+    doc.fillColor(INK).font("Helvetica-Bold").fontSize(7.5).text("ITEM", colX[0] + 6, y + 5.5, { lineBreak: false });
+    doc.fillColor(INK).text(`APPROVED PVO  ·  ${pvoNo}`, colX[1] + 6, y + 5.5, { width: colW[1] - 12, lineBreak: false });
+    doc.fillColor("#FFFFFF").text(`DETERMINED DVO  ·  ${dvoNo}`, colX[2] + 6, y + 5.5, { width: colW[2] - 12, lineBreak: false });
+    doc.fillColor(INK).text("MOVEMENT", colX[3] + 6, y + 5.5, { lineBreak: false });
+    return y + 18;
+  };
+  const row = (y: number, label: string, a: string, b: string, m: string, opts: { bold?: boolean; tone?: string; shade?: boolean } = {}) => {
+    const h = Math.max(16, textHeight(ctx, a, colW[1] - 12, 7.5, !!opts.bold) + 6, textHeight(ctx, b, colW[2] - 12, 7.5, !!opts.bold) + 6);
+    if (opts.shade) doc.rect(colX[0], y, TW, h).fill("#F8F8F6");
+    doc.rect(colX[0], y, TW, h).lineWidth(0.4).stroke(LINE);
+    for (let i = 1; i < 4; i++) doc.moveTo(colX[i], y).lineTo(colX[i], y + h).lineWidth(0.4).stroke(LINE);
+    doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(label, colX[0] + 6, y + 4.5, { width: colW[0] - 12 });
+    doc.fillColor(INK).font(opts.bold ? "Helvetica-Bold" : "Helvetica").fontSize(7.5).text(a, colX[1] + 6, y + 4.5, { width: colW[1] - 12 });
+    doc.fillColor(INK).font(opts.bold ? "Helvetica-Bold" : "Helvetica").fontSize(7.5).text(b, colX[2] + 6, y + 4.5, { width: colW[2] - 12 });
+    doc.fillColor(opts.tone ?? INK).font("Helvetica-Bold").fontSize(7.5).text(m, colX[3] + 6, y + 4.5, { width: colW[3] - 12, align: "right" });
+    return y + h;
+  };
+  const pvoTime = num(raw.pvo_time_impact);
+  const dvoTime = num(raw.this_eot) || num(raw.time_impact);
+  // every date in the same DD-MMM-YY form, whatever form it was recorded in
+  const fmtD = (d: string | undefined) => {
+    const t = String(d ?? "").trim();
+    return t ? formatDate(t) || t : "";
+  };
+  v.pvo_date = fmtD(v.pvo_date);
+  v.vo_date = fmtD(v.vo_date);
+  v.date = fmtD(v.date);
+  v.budget_line = v.budget_line.replace(/[:\s]+$/, "");
+  const budgetText = v.budget_line ? `${v.budget_line}${v.budget_available ? ` – SAR ${sar(num(v.budget_available))} available` : ""}` : "-";
+  const dateOr = (d: string | undefined) => (d && d.trim() ? d : "-");
+  let y = doc.y;
+  doc.fillColor(INK).font("Helvetica-Bold").fontSize(9).text("The change, as proposed and as determined", M, y, { lineBreak: false });
+  y += 14;
+  y = headRow(y);
+  y = row(y, "Reference", pvoNo, dvoNo, "");
+  y = row(y, "Date", dateOr(v.pvo_date), dateOr(v.date), "", { shade: true });
+  y = row(y, "Aconex workflow / approval", dateOr(v.pvo_aconex), dateOr(v.dvo_aconex), "");
+  const voLabel = v.vo_no ? (/^(VO|EI|EVO)/i.test(v.vo_no) ? v.vo_no : `VO ${v.vo_no}`) : "";
+  y = row(y, "Instruction behind the change", dateOr(v.rfc_ref ? `RFC / EMI ${v.rfc_ref}` : ""), dateOr([voLabel, v.instruction_ref && v.instruction_ref !== voLabel ? v.instruction_ref : "", v.vo_date ? `dated ${v.vo_date}` : ""].filter(Boolean).join(" – ")), "", { shade: true });
+  y = row(y, "Title", v.title, `${dvoNo} – ${v.title}`, "");
+  y = row(y, "Value (SAR, excl. VAT)", `SAR ${sar(pvo)}`, `SAR ${sar(dvo)}`, signed(move), { bold: true, tone, shade: true });
+  y = row(y, "Time impact (days)", pvoTime ? String(Math.round(pvoTime)) : "-", dvoTime ? String(Math.round(dvoTime)) : "-", pvoTime || dvoTime ? `${dvoTime - pvoTime >= 0 ? "+" : "-"} ${Math.abs(Math.round(dvoTime - pvoTime))} days` : "-");
+  y = row(y, "Status", dateOr(v.pvo_status), dateOr(v.dvo_status), "", { shade: true });
+  doc.y = y + 16;
+
+  // the contract position before and after
+  const a = num(raw.contract_price);
+  const b = num(raw.previous_dvos);
+  const c = num(raw.interim_vos);
+  const withPvo = a + b + c + pvo;
+  const withDvo = num(raw.revised_contract) || a + b + c + dvo;
+  y = doc.y;
+  doc.fillColor(INK).font("Helvetica-Bold").fontSize(9).text("Contract position", M, y, { lineBreak: false });
+  y += 14;
+  doc.rect(colX[0], y, colW[0], 18).fill(SLATE);
+  doc.rect(colX[1], y, colW[1], 18).fill(SAND);
+  doc.rect(colX[2], y, colW[2], 18).fill(GRAPHITE);
+  doc.rect(colX[3], y, colW[3], 18).fill(SLATE);
+  doc.fillColor(INK).font("Helvetica-Bold").fontSize(7.5).text("SAR", colX[0] + 6, y + 5.5, { lineBreak: false });
+  doc.fillColor(INK).text("WITH THE APPROVED PVO", colX[1] + 6, y + 5.5, { lineBreak: false });
+  doc.fillColor("#FFFFFF").text("WITH THIS DVO", colX[2] + 6, y + 5.5, { lineBreak: false });
+  doc.fillColor(INK).text("MOVEMENT", colX[3] + 6, y + 5.5, { lineBreak: false });
+  y += 18;
+  y = row(y, "Contract Price [a]", sar(a), sar(a), "-");
+  y = row(y, "Previous Determined Variation Orders [b]", moneyOrDash(b), moneyOrDash(b), "-", { shade: true });
+  if (c) y = row(y, "Interim value variations [c]", sar(c), sar(c), "-");
+  y = row(y, "This change [d]", `SAR ${sar(pvo)}`, `SAR ${sar(dvo)}`, signed(move), { bold: true, tone });
+  y = row(y, c ? "Revised Contract Price [e] = [a+b+c+d]" : "Revised Contract Price [e] = [a+b+d]", sar(withPvo), sar(withDvo), signed(withDvo - withPvo), { bold: true, tone, shade: true });
+  y = row(y, "Variations as % of the original Contract Price", pct(withPvo - a, a), pct(withDvo - a, a), a ? `${((withDvo - withPvo) / a) * 100 >= 0 ? "+" : "-"}${Math.abs(((withDvo - withPvo) / a) * 100).toFixed(2)}%` : "-", { tone });
+  doc.y = y + 16;
+
+  // the note and where each figure comes from
+  const note = v.movement_note || (Math.abs(move) < 0.005 ? "The DVO value equals the approved PVO value." : `The DVO value is ${move < 0 ? "lower" : "higher"} than the approved PVO value, with a variance of SAR ${sar(Math.abs(move))}.`);
+  doc.rect(M, doc.y, TW, 3).fill(tone);
+  doc.y += 9;
+  doc.fillColor(INK).font("Helvetica-Bold").fontSize(8.5).text("Basis of the movement", M, doc.y, { lineBreak: false });
+  doc.y += 12;
+  doc.fillColor(INK).font("Helvetica").fontSize(8.5).text(`${note} ${Math.abs(move) < 0.005 ? "" : "The determined value follows the Employer's assessment of the Contractor's final cost proposal (Annexure 2) against the scope and rates of the Contract; the approved PVO was the estimate at the time the change was proposed."}`, M, doc.y, { width: TW, lineGap: 1.5 });
+  doc.y += 10;
+  const refs: [string, string][] = [
+    ["Request for change / instruction", v.rfc_ref || "-"],
+    ["Proposed Variation Order", `${pvoNo}${v.pvo_date ? ` dated ${v.pvo_date}` : ""}${v.pvo_aconex ? ` – ${v.pvo_aconex}` : ""}`],
+    ["Variation Order / Employer's instruction", [voLabel, v.instruction_ref && v.instruction_ref !== voLabel ? v.instruction_ref : "", v.vo_date ? `dated ${v.vo_date}` : ""].filter(Boolean).join(" – ") || "-"],
+    ["Determined Variation Order", `${dvoNo}${v.date ? ` dated ${v.date}` : ""}${v.dvo_aconex ? ` – ${v.dvo_aconex}` : ""}`],
+    ["Change register item", v.item_no || "-"],
+    ["Budget", budgetText],
+  ];
+  kv(ctx, refs, 2, 0.42);
+  doc.y += 14;
+  doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text("Values exclude VAT. Annexure 1 holds the approved PVO and VO with their workflow approvals; Annexure 2 the cost proposal and the Employer's assessment and determination; Annexure 3 the budget particulars; Annexure 4 the change log of the contract.", M, doc.y, { width: TW });
+  doc.y += 18;
+  doc.fillColor(MUTED).font("Helvetica").fontSize(8).text("#CLASSIFICATION: INTERNAL SENSITIVE", M, doc.y, { width: TW, align: "center" });
   finish(ctx);
   return done;
 }
@@ -784,11 +949,11 @@ export async function renderBudgetParticulars(type: PackType, values: PackValues
   doc.fillColor("#FFFFFF").font("Helvetica-Bold").fontSize(12).text("BUDGET PARTICULARS", M + 12, 47);
   doc.y = 84;
   const amount = v.total_value || v.dvo_value || v.amount || "";
-  kv(ctx, [["SUBJECT:", dash(v.title)], ["SOURCE OF THE BUDGET:", `${v.budget_line ? `Budget on Hold - ${v.budget_line}` : "-"}${v.budget_available ? `: SAR ${v.budget_available}` : ""}`], ["DESTINATION OF THE BUDGET:", `${v.contractor ? `${v.contractor.split(" ")[0]} ` : ""}Original Contract Budget ${v.budget_to_line || v.contract_no || "-"} – Variations`], ["AMOUNT OF THIS CHANGE:", amount ? `SAR ${amount}` : "-"], ["BUDGET SOURCE OPTION:", dash(v.budget_source)]], 1, 0.3);
+  kv(ctx, [["SUBJECT:", dash(v.title)], ["SOURCE OF THE BUDGET:", `${v.budget_line ? `Budget on Hold - ${v.budget_line.replace(/[:\s]+$/, "")}` : "-"}${v.budget_available ? ` – SAR ${sar(num(ctx.raw.budget_available))}` : ""}`], ["DESTINATION OF THE BUDGET:", `${v.contractor ? `${v.contractor.split(" ")[0]} ` : ""}Original Contract Budget ${v.budget_to_line || v.contract_no || "-"} – Variations`], ["AMOUNT OF THIS CHANGE:", amount ? `SAR ${amount}` : "-"], ["BUDGET SOURCE OPTION:", dash(v.budget_source)]], 1, 0.3);
   doc.y += 12;
   if (v.budget_available && amount) {
     const after = num(ctx.raw.budget_available) - num(amount);
-    table(ctx, ["Control Account", "Current Budget (SAR)", "This change (SAR)", "Revised Budget (SAR)"], [[v.budget_line || "Budget hold", sar(num(ctx.raw.budget_available)), sar(-num(amount)), sar(after)], [v.budget_to_line || v.contract_no || "This contract", sar(num(ctx.raw.current_revised) || num(ctx.raw.contract_price) || num(ctx.raw.original_contract)), sar(num(amount)), sar((num(ctx.raw.current_revised) || num(ctx.raw.contract_price) || num(ctx.raw.original_contract)) + num(amount))]], [0.4, 0.2, 0.2, 0.2], { align: ["left", "right", "right", "right"], size: 8 });
+    table(ctx, ["Control Account", "Current Budget (SAR)", "This change (SAR)", "Revised Budget (SAR)"], [[(v.budget_line || "Budget hold").replace(/[:\s]+$/, ""), sar(num(ctx.raw.budget_available)), sar(-num(amount)), sar(after)], [v.budget_to_line || v.contract_no || "This contract", sar(num(ctx.raw.current_revised) || num(ctx.raw.contract_price) || num(ctx.raw.original_contract)), sar(num(amount)), sar((num(ctx.raw.current_revised) || num(ctx.raw.contract_price) || num(ctx.raw.original_contract)) + num(amount))]], [0.4, 0.2, 0.2, 0.2], { align: ["left", "right", "right", "right"], size: 8 });
   }
   doc.y += 20;
   doc.fillColor(MUTED).font("Helvetica").fontSize(8).text("#CLASSIFICATION: INTERNAL SENSITIVE", M, doc.y, { width: TW, align: "center" });
