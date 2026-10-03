@@ -55,70 +55,171 @@ const ICONS: Record<string, LucideIcon> = {
   HandCoins,
 };
 
-export function Sidebar({ open, onClose, role, project }: { open: boolean; onClose: () => void; role: Role; project?: string | null }) {
+export function Sidebar({
+  open,
+  onClose,
+  role,
+  project,
+}: {
+  open: boolean;
+  onClose: () => void;
+  role: Role;
+  project?: string | null;
+}) {
   const pathname = usePathname();
   const search = useSearchParams();
   const isActive = (href: string) =>
-    href.includes("?") ? pathname + "?" + search.toString() === href : href === "/" ? pathname === "/" || pathname === "/modules/executive-summary" : pathname === href || (pathname.startsWith(href + "/") && href !== "/") || (href === "/modules/cost-report" && pathname === href && !search.get("tab")) || (false && pathname.startsWith(href));
+    href.includes("?")
+      ? pathname + "?" + search.toString() === href
+      : href === "/"
+        ? pathname === "/" || pathname === "/modules/executive-summary"
+        : pathname === href ||
+          (pathname.startsWith(href + "/") && href !== "/") ||
+          (href === "/modules/cost-report" &&
+            pathname === href &&
+            !search.get("tab")) ||
+          (false && pathname.startsWith(href));
 
-  const link = (href: string, label: string, Icon: LucideIcon, badge?: string) => (
+  const link = (
+    href: string,
+    label: string,
+    Icon: LucideIcon,
+    badge?: string,
+  ) => (
     <Link
       key={href}
       href={href}
       onClick={onClose}
       className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition ${
-        isActive(href) ? "bg-white/15 font-medium text-white" : "text-blue-100/80 hover:bg-white/10 hover:text-white"
+        isActive(href)
+          ? "bg-white/15 font-medium text-white"
+          : "text-blue-100/80 hover:bg-white/10 hover:text-white"
       }`}
     >
       <Icon size={17} className="shrink-0" />
       <span className="truncate">{label}</span>
-      {badge && <span className="ml-auto rounded bg-white/10 px-1.5 text-[10px] text-blue-100/70">{badge}</span>}
+      {badge && (
+        <span className="ml-auto rounded bg-white/10 px-1.5 text-[10px] text-blue-100/70">
+          {badge}
+        </span>
+      )}
     </Link>
   );
 
   /** Document Packs – one entry per RSG document category. */
   const packsMenu = (
     <>
-      <div className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider text-blue-200/50">Document Packs</div>
+      <div className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider text-blue-200/50">
+        Document Packs
+      </div>
       {link("/packs", "All document packs", FileSignature)}
       <div className="pl-4">
-        {PACK_TYPES.map((p) => link(`/packs/${p.key}`, p.short === p.label ? p.label : `${p.short} – ${p.label.replace(/^[^–]+–\s*/, "")}`, FileText))}
+        {PACK_TYPES.map((p) =>
+          link(
+            `/packs/${p.key}`,
+            p.short === p.label
+              ? p.label
+              : `${p.short} – ${p.label.replace(/^[^–]+–\s*/, "")}`,
+            FileText,
+          ),
+        )}
       </div>
     </>
   );
 
+  /** Modules kept off the menu (their pages still open from a link or a report button). */
+  const HIDDEN_MODULES = ["provisional-sums", "cash-flow"];
   /** The numbered module menu (with its sub-pages). */
-  const moduleMenu = (list: typeof modules) => (
-    <>
-      <div className="px-3 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-wider text-blue-200/50">Modules</div>
-      {list.map((m) => (
-        <div key={m.slug}>
-          {link(m.slug === "executive-summary" ? "/" : `/modules/${m.slug}`, m.short, ICONS[m.icon] ?? ClipboardList, String(m.no))}
-          {m.slug === "executive-summary" && <div className="pl-4">{link("/modules/executive-summary/minutes", "Minutes of Meeting", FileText)}</div>}
-          {m.slug === "invoices-payments" && <div className="pl-4">{link("/modules/final-accounts", "Final Account Status", FileText)}</div>}
-          {m.slug === "cost-recovery" && <div className="pl-4">{link("/modules/cost-recovery?tab=leases", "Accommodation lease agreements", KeyRound)}</div>}
-          {m.slug === "monthly-report" && (
-            <div className="pl-4">
-              {link("/modules/monthly-report/library", "All reports (library)", Library)}
-              {link("/modules/monthly-report/new", "New month (manual entry)", CalendarPlus)}
-            </div>
-          )}
-          {m.slug === "cost-report" && (
-            <div className="pl-4">
-              {link("/modules/cost-report?tab=level1", "Level 1 – Executive", FileText)}
-              {link("/modules/cost-report?tab=level2", "Level 2 – Detailed", FileText)}
-              {link("/modules/cost-report?tab=level02r1", "Level 02 (R1)", FileText)}
-              {link("/modules/cost-report?tab=setup", "Line setup", FileText)}
-            </div>
-          )}
+  const moduleMenu = (all: typeof modules) => {
+    const list = all.filter((m) => !HIDDEN_MODULES.includes(m.slug));
+    return (
+      <>
+        <div className="px-3 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-wider text-blue-200/50">
+          Modules
         </div>
-      ))}
-    </>
-  );
+        {list.map((m) => (
+          <div key={m.slug}>
+            {link(
+              m.slug === "executive-summary" ? "/" : `/modules/${m.slug}`,
+              m.short,
+              ICONS[m.icon] ?? ClipboardList,
+              String(m.no),
+            )}
+            {m.slug === "executive-summary" && (
+              <div className="pl-4">
+                {link(
+                  "/modules/executive-summary/minutes",
+                  "Minutes of Meeting",
+                  FileText,
+                )}
+              </div>
+            )}
+            {m.slug === "invoices-payments" && (
+              <div className="pl-4">
+                {link(
+                  "/modules/final-accounts",
+                  "Final Account Status",
+                  FileText,
+                )}
+              </div>
+            )}
+            {m.slug === "cost-recovery" && (
+              <div className="pl-4">
+                {link(
+                  "/modules/cost-recovery?tab=leases",
+                  "Accommodation lease agreements",
+                  KeyRound,
+                )}
+              </div>
+            )}
+            {m.slug === "monthly-report" && (
+              <div className="pl-4">
+                {link(
+                  "/modules/monthly-report/library",
+                  "All reports (library)",
+                  Library,
+                )}
+                {link(
+                  "/modules/monthly-report/new",
+                  "New month (manual entry)",
+                  CalendarPlus,
+                )}
+              </div>
+            )}
+            {m.slug === "cost-report" && (
+              <div className="pl-4">
+                {link(
+                  "/modules/cost-report?tab=level1",
+                  "Level 1 – Executive",
+                  FileText,
+                )}
+                {link(
+                  "/modules/cost-report?tab=level2",
+                  "Level 2 – Detailed",
+                  FileText,
+                )}
+                {link(
+                  "/modules/cost-report?tab=level02r1",
+                  "Level 02 (R1)",
+                  FileText,
+                )}
+                {link("/modules/cost-report?tab=setup", "Line setup", FileText)}
+              </div>
+            )}
+          </div>
+        ))}
+      </>
+    );
+  };
 
   return (
     <>
-      {open && <div className="fixed inset-0 z-30 bg-navy-dark/60 lg:hidden" onClick={onClose} />}
+      {open && (
+        <div
+          className="fixed inset-0 z-30 bg-navy-dark/60 lg:hidden"
+          onClick={onClose}
+        />
+      )}
       <aside
         className={`app-sidebar fixed inset-y-0 left-0 z-40 flex w-68 flex-col text-white transition-transform lg:static lg:translate-x-0 ${
           open ? "translate-x-0" : "-translate-x-full"
@@ -126,77 +227,157 @@ export function Sidebar({ open, onClose, role, project }: { open: boolean; onClo
       >
         <div className="flex h-14 items-center justify-between border-b border-white/10 px-4">
           <Link href="/" className="flex items-center gap-2" onClick={onClose}>
-            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-accent text-sm font-bold">{initialsOf(project ?? APP_SHORT)}</span>
+            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-accent text-sm font-bold">
+              {initialsOf(project ?? APP_SHORT)}
+            </span>
             <span className="leading-tight">
-              <span className="block truncate text-sm font-semibold tracking-wide" title={project ?? APP_SHORT}>{project ?? APP_SHORT}</span>
-              <span className="block text-[11px] text-blue-100/80">{APP_SUBTITLE}</span>
+              <span
+                className="block truncate text-sm font-semibold tracking-wide"
+                title={project ?? APP_SHORT}
+              >
+                {project ?? APP_SHORT}
+              </span>
+              <span className="block text-[11px] text-blue-100/80">
+                {APP_SUBTITLE}
+              </span>
             </span>
           </Link>
-          <button className="rounded p-1 text-blue-100 hover:bg-white/10 lg:hidden" onClick={onClose} aria-label="Close menu">
+          <button
+            className="rounded p-1 text-blue-100 hover:bg-white/10 lg:hidden"
+            onClick={onClose}
+            aria-label="Close menu"
+          >
             <X size={18} />
           </button>
         </div>
         <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 py-3">
           {role === "reporter" ? (
             <>
-              {moduleMenu(modules.filter((m) => REPORTER_MODULES.includes(m.slug)))}
-              <div className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider text-blue-200/50">Reports</div>
+              {moduleMenu(
+                modules.filter((m) => REPORTER_MODULES.includes(m.slug)),
+              )}
+              <div className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider text-blue-200/50">
+                Reports
+              </div>
               {link("/reports", "Reports & downloads", FolderDown)}
               {link("/reports/period-summary", "Period Summary", Sparkles)}
-              {link("/reports/uncommitted-ew", "Uncommitted & Early Warnings", Sparkles)}
-              {link("/reports/cashflow-forecast", "Cash Flow Forecast", TrendingUp)}
+              {link(
+                "/reports/uncommitted-ew",
+                "Uncommitted & Early Warnings",
+                Sparkles,
+              )}
+              {link(
+                "/reports/cashflow-forecast",
+                "Cash Flow Forecast",
+                TrendingUp,
+              )}
               {link("/reports/kpi", "KPI Report – F1 VOs", Target)}
-              {link("/reports/builder", "Customise my reports", SlidersHorizontal)}
-              <div className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider text-blue-200/50">Libraries</div>
+              {link(
+                "/reports/builder",
+                "Customise my reports",
+                SlidersHorizontal,
+              )}
+              <div className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider text-blue-200/50">
+                Libraries
+              </div>
               {link("/library/eot", "EOT Library (EARs)", BookOpen)}
               {link("/library/contract", "Contract Library", FileSignature)}
-              <div className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider text-blue-200/50">Documents</div>
+              <div className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider text-blue-200/50">
+                Documents
+              </div>
               {link("/imports/documents", "Feed documents (any files)", Upload)}
               {packsMenu}
-              <a href="/user-guide.pdf" target="_blank" rel="noopener" className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-blue-100/80 hover:bg-white/10 hover:text-white">
+              <a
+                href="/user-guide.pdf"
+                target="_blank"
+                rel="noopener"
+                className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-blue-100/80 hover:bg-white/10 hover:text-white"
+              >
                 <FileText size={18} className="shrink-0" />
                 <span className="truncate">User guide (PDF)</span>
               </a>
             </>
           ) : (
-          <>
-          {moduleMenu(modules)}
-          <div className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider text-blue-200/50">Libraries</div>
-          {link("/library/eot", "EOT Library (EARs)", BookOpen)}
-          {link("/library/contract", "Contract Library", FileSignature)}
-          {role !== "viewer" && role !== "contributor" && (
             <>
-              <div className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider text-blue-200/50">Stand-alone imports</div>
-              {/* Bonds, payments and final accounts all ride in on the monthly workbook now; the
+              {moduleMenu(modules)}
+              <div className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider text-blue-200/50">
+                Libraries
+              </div>
+              {link("/library/eot", "EOT Library (EARs)", BookOpen)}
+              {link("/library/contract", "Contract Library", FileSignature)}
+              {role !== "viewer" && role !== "contributor" && (
+                <>
+                  <div className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider text-blue-200/50">
+                    Stand-alone imports
+                  </div>
+                  {/* Bonds, payments and final accounts all ride in on the monthly workbook now; the
                   Claims Tracker stays because it is a different workbook altogether. */}
-              {link("/imports/documents", "Feed documents (any files)", Upload)}
-              {link("/imports/monthly", "Monthly report workbook", Upload)}
-              {link("/imports/claims-tracker", "Claims Tracker", Upload)}
-              {link("/imports/accommodation", "Accommodation invoice tracker", Upload)}
-              {link("/imports/customs", "Customs recovery tracker", Upload)}
-              {link("/imports/aconex", "Aconex control account export", Upload)}
+                  {link(
+                    "/imports/documents",
+                    "Feed documents (any files)",
+                    Upload,
+                  )}
+                  {link("/imports/monthly", "Monthly report workbook", Upload)}
+                  {link("/imports/claims-tracker", "Claims Tracker", Upload)}
+                  {link(
+                    "/imports/accommodation",
+                    "Accommodation invoice tracker",
+                    Upload,
+                  )}
+                  {link("/imports/customs", "Customs recovery tracker", Upload)}
+                  {link(
+                    "/imports/aconex",
+                    "Aconex control account export",
+                    Upload,
+                  )}
+                </>
+              )}
+              {packsMenu}
+              <div className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider text-blue-200/50">
+                System
+              </div>
+              {link("/reports", "Reports & downloads", FolderDown)}
+              {link("/reports/period-summary", "Period Summary", Sparkles)}
+              {link(
+                "/reports/uncommitted-ew",
+                "Uncommitted & Early Warnings",
+                Sparkles,
+              )}
+              {link(
+                "/reports/cashflow-forecast",
+                "Cash Flow Forecast",
+                TrendingUp,
+              )}
+              {link("/reports/kpi", "KPI Report – F1 VOs", Target)}
+              {link(
+                "/reports/builder",
+                "Customise my reports",
+                SlidersHorizontal,
+              )}
+              <a
+                href="/user-guide.pdf"
+                target="_blank"
+                rel="noopener"
+                className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-blue-100/80 hover:bg-white/10 hover:text-white"
+              >
+                <FileText size={18} className="shrink-0" />
+                <span className="truncate">User guide (PDF)</span>
+              </a>
+              {link("/activity", "Change history", History)}
+              {role === "admin" &&
+                link("/settings/users", "Users & passwords", Users)}
+              {link("/settings/appearance", "Appearance", Palette)}
+              {link(
+                "/settings",
+                role === "viewer" ? "Reference data" : "Settings",
+                Settings,
+              )}
             </>
           )}
-          {packsMenu}
-          <div className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider text-blue-200/50">System</div>
-          {link("/reports", "Reports & downloads", FolderDown)}
-          {link("/reports/period-summary", "Period Summary", Sparkles)}
-          {link("/reports/uncommitted-ew", "Uncommitted & Early Warnings", Sparkles)}
-              {link("/reports/cashflow-forecast", "Cash Flow Forecast", TrendingUp)}
-              {link("/reports/kpi", "KPI Report – F1 VOs", Target)}
-          {link("/reports/builder", "Customise my reports", SlidersHorizontal)}
-          <a href="/user-guide.pdf" target="_blank" rel="noopener" className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-blue-100/80 hover:bg-white/10 hover:text-white">
-            <FileText size={18} className="shrink-0" />
-            <span className="truncate">User guide (PDF)</span>
-          </a>
-          {link("/activity", "Change history", History)}
-          {role === "admin" && link("/settings/users", "Users & passwords", Users)}
-          {link("/settings/appearance", "Appearance", Palette)}
-          {link("/settings", role === "viewer" ? "Reference data" : "Settings", Settings)}
-          </>
-          )}
         </nav>
-        <div className="border-t border-white/10 px-4 py-3 text-[11px] text-blue-200/50">All amounts in SAR · Dates DD-MMM-YY</div>
+        <div className="border-t border-white/10 px-4 py-3 text-[11px] text-blue-200/50">
+          All amounts in SAR · Dates DD-MMM-YY
+        </div>
       </aside>
     </>
   );
@@ -204,11 +385,13 @@ export function Sidebar({ open, onClose, role, project }: { open: boolean; onClo
 
 /** "The Marina" -> "TM", "Village Boutique Hotel (VBH)" -> "VB". */
 function initialsOf(name: string): string {
-  return name
-    .replace(/\(.*?\)/g, "")
-    .split(/[\s–-]+/)
-    .filter((w) => /^[A-Za-z]/.test(w))
-    .slice(0, 2)
-    .map((w) => w[0].toUpperCase())
-    .join("") || "CD";
+  return (
+    name
+      .replace(/\(.*?\)/g, "")
+      .split(/[\s–-]+/)
+      .filter((w) => /^[A-Za-z]/.test(w))
+      .slice(0, 2)
+      .map((w) => w[0].toUpperCase())
+      .join("") || "CD"
+  );
 }
