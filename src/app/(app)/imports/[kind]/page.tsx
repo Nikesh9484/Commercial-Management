@@ -130,10 +130,12 @@ export default async function ImportPage({ params, searchParams }: { params: Pro
   const standalone: StandaloneMode | undefined = trackerBase ? (spec.shared ? { ...trackerBase, shared: true } : undefined) : spec.only && current ? { only: spec.only, period: { id: current.id, label: current.label }, intro: spec.intro ?? "", fileHint: spec.fileHint ?? "", doneHref: spec.doneHref ?? "/", doneLabel: spec.doneLabel ?? "Done" } : undefined;
   // what each project holds from the last upload of this tracker
   const primary = spec.only?.[0] ? getRegisterDef(spec.only[0]) : null;
+  // the trackers carry the date of the export they came from; a register without one (claims) shows its last update
+  const dateCol = primary ? ((getDb().prepare(`PRAGMA table_info("${primary.table}")`).all() as { name: string }[]).some((c) => c.name === "tracker_date") ? "tracker_date" : "updated_at") : null;
   const held = new Map(
     ctx.programmes.map((p) => {
-      const row = primary ? (getDb().prepare(`SELECT COUNT(*) AS n, MAX(tracker_date) AS d FROM "${primary.table}" WHERE programme_id = ?`).get(p.id) as { n: number; d: string | null }) : { n: 0, d: null };
-      return [p.id, row.n ? `${row.n} row(s) held${row.d ? ` · tracker as of ${formatDate(row.d)}` : ""}` : "nothing uploaded yet"];
+      const row = primary ? (getDb().prepare(`SELECT COUNT(*) AS n, MAX("${dateCol}") AS d FROM "${primary.table}" WHERE programme_id = ?`).get(p.id) as { n: number; d: string | null }) : { n: 0, d: null };
+      return [p.id, row.n ? `${row.n} row(s) held${row.d ? ` · ${dateCol === "tracker_date" ? "tracker as of" : "last updated"} ${formatDate(row.d)}` : ""}` : "nothing uploaded yet"];
     }),
   );
 
