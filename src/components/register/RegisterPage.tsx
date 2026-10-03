@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 
 import { useScopeKey } from "@/components/layout/ScopeContext";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Plus, Search, Download, Upload, Pencil, Trash2, History, RotateCcw, ChevronUp, ChevronDown, ChevronsUpDown, RefreshCw, Lock, Unlock, Filter, X, ExternalLink, Columns3 } from "lucide-react";
+import { Plus, Search, Download, Upload, Pencil, Trash2, History, RotateCcw, EyeOff, ChevronUp, ChevronDown, ChevronsUpDown, ChevronRight, RefreshCw, Lock, Unlock, Filter, X, ExternalLink, Columns3 } from "lucide-react";
 import type { FieldDef, LookupOption, RecordRow, RegisterDef } from "@/lib/registers/types";
 import { formatDate, formatMoney, formatNumber, formatPercent } from "@/lib/format";
 import { Chip } from "@/components/ui/Chip";
@@ -109,6 +109,54 @@ export function RegisterPage({
       return null;
     }
   }, [storedCols]);
+  // column widths dragged on the header, remembered in this browser per register
+  const [colWidths, setColWidths] = useState<Record<string, number>>({});
+  const [closedLists, setClosedLists] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(`colwidths:${registerKey}`);
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setColWidths(raw ? (JSON.parse(raw) as Record<string, number>) : {});
+    } catch {
+      /* no storage: the register's own widths */
+    }
+  }, [registerKey]);
+  const rememberWidths = (next: Record<string, number>) => {
+    setColWidths(next);
+    try {
+      if (Object.keys(next).length) localStorage.setItem(`colwidths:${registerKey}`, JSON.stringify(next));
+      else localStorage.removeItem(`colwidths:${registerKey}`);
+    } catch {
+      /* ignore */
+    }
+  };
+  const startResize = (key: string) => (e: React.MouseEvent<HTMLSpanElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const th = e.currentTarget.parentElement as HTMLElement | null;
+    const startX = e.clientX;
+    const startW = th?.getBoundingClientRect().width ?? 120;
+    let latest = colWidths;
+    const move = (ev: MouseEvent) => {
+      const w = Math.max(48, Math.round(startW + ev.clientX - startX));
+      latest = { ...colWidths, [key]: w };
+      setColWidths(latest);
+    };
+    const up = () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+      document.body.style.cursor = "";
+      rememberWidths(latest);
+    };
+    document.body.style.cursor = "col-resize";
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+  };
+  const widthStyle = (f: FieldDef): React.CSSProperties | undefined => {
+    const w = colWidths[f.key];
+    if (w) return { width: w, minWidth: w, maxWidth: w };
+    return f.width ? { width: f.width, minWidth: f.width } : undefined;
+  };
   const rememberCols = (next: Set<string> | null) => {
     try {
       if (next) localStorage.setItem(`columns:${registerKey}`, JSON.stringify([...next]));
@@ -386,7 +434,7 @@ ${lines.join("\n")}`)) return;
           </div>
           {Object.entries(allTableFields.reduce<Record<string, FieldDef[]>>((g, f) => ((g[f.section ?? "General"] ??= []).push(f), g), {})).map(([section, fields]) => (
             <div key={section} className="mb-2">
-              <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">{section}</div>
+              <div className={`mb-1 rounded px-1 text-[11px] font-semibold uppercase tracking-wide text-muted ${stageTint(registerKey, fields[0]?.key ?? "").th}`}>{section}</div>
               <div className="flex flex-wrap gap-x-4 gap-y-1">
                 {fields.map((f) => {
                   const on = tableFields.some((x) => x.key === f.key);
@@ -441,6 +489,69 @@ ${lines.join("\n")}`)) return;
         </div>
       )}
 
+      {/* Quick catch: the open items at each stage, in the same columns as the table below */}
+      {registerKey === "changes" &&
+        QUICK_LISTS.map((q) => {
+          const rows = visible.filter((r) => r.is_closed !== true && q.stages.includes(String(r.current_stage ?? "")));
+          const open = !closedLists.has(q.key);
+          return (
+            <div key={q.key} className={`card overflow-hidden border-l-4 ${q.border}`}>
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 px-4 py-2.5 text-left hover:bg-black/[0.02]"
+                onClick={() => setClosedLists((prev) => { const next = new Set(prev); if (next.has(q.key)) next.delete(q.key); else next.add(q.key); return next; })}
+                title={open ? "Collapse this list" : "Expand this list"}
+              >
+                {open ? <ChevronDown size={15} className="text-muted" /> : <ChevronRight size={15} className="text-muted" />}
+                <span className="text-sm font-semibold text-ink">{q.title}</span>
+                <Chip tone={rows.length ? q.tone : "grey"}>{rows.length}</Chip>
+                <span className="text-xs text-muted">{q.hint}</span>
+              </button>
+              {open && rows.length > 0 && (
+                <div className="max-h-[40vh] overflow-auto border-t border-line">
+                  <table className="data compact w-full">
+                    <thead>
+                      <tr>
+                        {tableFields.map((f) => (
+                          <th key={f.key} style={widthStyle(f)} className={`${isNumeric(f) ? "text-right" : ""} ${stageTint(registerKey, f.key).th}`}>
+                            <span className={colWidths[f.key] ? "block truncate" : ""}>{f.label}</span>
+                          </th>
+                        ))}
+                        <th className="text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((r) => (
+                        <tr key={r.id} onDoubleClick={() => data.canEdit && openEdit(r)}>
+                          {tableFields.map((f) => (
+                            <td key={f.key} style={colWidths[f.key] ? widthStyle(f) : undefined} className={`${isNumeric(f) ? "tnum text-right" : ""} ${colWidths[f.key] ? "overflow-hidden text-ellipsis whitespace-nowrap" : ""} ${stageTint(registerKey, f.key).td}`} title={f.type === "textarea" || colWidths[f.key] ? String(r[f.key] ?? "") : undefined}>
+                              <Cell field={f} row={r} />
+                            </td>
+                          ))}
+                          <td className="text-right">
+                            <div className="inline-flex items-center gap-0.5">
+                              {data.canEdit && <ChangePackButtons changeId={Number(r.id)} stage={String(r.current_stage ?? "")} />}
+                              <button className="btn btn-ghost btn-sm" onClick={() => setHistoryFor(r)} title="Change history">
+                                <History size={15} />
+                              </button>
+                              {data.canEdit && (
+                                <button className="btn btn-ghost btn-sm" onClick={() => openEdit(r)} title="Edit">
+                                  <Pencil size={15} />
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {open && rows.length === 0 && <div className="border-t border-line px-4 py-2 text-xs text-muted">Nothing open at this stage{Object.values(filters).some((v) => v !== "") || search.trim() ? " within the current search / filters" : ""}.</div>}
+            </div>
+          );
+        })}
+
       {/* Table */}
       <div className="card overflow-hidden">
         <div className="max-h-[70vh] overflow-auto">
@@ -449,9 +560,9 @@ ${lines.join("\n")}`)) return;
               <tr>
                 {data.canEdit && <th className="w-9" title="Edit" />}
                 {tableFields.map((f) => (
-                  <th key={f.key} style={f.width ? { width: f.width, minWidth: f.width } : undefined} className={isNumeric(f) ? "text-right" : ""}>
-                    <button className="inline-flex items-center gap-1 font-semibold text-muted hover:text-ink" onClick={() => toggleSort(f.key)}>
-                      {f.label}
+                  <th key={f.key} style={widthStyle(f)} className={`group relative ${isNumeric(f) ? "text-right" : ""} ${stageTint(registerKey, f.key).th}`}>
+                    <button className="inline-flex max-w-full items-center gap-1 font-semibold text-muted hover:text-ink" onClick={() => toggleSort(f.key)}>
+                      <span className={colWidths[f.key] ? "truncate" : ""}>{f.label}</span>
                       {effectiveSort?.field === f.key ? (
                         effectiveSort.dir === "asc" ? (
                           <ChevronUp size={13} />
@@ -462,6 +573,34 @@ ${lines.join("\n")}`)) return;
                         <ChevronsUpDown size={13} className="opacity-40" />
                       )}
                     </button>
+                    {/* hide this column (the Columns button brings it back) */}
+                    <button
+                      type="button"
+                      className="ml-1 inline-flex rounded p-0.5 text-muted opacity-0 transition hover:bg-black/5 hover:text-ink group-hover:opacity-100"
+                      title="Hide this column – the Columns button above brings it back"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const next = new Set(hiddenCols ?? allTableFields.filter((x) => !tableFields.some((t) => t.key === x.key)).map((x) => x.key));
+                        next.add(f.key);
+                        rememberCols(next);
+                      }}
+                    >
+                      <EyeOff size={12} />
+                    </button>
+                    {/* drag to set the column's width; double-click to let it size itself again */}
+                    <span
+                      role="separator"
+                      aria-orientation="vertical"
+                      className="absolute -right-0.5 top-0 z-[1] h-full w-2 cursor-col-resize select-none hover:bg-navy/30"
+                      title="Drag to change the column width · double-click to reset"
+                      onMouseDown={startResize(f.key)}
+                      onDoubleClick={(e) => {
+                        e.stopPropagation();
+                        const next = { ...colWidths };
+                        delete next[f.key];
+                        rememberWidths(next);
+                      }}
+                    />
                   </th>
                 ))}
                 <th className="text-right">Actions</th>
@@ -485,7 +624,7 @@ ${lines.join("\n")}`)) return;
                     </td>
                   )}
                   {tableFields.map((f) => (
-                    <td key={f.key} className={isNumeric(f) ? "tnum text-right" : ""} title={f.type === "textarea" ? String(r[f.key] ?? "") : undefined}>
+                    <td key={f.key} style={colWidths[f.key] ? widthStyle(f) : undefined} className={`${isNumeric(f) ? "tnum text-right" : ""} ${colWidths[f.key] ? "overflow-hidden text-ellipsis whitespace-nowrap" : ""} ${stageTint(registerKey, f.key).td}`} title={f.type === "textarea" || colWidths[f.key] ? String(r[f.key] ?? "") : undefined}>
                       <Cell field={f} row={r} />
                     </td>
                   ))}
@@ -660,6 +799,32 @@ function sortValue(f: FieldDef, r: RecordRow): unknown {
   if (f.type === "boolean") return r[f.key] === true ? 1 : 0;
   return r[f.key];
 }
+
+/**
+ * Light background per stage of the Change Management Tracker, so the RFC, PVO, VO, EI and DVO
+ * columns can be told apart at a glance: [header class, cell class].
+ */
+const STAGE_TINT: { prefix: string; th: string; td: string }[] = [
+  { prefix: "ew_", th: "bg-none! bg-slate-100!", td: "bg-slate-50/70" },
+  { prefix: "rfc_", th: "bg-none! bg-sky-100!", td: "bg-sky-50/70" },
+  { prefix: "pvo_", th: "bg-none! bg-amber-100!", td: "bg-amber-50/70" },
+  { prefix: "vo_", th: "bg-none! bg-violet-100!", td: "bg-violet-50/70" },
+  { prefix: "ei_", th: "bg-none! bg-teal-100!", td: "bg-teal-50/70" },
+  { prefix: "dvo_", th: "bg-none! bg-emerald-100!", td: "bg-emerald-50/70" },
+];
+
+function stageTint(registerKey: string, key: string): { th: string; td: string } {
+  if (registerKey !== "changes") return { th: "", td: "" };
+  const t = STAGE_TINT.find((x) => key.startsWith(x.prefix));
+  return t ? { th: t.th, td: t.td } : { th: "", td: "" };
+}
+
+/** The quick-catch lists above the Change Management Tracker: the open items at each stage. */
+const QUICK_LISTS: { key: string; title: string; hint: string; stages: string[]; tone: "amber" | "blue" | "green"; border: string }[] = [
+  { key: "pvo", title: "Open PVOs", hint: "Potential Variation Orders not yet closed – the full row, in the columns chosen below.", stages: ["PVO"], tone: "amber", border: "border-l-amber-400" },
+  { key: "vo", title: "Open VOs / EIs", hint: "Variation Orders and Engineer's Instructions not yet closed.", stages: ["VO", "EI"], tone: "blue", border: "border-l-violet-400" },
+  { key: "dvo", title: "Open DVOs", hint: "Determined Variation Orders still to be approved, including those at funding.", stages: ["DVO", "Funding"], tone: "green", border: "border-l-emerald-400" },
+];
 
 const ROW_TONE: Record<string, string> = {
   red: "bg-red-50/70",

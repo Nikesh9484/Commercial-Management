@@ -8,6 +8,7 @@ import type { FieldDef, RegisterDef } from "./registers/types";
 import { nowIso, formatMonthYear } from "./format";
 import { tidyRegisters } from "./text/tidy-registers";
 import { rederiveOverallStatuses } from "./changes/status";
+import { syncContractClosedChanges } from "./changes/auto-close";
 import { personalSetting, personalRequest, isSharedContextKey } from "./personal-context";
 
 /**
@@ -446,6 +447,14 @@ function seed(db: Database.Database) {
     if (n) console.log(`[migration] overall status brought in line with the stages on ${n} change(s)`);
   } catch (e) {
     console.warn("[migration] change status alignment skipped:", e);
+  }
+  // Every open change on a contract that is closed in the Final Account Status is closed, and one
+  // closed that way is reopened when the contract is. Cheap, so it runs every start.
+  try {
+    const r = syncContractClosedChanges(db);
+    if (r.closed || r.reopened) console.log(`[migration] ${r.closed} change(s) closed with their contract, ${r.reopened} reopened`);
+  } catch (e) {
+    console.warn("[migration] contract-closure sync skipped:", e);
   }
 
   if (getSetting(db, "deduped_early_warnings") !== "1") {

@@ -10,6 +10,7 @@ import { createRecord, updateRecord, listRecords, lookupOptions, ValidationError
 import type { UserInfo, RecordRow } from "../registers/types";
 import { lockPeriod, getPeriod, latestPeriod, takeSnapshot, restoreFromSnapshot, hasStoredCopy, clearSnapshotRegisters, nearestStoredBefore } from "../snapshots";
 import { logAudit } from "../audit";
+import { syncContractClosedChanges } from "../changes/auto-close";
 import { mergeDuplicateContractors } from "../contractors/merge";
 import { tidyText } from "../text/tidy";
 import { contractorKey } from "../bonds/name-key";
@@ -615,6 +616,12 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo, progres
     db.prepare("UPDATE reporting_periods SET excel_check = ? WHERE id = ?").run(JSON.stringify(req.excelCheck), periodId);
     db.prepare("UPDATE programmes SET hold_in_afa = ? WHERE id = ?").run(req.excelCheck.holdInAfa ? 1 : 0, programmeId);
   }
+  // every open change on a contract the Final Account Status closes is closed before the month is stored
+  try {
+    syncContractClosedChanges(db, programmeId);
+  } catch (e) {
+    console.warn("contract-closure sync skipped:", e);
+  }
   // the imported month is stored as this report's own data
   takeSnapshot(periodId, user, "import");
   // the workbook itself is kept: the month's report is written back into this very layout
@@ -648,6 +655,11 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo, progres
   if (older) {
     // put the live registers back to the latest report and return the top bar to it
     restoreFromSnapshot(db, latest!.id);
+    try {
+      syncContractClosedChanges(db, programmeId);
+    } catch (e) {
+      console.warn("contract-closure sync skipped:", e);
+    }
     setSetting(db, "current_period_id", String(latest!.id));
     logAudit(db, { registerKey: "reporting_periods", recordId: latest!.id, action: "context", user, summary: `Live figures restored to ${latest!.label} after importing ${period.label} (${baseNote})` });
   }

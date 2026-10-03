@@ -11,7 +11,7 @@ export const CHANGE_STAGES = [
 ] as const;
 
 /** Overall statuses that mean the change is no longer open. */
-export const CLOSED_STATUSES = ["Approved", "Rejected", "Cancelled", "Superseded", "Transferred", "Review Complete"];
+export const CLOSED_STATUSES = ["Approved", "Rejected", "Cancelled", "Superseded", "Transferred", "Review Complete", "Closed"];
 
 /** Stage statuses that mean the stage amount should no longer be carried in the cost report. */
 export const DEAD_STATUSES = ["Cancelled", "Rejected", "Superseded", "Transferred"];
@@ -84,7 +84,7 @@ export const changes: RegisterDef = {
     { key: "item_no", label: "Item No", type: "text", required: true, unique: true, section: HEADER, width: "7rem" },
     { key: "description", label: "Description", type: "textarea", required: true, section: HEADER },
     { key: "current_stage", label: "Current stage", type: "text", virtual: true, readonly: true, hideInForm: true, chip: true },
-    { key: "overall_status_id", label: "Overall status", type: "lookup", lookup: STATUS, chip: true, section: HEADER, filter: true, help: "Follows the stages: a DVO approved closes the change as Approved; a stage cancelled, rejected, superseded or transferred with nothing after it gives that status." },
+    { key: "overall_status_id", label: "Overall status", type: "lookup", lookup: STATUS, chip: true, section: HEADER, filter: true, help: "Follows the stages: a DVO approved closes the change as Approved; a stage cancelled, rejected, superseded or transferred with nothing after it gives that status. Every open change on a contract that is closed in the Final Account Status is set to Closed automatically." },
     { key: "days_open", label: "Days open", type: "number", virtual: true, readonly: true, hideInForm: true, help: "Amber over 30 days, red over 60 (open items only)." },
     { key: "date_raised", label: "Date raised", type: "date", section: HEADER, help: "Used for the Days open column." },
     { key: "asset_id", label: "Project / Asset", type: "lookup", lookup: { register: "assets" }, required: true, section: HEADER, filter: true },
@@ -92,6 +92,8 @@ export const changes: RegisterDef = {
     { key: "contractor_id", label: "Contractor / Consultant", type: "lookup", lookup: { register: "contractors" }, section: HEADER, filter: true },
     { key: "cost_line_id", label: "Cost report line", type: "lookup", lookup: { register: "cost_lines" }, section: HEADER, hideInTable: true, help: "Which Level 2 line this change feeds (columns H, J, K of the cost report)." },
     { key: "contract_closed", label: "Contract closed (final account)", type: "boolean", virtual: true, readonly: true, hideInForm: true, hideInTable: true, filter: true, help: "Worked out from the Final Account Status: the final account for this contract is signed, not required or a direct payment. The standard pending reports leave these out." },
+    { key: "closed_by_contract", label: "Closed by contract closure", type: "boolean", defaultValue: false, readonly: true, hideInForm: true, hideInTable: true, help: "Set when the change was closed automatically because its contract is closed in the Final Account Status; it reopens if the contract does." },
+    { key: "status_before_close_id", label: "Status before contract closure", type: "number", readonly: true, hideInForm: true, hideInTable: true },
     { key: "project_stage_id", label: "Project stage", type: "lookup", lookup: { register: "project_stages" }, section: HEADER, filter: true },
     { key: "change_category_id", label: "Change category", type: "lookup", lookup: { register: "change_categories" }, section: HEADER, filter: true },
     { key: "initiated_by_id", label: "Initiated by", type: "lookup", lookup: { register: "change_initiators" }, section: HEADER, filter: true },

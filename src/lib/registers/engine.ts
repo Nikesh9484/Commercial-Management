@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
-import { impliedOverallStatus } from "./defs/changes";
+import { CLOSED_STATUSES, impliedOverallStatus } from "./defs/changes";
+import { CONTRACT_CLOSED_STATUS, syncContractClosedChanges } from "../changes/auto-close";
 import { getDb, columnFor, getSetting } from "../db";
 import { getRegisterDef, allRegisters } from "./index";
 import { isEditorRole } from "./types";
@@ -324,7 +325,10 @@ function applyRules(def: RegisterDef, prepared: Prepared, mode: "create" | "upda
     }
     const storedId = v("overall_status_id");
     const stored = storedId === null || storedId === undefined || storedId === "" ? null : (names.get(Number(storedId)) ?? null);
-    const want = impliedOverallStatus(stage, stored, { dvoClosed: v("dvo_closed") === true || v("dvo_closed") === 1 });
+    let want = impliedOverallStatus(stage, stored, { dvoClosed: v("dvo_closed") === true || v("dvo_closed") === 1 });
+    // a change closed because its contract is closed stays closed, whatever an edit or a monthly
+    // import says, until the Final Account Status opens the contract again
+    if ((existing?.closed_by_contract === true || existing?.closed_by_contract === 1) && !CLOSED_STATUSES.includes(want)) want = CONTRACT_CLOSED_STATUS;
     const wantId = [...names.entries()].find(([, n]) => n === want)?.[0];
     if (wantId !== undefined && wantId !== Number(storedId ?? NaN)) {
       prepared.values.overall_status_id = wantId;
@@ -382,7 +386,21 @@ export function createRecord(def: RegisterDef, input: Record<string, unknown>, u
     summary: `${source === "import" ? "Imported" : "Added"} ${def.singular} "${describe(def, prepared.display)}"`,
     changes,
   });
+  afterWrite(def, prepared.values.programme_id);
   return getRecord(def, id)!;
+}
+
+/** Registers whose rows decide whether a contract – and so its changes – is closed. */
+const CLOSURE_SOURCES = ["final_accounts", "contracts", "changes"];
+
+/** Keeps the changes of a finished contract closed (and reopens them when it reopens) after a write to the registers that decide it. */
+function afterWrite(def: RegisterDef, programmeId: unknown) {
+  if (!CLOSURE_SOURCES.includes(def.key)) return;
+  try {
+    syncContractClosedChanges(getDb(), programmeId === null || programmeId === undefined || programmeId === "" ? undefined : Number(programmeId));
+  } catch (e) {
+    console.warn("[changes] contract-closure sync skipped:", e);
+  }
 }
 
 export function updateRecord(
@@ -434,6 +452,7 @@ export function updateRecord(
       .join(", ")}`,
     changes,
   });
+  afterWrite(def, existing.programme_id);
   return getRecord(def, id)!;
 }
 
