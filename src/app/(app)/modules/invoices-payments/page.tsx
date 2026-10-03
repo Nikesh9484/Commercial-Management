@@ -61,7 +61,7 @@ export default async function PaymentsPage() {
                 endpoint="/api/payments/from-documents"
                 title="Update the payment tracker from documents"
                 intro="Drop the payment application transmittal, the Interim Payment Certificate letter or the payment certificate pack – for one application or many, with their Aconex mails. The application number, the dates, the Aconex references and the amounts are read and the IPC log of that contract is written, whatever report is selected."
-                tip="A row already holding a different value for something the documents give stops the upload: the old and the new are shown side by side for you to replace or keep. Anything the files do not give is listed with the entry – use the pencil on the row to add it."
+                tip="A row already holding a different value for something the documents give stops the upload: the old and the new are shown side by side for you to replace or keep (the two can be mixed; a row left without a choice is kept as it is). Anything the files do not give is listed with the entry – use the pencil on the row to add it."
               />
             )}
             {ctx.period ? (

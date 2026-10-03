@@ -9,6 +9,7 @@ import { matchAgainstRegisters } from "../library/read";
 import { getAppContext } from "../context";
 import { formatDate, formatMoney, todayIso } from "../format";
 import type { Decisions, Duplicate, FromDocsResult, Outcome, ReadValue } from "../from-docs-shared";
+import { decide } from "../from-docs-shared";
 
 /**
  * The payment tracker from its own documents: the contractor's transmittal of an Interim Payment
@@ -454,8 +455,8 @@ export async function addPaymentsFromDocuments(files: DocFile[], user: UserInfo,
     plans.push({ key, docs: g.docs, programme: g.programme, contract: g.contract, existing, record, patch, conflicts, read, missing, history, label: `${g.contract.contractor || g.contract.title} – ${String(record.application_no ?? existing?.application_no ?? month ?? "")}` });
   }
 
-  const undecided = plans.filter((pl) => pl.existing && pl.conflicts.length && !decisions[pl.key]);
-  const undecidedHistory = plans.flatMap((pl) => pl.history.filter((h) => h.conflicts.length && !decisions[h.key]).map((h) => ({ pl, h })));
+  const undecided = plans.filter((pl) => pl.existing && pl.conflicts.length && !decide(decisions, pl.key));
+  const undecidedHistory = plans.flatMap((pl) => pl.history.filter((h) => h.conflicts.length && !decide(decisions, h.key)).map((h) => ({ pl, h })));
   if (undecided.length || undecidedHistory.length) {
     result.needsDecision = true;
     const existingOf = (pl: Plan, row: RecordRow) => ({ id: Number(row.id), label: `${row.application_no ?? ""} (${row.month ?? "–"})`, detail: `${pl.contract.contractor} – applied ${show(row.cumulative_claimed)}, IPC ${row.ipc_no ?? "–"} of ${row.ipc_date ? formatDate(String(row.ipc_date)) : "–"}, certified ${show(row.cumulative_certified)}` });
@@ -480,7 +481,7 @@ export async function addPaymentsFromDocuments(files: DocFile[], user: UserInfo,
   for (const pl of plans) {
     const outcome = (action: Outcome["action"], row: RecordRow): Outcome => ({ action, id: Number(row.id), label: String(row.application_no ?? row.id), description: `${pl.contract.contractor || pl.contract.title} – ${row.month ?? ""}${row.ipc_no ? `, IPC ${row.ipc_no}` : ""}`, programme: pl.programme.name, files: pl.docs.map((d) => d.name), read: pl.read, missing: pl.missing });
     if (pl.existing) {
-      if (pl.conflicts.length && decisions[pl.key] === "keep") {
+      if (pl.conflicts.length && decide(decisions, pl.key) === "keep") {
         // keep the old values: only the blanks are filled
         for (const c of pl.conflicts) {
           const k = def.fields.find((f) => f.label === c.label)?.key ?? c.label;
@@ -488,14 +489,14 @@ export async function addPaymentsFromDocuments(files: DocFile[], user: UserInfo,
         }
       }
       const row = updateRecord(def, Number(pl.existing.id), pl.patch, user, "import", { bypassRoles: true });
-      result.entries.push(outcome(pl.conflicts.length && decisions[pl.key] === "keep" ? "kept" : "updated", row));
+      result.entries.push(outcome(pl.conflicts.length && decide(decisions, pl.key) === "keep" ? "kept" : "updated", row));
     } else {
       const row = createRecord(def, pl.record, user, "import", { bypassRoles: true });
       result.entries.push(outcome("created", row));
     }
     for (const h of pl.history.sort((a, b) => a.no - b.no)) {
       try {
-        const keep = h.conflicts.length > 0 && decisions[h.key] === "keep";
+        const keep = h.conflicts.length > 0 && decide(decisions, h.key) === "keep";
         if (keep) for (const c of h.conflicts) delete h.patch[def.fields.find((f) => f.label === c.label)?.key ?? c.label];
         if (h.existing && !Object.keys(h.patch).length) continue;
         const row = h.existing ? updateRecord(def, Number(h.existing.id), h.patch, user, "import", { bypassRoles: true }) : createRecord(def, h.record, user, "import", { bypassRoles: true });

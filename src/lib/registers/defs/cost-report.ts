@@ -11,7 +11,7 @@ export const costLines: RegisterDef = {
   singular: "Cost line",
   description: "Level 2 rows of the cost report: one per package / contractor with its approved baseline budget.",
   displayField: "code",
-  displayFields: ["code", "name"],
+  displayFields: ["name", "code"],
   scope: "programme",
   snapshot: true,
   defaultSort: { field: "sort_order", dir: "asc" },

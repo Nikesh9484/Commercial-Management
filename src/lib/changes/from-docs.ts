@@ -10,6 +10,7 @@ import { ensureOpenMonth } from "../periods";
 import { getAppContext } from "../context";
 import { formatDate, formatMoney, todayIso } from "../format";
 import type { Decisions, Duplicate, FromDocsResult, Outcome, ReadValue } from "../from-docs-shared";
+import { decide } from "../from-docs-shared";
 
 /**
  * A change entry made from its own documents. The RFC, the PVO, the EVO, the EI, the RFA or the DVO
@@ -441,7 +442,7 @@ export async function addChangesFromDocuments(files: DocFile[], user: UserInfo, 
   }
 
   // a duplicate waits for a decision: nothing is written until every one has it
-  const undecided = plans.filter((pl) => pl.existing && !decisions[pl.key]);
+  const undecided = plans.filter((pl) => pl.existing && !decide(decisions, pl.key));
   if (undecided.length) {
     const statusName = (id: unknown) => L.statusName(Number(id));
     const show = (v: unknown) => (v === null || v === undefined || v === "" ? "–" : typeof v === "number" ? formatMoney(v) : String(v));
@@ -484,7 +485,7 @@ export async function addChangesFromDocuments(files: DocFile[], user: UserInfo, 
   // every new entry goes under the current month's report
   const rolled = new Set<number>();
   for (const pl of plans) {
-    if (pl.existing && decisions[pl.key] === "keep") {
+    if (pl.existing && decide(decisions, pl.key) === "keep") {
       result.entries.push({ action: "kept", id: Number(pl.existing.id), label: String(pl.existing.item_no ?? ""), description: String(pl.existing.description ?? ""), programme: pl.programme.name, files: pl.docs.map((d) => d.name), read: pl.read, missing: pl.missing });
       continue;
     }

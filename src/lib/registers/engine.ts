@@ -2,6 +2,7 @@ import type Database from "better-sqlite3";
 import { impliedOverallStatus } from "./defs/changes";
 import { getDb, columnFor, getSetting } from "../db";
 import { getRegisterDef, allRegisters } from "./index";
+import { isEditorRole } from "./types";
 import type { FieldDef, LookupOption, RecordRow, RegisterDef, UserInfo } from "./types";
 import { canEditRegister, canViewRegister, canCreateRegister } from "./types";
 import { logAudit } from "../audit";
@@ -433,6 +434,7 @@ export function updateRecord(
 
 export function deleteRecord(def: RegisterDef, id: number, user: UserInfo): void {
   assertCanEdit(def, user);
+  if (!isEditorRole(user.role)) throw new ValidationError("Only an admin or editor can delete rows.");
   const db = getDb();
   const existing = getRecord(def, id);
   if (!existing) return;

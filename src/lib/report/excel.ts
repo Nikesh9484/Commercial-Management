@@ -1201,6 +1201,11 @@ export interface RegisterRef {
 
 function cell(f: FieldDef, r: RecordRow): unknown {
   const v = r[f.key];
+  // a payment not yet made: the expected date / running total, marked as expected
+  if ((v === null || v === undefined || v === "") && r[`${f.key}__expected`] !== undefined && r[`${f.key}__expected`] !== null) {
+    const e = r[`${f.key}__expected`];
+    return f.type === "date" ? `${formatDate(String(e))} (exp.)` : `${f.type === "money" ? formatMoney(Number(e)) : String(e)} (exp.)`;
+  }
   if (v === null || v === undefined) return "";
   switch (f.type) {
     case "date":

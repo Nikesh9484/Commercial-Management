@@ -26,6 +26,7 @@ export interface ApplicationRow {
   cumulative_claimed: number | null;
   ipc_date: string | null;
   cumulative_certified: number | null;
+  invoice_date?: string | null;
   paid_date: string | null;
 }
 
@@ -47,7 +48,52 @@ export interface ApplicationComputed {
   final_amount_paid: number | null;
   cumulative_paid: number | null;
   net_paid_running: number | null;
+  /** certified but not yet paid: when Finance is expected to pay, from the contract's own payment history */
+  paid_date_expected: string | null;
+  payment_days_late_expected: number | null;
+  cumulative_paid_expected: number | null;
+  expected_basis: string | null;
   row_tone: "amber" | "red" | null;
+}
+
+const median = (xs: number[]) => {
+  if (!xs.length) return null;
+  const s = [...xs].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : Math.round((s[m - 1] + s[m]) / 2);
+};
+
+/**
+ * How long Finance takes to pay, learnt from what has been paid: the days from the invoice approval
+ * (the certification approved) to the paid date, else from the IPC date to the paid date – the
+ * median of the contract's last six payments, else of every payment on the programme.
+ */
+function paymentLags(apps: ApplicationRow[]) {
+  const lag = (from: string | null | undefined, to: string | null) => (from && to ? daysBetween(from, to) : null);
+  const per = new Map<number, { inv: number[]; ipc: number[] }>();
+  const all = { inv: [] as number[], ipc: [] as number[] };
+  for (const a of apps) {
+    if (!a.paid_date) continue;
+    const e = per.get(a.contract_id) ?? { inv: [], ipc: [] };
+    const li = lag(a.invoice_date, a.paid_date);
+    const lp = lag(a.ipc_date, a.paid_date);
+    if (li !== null && li >= 0 && li < 400) {
+      e.inv.push(li);
+      all.inv.push(li);
+    }
+    if (lp !== null && lp >= 0 && lp < 400) {
+      e.ipc.push(lp);
+      all.ipc.push(lp);
+    }
+    per.set(a.contract_id, e);
+  }
+  const last6 = (xs: number[]) => xs.slice(-6);
+  return (contractId: number, kind: "inv" | "ipc"): { days: number; from: string } | null => {
+    const mine = per.get(contractId)?.[kind] ?? [];
+    if (mine.length >= 2) return { days: median(last6(mine))!, from: `this contract's last ${Math.min(6, mine.length)} payments` };
+    if (all[kind].length >= 3) return { days: median(all[kind])!, from: `the programme's ${all[kind].length} payments` };
+    return null;
+  };
 }
 
 export interface ContractComputed {
@@ -94,6 +140,8 @@ export function computeApplications(contracts: ContractRow[], apps: ApplicationR
   let prevCumCert = 0;
   let cumPaid = 0;
   let netPaid = 0;
+  let cumAll = 0;
+  const lagOf = paymentLags(apps);
   for (const a of apps) {
     const c = byContract.get(a.contract_id);
     if (!prev || prev.contract_id !== a.contract_id) {
@@ -101,6 +149,7 @@ export function computeApplications(contracts: ContractRow[], apps: ApplicationR
       prevCumCert = 0;
       cumPaid = 0;
       netPaid = 0;
+      cumAll = 0;
     }
     const adv = num(c?.advance_recovery_pct) / 100;
     const ret = num(c?.retention_pct) / 100;
@@ -134,6 +183,34 @@ export function computeApplications(contracts: ContractRow[], apps: ApplicationR
       cumPaid = r2(cumPaid + finalAmt);
       netPaid = r2(netPaid + netPayment!);
       cumulativePaid = cumPaid;
+      cumAll = r2(cumAll + finalAmt);
+    }
+    // certified but not yet paid: Finance is expected to pay the way it has paid before – from the
+    // invoice approval (the certification approved) with the usual delay, else from the IPC date,
+    // else on the contractual due date
+    let expected: string | null = null;
+    let basis: string | null = null;
+    if (!a.paid_date && finalAmt !== null && Math.abs(finalAmt) > 0.004 && a.cumulative_certified !== null && a.cumulative_certified !== undefined) {
+      const inv = a.invoice_date ? lagOf(a.contract_id, "inv") : null;
+      const ipc = a.ipc_date ? lagOf(a.contract_id, "ipc") : null;
+      if (a.invoice_date && inv) {
+        expected = addDays(a.invoice_date, inv.days);
+        basis = `invoice approved ${a.invoice_date} + ${inv.days} days (${inv.from})`;
+      } else if (a.ipc_date && ipc) {
+        expected = addDays(a.ipc_date, ipc.days);
+        basis = `IPC ${a.ipc_date} + ${ipc.days} days (${ipc.from})`;
+      } else if (payDue) {
+        expected = payDue;
+        basis = "the contractual payment due date";
+      } else if (c && c.ipc_days !== null && c.payment_days !== null) {
+        expected = addDays(a.application_date, num(c.ipc_days) + num(c.payment_days));
+        basis = "application date + days to issue IPC + days to pay";
+      }
+    }
+    let cumulativeExpected: number | null = null;
+    if (expected && finalAmt !== null) {
+      cumAll = r2(cumAll + finalAmt);
+      cumulativeExpected = cumAll;
     }
 
     let tone: ApplicationComputed["row_tone"] = null;
@@ -158,6 +235,10 @@ export function computeApplications(contracts: ContractRow[], apps: ApplicationR
       final_amount_paid: finalAmt,
       cumulative_paid: cumulativePaid,
       net_paid_running: a.paid_date ? netPaid : null,
+      paid_date_expected: expected,
+      payment_days_late_expected: expected && payDue ? daysBetween(payDue, expected) : null,
+      cumulative_paid_expected: cumulativeExpected,
+      expected_basis: basis,
       row_tone: tone,
     });
     prev = a;
@@ -224,10 +305,18 @@ export function mergeComputed(
   for (const r of rows) {
     const comp = key === "contracts" ? computed.contracts.get(Number(r.id)) : computed.applications.get(Number(r.id));
     if (!comp) continue;
-    const { row_tone, ...values } = comp as unknown as Record<string, unknown> & { row_tone?: string | null };
+    const { row_tone, paid_date_expected, payment_days_late_expected, cumulative_paid_expected, expected_basis, ...values } = comp as unknown as Record<string, unknown> & { row_tone?: string | null; paid_date_expected?: string | null; payment_days_late_expected?: number | null; cumulative_paid_expected?: number | null; expected_basis?: string | null };
     Object.assign(r, values);
     if (key === "payment_applications") {
       r.__row_tone = row_tone ?? null;
+      // not paid yet: the expected payment is shown in the paid columns, marked as expected, and never
+      // written to the row – the real date replaces it when Finance pays
+      if (paid_date_expected && !r.paid_date) {
+        r.paid_date__expected = paid_date_expected;
+        r.payment_days_late__expected = payment_days_late_expected ?? null;
+        r.cumulative_paid__expected = cumulative_paid_expected ?? null;
+        r.__expected_basis = expected_basis ?? null;
+      }
       for (const k of ["ipc_days_late", "payment_days_late"]) {
         const v = r[k] as number | null;
         r[`${k}__tone`] = v === null || v === undefined ? null : v > 0 ? "red" : v < 0 ? "green" : null;

@@ -89,14 +89,12 @@ export function AddFromDocuments({ endpoint, title, button = "Add from documents
 
   async function applyDecisions() {
     if (!result) return;
+    // Replace and Keep can be mixed; a card left without a choice is kept as it is, once confirmed
     const missing = result.duplicates.filter((d) => !decisions[d.key]);
-    if (missing.length) {
-      toast("Choose Replace or Keep the old for every duplicate first.", "error");
-      return;
-    }
+    if (missing.length && !window.confirm(`${missing.length} of ${result.duplicates.length} ha${missing.length === 1 ? "s" : "ve"} no choice yet (${missing.slice(0, 4).map((d) => d.existing.label).join(", ")}${missing.length > 4 ? ", …" : ""}). Keep ${missing.length === 1 ? "it" : "them"} as ${missing.length === 1 ? "it is" : "they are"} and apply the rest?`)) return;
     setBusy("Writing the entries…");
     try {
-      announce(await post({ batch, apply: true, decisions }));
+      announce(await post({ batch, apply: true, decisions: missing.length ? { ...decisions, "*": "keep" } : decisions }));
     } catch (e) {
       toast(e instanceof Error ? e.message : "Something went wrong.", "error");
     } finally {

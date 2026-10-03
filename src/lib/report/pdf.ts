@@ -2222,7 +2222,8 @@ function registerTable(ctx: Ctx, key: string) {
     label: f.label,
     width: f.type === "textarea" ? 2.4 : f.type === "money" ? 1.3 : f.type === "date" ? 0.9 : f.type === "number" || f.type === "percent" ? 0.8 : f.type === "boolean" ? 0.7 : 1.2,
     align: f.type === "money" || f.type === "number" || f.type === "percent" ? "right" : "left",
-    format: (v) => formatField(f, v),
+    // a payment not yet made shows its expected date and running total, marked
+    format: (v, row) => ((v === null || v === undefined || v === "") && row[`${f.key}__expected`] !== undefined && row[`${f.key}__expected`] !== null ? `${formatField(f, row[`${f.key}__expected`])} (exp.)` : formatField(f, v)),
   }));
   const totalRow: Record<string, unknown> | undefined = def.totals?.length
     ? Object.fromEntries([[cols[0].key, `Total (${rows.length})`], ...def.totals.map((k) => [k, formatMoney(rows.reduce((t, r) => t + (Number(r[k] ?? 0) || 0), 0))])])

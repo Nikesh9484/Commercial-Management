@@ -6,6 +6,7 @@ import { getRegisterDef } from "@/lib/registers";
 import { recordsForView } from "@/lib/view-mode";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { BondsWorkspace } from "@/components/bonds/BondsWorkspace";
+import { findBondDuplicates } from "@/lib/bonds/duplicates";
 
 export const metadata = { title: "Bonds & Insurance" };
 
@@ -14,6 +15,7 @@ export default async function BondsPage() {
   const mod = getModule("bonds-insurance")!;
   const ctx = getAppContext();
   const bondRows = ctx.programme ? recordsForView(getRegisterDef("bonds")!) : [];
+  const duplicates = ctx.programme ? findBondDuplicates(ctx.programme.id) : [];
 
   return (
     <div className="space-y-5">
@@ -24,7 +26,7 @@ export default async function BondsPage() {
         subtitle="Every bond and insurance policy: what the contract requires, what has been provided, and when it expires."
       />
       {ctx.programme ? (
-        <BondsWorkspace rows={bondRows} isAdmin={user.role === "admin"} hasPeriod={!!ctx.period} canUpload={["admin", "editor", "contributor", "reporter"].includes(user.role)} />
+        <BondsWorkspace rows={bondRows} isAdmin={user.role === "admin"} hasPeriod={!!ctx.period} canUpload={["admin", "editor", "contributor", "reporter"].includes(user.role)} duplicates={duplicates} canMerge={user.role === "admin" || user.role === "editor"} />
       ) : (
         <div className="card flex items-center gap-2 p-5 text-sm text-muted">
           <AlertTriangle size={16} /> Select a programme in the top bar first.

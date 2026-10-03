@@ -668,6 +668,22 @@ const items = (v: unknown) =>
     return { ref: "", desc: l, omit: 0, add: 0 };
   });
 
+/**
+ * A drafted form goes out for approval: the signatures, stamps and initials on the earlier document
+ * come off (every picture below the heading named, or below the page's top band when none is), and
+ * anything written under the last signatory block – a contractor's note – goes too; the footer stays.
+ */
+function stripDraftMarks(s: Sheet, firstBlock: RegExp | null, opts: { keepTop?: number; footer?: RegExp } = {}) {
+  const hit = firstBlock ? s.find(firstBlock) : null;
+  const limit = hit ? hit.row.y + 4 : s.height * (opts.keepTop ?? 0.86);
+  s.removePictures((p) => p.y + p.h / 2 < limit);
+  const labels = s.pos.rows.filter((r) => r.cells.some((c) => /^name$/i.test(c.s)) && r.cells.some((c) => /^(signature|date)$/i.test(c.s)));
+  if (!labels.length) return;
+  const last = labels.reduce((a, b) => (b.y < a.y ? b : a));
+  const footer = opts.footer ?? /^(RSG-CM-FRM|TRS-CM-FRM|RSG-PR-FRM|Rev(ision|\.)|Page \d|Internal|Confidential|Variation Order Form|Determination of Variation Order|Proposed Variation Order|Request for Approval)/i;
+  for (const r of s.pos.rows) if (r.y < last.y - 3) for (const c of r.cells) if (!footer.test(c.s.trim())) s.replaceCell(c, "", { size: c.h });
+}
+
 /** every Name / Position / Signature / Date row under a heading, written for this pack's people */
 function signatories(sh: Sheet, from: string | RegExp, to: (string | RegExp)[], names: string[], positions: string[], opts: { keepFirstSignature?: boolean } = {}) {
   const hit = sh.find(from);
@@ -726,6 +742,7 @@ export async function overlayPvo(refBytes: Buffer, v: PackValues, opts: { target
   const potential = current + pvos + total;
   const other = num(v.other_contracts);
   if (s1) {
+    s1.removePictures((p) => p.y + p.h / 2 < s1.height * 0.86);
     const gen: [string, string | RegExp, string | undefined, (string | RegExp)[]][] = [
       ["pvo_no", "Proposed Variation Order No", v.pvo_no, ["Date"]],
       ["date", /^Date:?$/, dmy(v.date), []],
@@ -880,6 +897,15 @@ export async function overlayPvo(refBytes: Buffer, v: PackValues, opts: { target
     s2.replaceRight("d) Estimated 'time impact' of this variation (Days)", String(impact), { align: "right" });
     s2.replaceRight("e) Other anticipated EOTs", String(others), { align: "right" });
     // signatories: every Name / Position / Signature / Date row under Prepared and Approved
+    // stamps and notes outside the signatory rows (the preparer's own signature is kept by the rows below)
+    {
+      const labels = s2.pos.rows.filter((r) => r.cells.some((c) => /^name$/i.test(c.s)) && r.cells.some((c) => /^signature$/i.test(c.s)));
+      if (labels.length) {
+        const last = labels.reduce((a, b) => (b.y < a.y ? b : a));
+        s2.removePictures((p) => p.y + p.h / 2 < last.y - 3);
+        for (const r of s2.pos.rows) if (r.y < last.y - 3) for (const c of r.cells) if (!/^(RSG-CM-FRM|Rev\.|Page \d|Internal|Confidential)/i.test(c.s.trim())) s2.replaceCell(c, "", { size: c.h });
+      }
+    }
     signatories(s2, /^Prepared(\s*\/\s*Initiated)?\s*By:?$/i, ["Checked by", "Approved by", "Review & Approval"], lines(v.prepared_by), lines(v.prepared_position), { keepFirstSignature: true });
     signatories(s2, "Checked by (Pre-Approval)", ["Approved by"], lines(v.checked_by), lines(v.checked_position));
     signatories(s2, /^Approved by/, [/^RSG-CM-FRM/], lines(v.approved_by), lines(v.approved_position));
@@ -985,6 +1011,7 @@ export async function overlayDvo(refBytes: Buffer, v: PackValues): Promise<Buffe
   for (const s of o.sheets) {
     const text = pageText(s.pos);
     if (/PVO to DVO Cost Movement Summary/i.test(text)) {
+      s.removePictures((p) => p.y + p.h / 2 < s.height * 0.86);
       const vals = s.pos.rows.find((r) => r.cells.filter((c) => /^SAR\s/i.test(c.s)).length >= 2);
       if (vals) {
         const cs = vals.cells.filter((c) => /^SAR\s/i.test(c.s));
@@ -1094,6 +1121,8 @@ export async function overlayDvo(refBytes: Buffer, v: PackValues): Promise<Buffe
         if (desc) s.replaceCell(desc, `Final Proposal for ${title}`, { align: "left", rightEdge: (r.cells.find((c) => isNumeric(c.s) && c.x > desc.x + 20)?.x ?? s.tableRight - 90) - 8 });
       }
     });
+    // the earlier DVO's signatures, stamps and notes are not carried into the draft
+    stripDraftMarks(s, is27 ? /^Review and Recommendation Panel/ : /^Final Determination by the Employer/);
     // signatories
     const sign = (heading: string | RegExp, stop: (string | RegExp)[], names: string[], positions: string[]) => {
       const hit = s.find(heading);
@@ -1147,6 +1176,7 @@ export async function overlayRfa(refBytes: Buffer, v: PackValues, attachments: s
   const lead = 13.6;
   // the description pages: everything after the recommended-for-approval page
   let descPages = o.sheets.filter((s) => /Request for Approval . Description|^Background|Justification|Next Steps|Attachments/i.test(pageText(s.pos)) && !/Recommended for Approval/i.test(pageText(s.pos)) && !/General Information/i.test(pageText(s.pos)));
+  for (const s of o.sheets) s.removePictures((p) => p.y + p.h / 2 < s.height * 0.86);
   for (const s of o.sheets) {
     const text = pageText(s.pos);
     if (/General Information/i.test(text) && /RFA Form Reference/i.test(text)) {

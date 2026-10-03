@@ -15,6 +15,8 @@ export const bonds: RegisterDef = {
   scope: "programme",
   // a standalone tracker: read live whatever report is selected, so a locked month's report and its downloads carry the bonds as they stand today
   snapshot: false,
+  // the user accounts ("View & reports only") upload the bond documents, so they correct the entries too; deleting stays with the admin and editors
+  editRoles: ["admin", "editor", "contributor", "reporter"],
   defaultSort: { field: "expiry_date", dir: "asc" },
   totals: ["original_contract_sum", "required_amount", "amount_provided", "variance"],
   fields: [
@@ -44,6 +46,7 @@ export const bonds: RegisterDef = {
     { key: "approved", label: "Approved", type: "boolean", defaultValue: false, filter: true },
     { key: "bank_verification", label: "Bank verification", type: "boolean", defaultValue: false, filter: true },
     { key: "comments", label: "Comments", type: "textarea" },
+    { key: "documents", label: "Documents", type: "text", virtual: true, readonly: true, hideInForm: true, help: "The guarantee, certificate, amendment or transmittal kept with the entry when it was added or updated from documents. Click a name to open it." },
   ],
 };
 

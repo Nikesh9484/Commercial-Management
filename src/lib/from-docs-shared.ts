@@ -35,3 +35,12 @@ export interface FromDocsResult {
   warnings: string[];
 }
 export type Decisions = Record<string, "replace" | "keep">;
+
+/**
+ * The choice made for one duplicate. Replace and Keep can be mixed freely across the list; a card
+ * left without a choice follows the list's default ("*"), which the dialog sets to Keep the old once
+ * the person confirms – so an upload is never stuck on one undecided row.
+ */
+export function decide(decisions: Decisions, key: string): "replace" | "keep" | undefined {
+  return decisions[key] ?? decisions["*"];
+}

@@ -193,6 +193,9 @@ const REPORTER_WRITES: { method: string; path: string }[] = [
   ...["POST", "PUT", "PATCH", "DELETE"].flatMap((method) => [{ method, path: "/api/kpi" }, { method, path: "/api/packs" }]),
   // bonds and insurance documents are uploaded by the user account as well: the register is updated from them
   { method: "POST", path: "/api/bonds/from-documents" },
+  // and corrects the entries by hand (adding and editing; deleting stays with the admin and editors)
+  { method: "PUT", path: "/api/registers/bonds" },
+  { method: "POST", path: "/api/registers/bonds" },
   { method: "POST", path: "/api/payments/from-documents" },
   { method: "POST", path: "/api/feed/from-documents" },
 ];

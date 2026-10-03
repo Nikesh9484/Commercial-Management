@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 
 import { useScopeKey } from "@/components/layout/ScopeContext";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Plus, Search, Download, Upload, Pencil, Trash2, History, ChevronUp, ChevronDown, ChevronsUpDown, RefreshCw, Lock, Unlock, Filter, X, ExternalLink, Columns3 } from "lucide-react";
+import { Plus, Search, Download, Upload, Pencil, Trash2, History, RotateCcw, ChevronUp, ChevronDown, ChevronsUpDown, RefreshCw, Lock, Unlock, Filter, X, ExternalLink, Columns3 } from "lucide-react";
 import type { FieldDef, LookupOption, RecordRow, RegisterDef } from "@/lib/registers/types";
 import { formatDate, formatMoney, formatNumber, formatPercent } from "@/lib/format";
 import { Chip } from "@/components/ui/Chip";
@@ -30,8 +30,10 @@ interface Loaded {
   rows: RecordRow[];
   lookups: Record<string, LookupOption[]>;
   canEdit: boolean;
-  /** May add rows (editors, admins and "data entry" users). canEdit covers editing and deleting. */
+  /** May add rows (editors, admins and "data entry" users). */
   canCreate?: boolean;
+  /** May delete rows (admins and editors); when missing, everyone who may edit may delete. */
+  canDelete?: boolean;
   readOnlyReason?: string | null;
   scopeDefaults?: Record<string, number>;
 }
@@ -291,6 +293,26 @@ export function RegisterPage({
     router.refresh();
   }
 
+  // an entry goes back to how it stood in the last issued report; one added since is removed
+  async function resetRow(row: RecordRow) {
+    if (!def) return;
+    const name = String(row[def.displayField] ?? `#${row.id}`);
+    const pre = await fetch(`/api/registers/${registerKey}/${row.id}/reset`).then((r) => r.json().catch(() => ({})));
+    if (pre.error) return toast(pre.error, "error");
+    if (pre.action === "none") return toast(pre.why);
+    if (!pre.canApply) return toast(pre.why, "error");
+    const lines = pre.action === "remove" ? [pre.why] : [pre.why, "", ...pre.changes.map((c: { label: string; from: string; to: string }) => `${c.label}: ${c.from} → ${c.to}`), ...(pre.skipped?.length ? ["", `Cannot be taken back: ${pre.skipped.join(", ")}`] : [])];
+    if (!window.confirm(`Reset ${def.singular} ${name} to ${pre.report}?
+
+${lines.join("\n")}`)) return;
+    const res = await fetch(`/api/registers/${registerKey}/${row.id}/reset`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) return toast(j.error ?? "Could not reset.", "error");
+    toast(j.action === "remove" ? `${def.singular} ${name} removed – it was added after ${j.report}.` : `${def.singular} ${name} reset to ${j.report}.`);
+    await load();
+    router.refresh();
+  }
+
   async function periodAction(row: RecordRow, action: "lock" | "unlock") {
     let res = await fetch(`/api/periods/${row.id}/${action}`, { method: "POST" });
     let j = await res.json().catch(() => ({}));
@@ -425,6 +447,7 @@ export function RegisterPage({
           <table className="data w-full">
             <thead>
               <tr>
+                {data.canEdit && <th className="w-9" title="Edit" />}
                 {tableFields.map((f) => (
                   <th key={f.key} style={f.width ? { width: f.width, minWidth: f.width } : undefined} className={isNumeric(f) ? "text-right" : ""}>
                     <button className="inline-flex items-center gap-1 font-semibold text-muted hover:text-ink" onClick={() => toggleSort(f.key)}>
@@ -454,6 +477,13 @@ export function RegisterPage({
               )}
               {pageRows.map((r) => (
                 <tr key={r.id} onDoubleClick={() => data.canEdit && openEdit(r)} className={ROW_TONE[String(r.__row_tone ?? "")] ?? ""}>
+                  {data.canEdit && (
+                    <td className="w-9 pr-0">
+                      <button className="btn btn-ghost btn-sm" onClick={() => openEdit(r)} title="Edit this entry">
+                        <Pencil size={14} />
+                      </button>
+                    </td>
+                  )}
                   {tableFields.map((f) => (
                     <td key={f.key} className={isNumeric(f) ? "tnum text-right" : ""} title={f.type === "textarea" ? String(r[f.key] ?? "") : undefined}>
                       <Cell field={f} row={r} />
@@ -481,14 +511,21 @@ export function RegisterPage({
                       <button className="btn btn-ghost btn-sm" onClick={() => setHistoryFor(r)} title="Change history">
                         <History size={15} />
                       </button>
+                      {data.canEdit && ["payment_applications", "contracts", "bonds"].includes(registerKey) && (
+                        <button className="btn btn-ghost btn-sm" onClick={() => resetRow(r)} title="Reset to the previous report – the entry goes back to how it stood in the last issued report; one added since is removed">
+                          <RotateCcw size={15} />
+                        </button>
+                      )}
                       {data.canEdit && (
                         <>
                           <button className="btn btn-ghost btn-sm" onClick={() => openEdit(r)} title="Edit">
                             <Pencil size={15} />
                           </button>
-                          <button className="btn btn-ghost btn-sm text-red-600" onClick={() => setDeleting(r)} title="Delete">
-                            <Trash2 size={15} />
-                          </button>
+                          {(data.canDelete ?? true) && (
+                            <button className="btn btn-ghost btn-sm text-red-600" onClick={() => setDeleting(r)} title="Delete">
+                              <Trash2 size={15} />
+                            </button>
+                          )}
                         </>
                       )}
                     </div>
@@ -637,9 +674,34 @@ const TONE_CLASS: Record<string, string> = {
 
 function Cell({ field: f, row: r }: { field: FieldDef; row: RecordRow }) {
   const v = r[f.key];
-  if (v === null || v === undefined || v === "") return <span className="text-muted/60">—</span>;
+  if (v === null || v === undefined || v === "") {
+    // a figure the dashboard expects rather than knows (a payment not yet made): shown in its column, marked
+    const exp = r[`${f.key}__expected`];
+    if (exp !== null && exp !== undefined && exp !== "") {
+      const shown = f.type === "date" ? formatDate(String(exp)) : f.type === "money" ? formatMoney(Number(exp)) : f.type === "number" ? formatNumber(Number(exp), Number.isInteger(exp) ? 0 : 2) : String(exp);
+      return (
+        <span className="inline-flex items-center gap-1 italic text-amber-700" title={`Expected – not yet paid. Worked out from ${String(r.__expected_basis ?? "the payment history")}.`}>
+          {shown}
+          <span className="rounded bg-amber-100 px-1 py-px text-[9px] font-semibold not-italic uppercase tracking-wide text-amber-800">exp.</span>
+        </span>
+      );
+    }
+    return <span className="text-muted/60">—</span>;
+  }
   const tone = r[`${f.key}__tone`] as string | null | undefined;
   const wrap = (node: React.ReactNode) => (tone && TONE_CLASS[tone] ? <span className={TONE_CLASS[tone]}>{node}</span> : <>{node}</>);
+  if (f.key === "documents" && Array.isArray(r.__docs)) {
+    const docs = r.__docs as { id: number; name: string; note?: string }[];
+    return (
+      <span className="flex flex-col gap-0.5">
+        {docs.map((d) => (
+          <a key={d.id} href={`/api/bonds/documents/${d.id}`} target="_blank" rel="noreferrer" className="text-accent hover:underline" title={d.note ? `${d.name} – ${d.note}` : d.name}>
+            {d.name.length > 48 ? `${d.name.slice(0, 45)}…` : d.name}
+          </a>
+        ))}
+      </span>
+    );
+  }
   switch (f.type) {
     case "money":
       return wrap(formatMoney(v as number));

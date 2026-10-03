@@ -12,6 +12,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { Chip } from "@/components/ui/Chip";
 import { RegisterPage } from "@/components/register/RegisterPage";
 import { PaymentChart } from "@/components/payments/PaymentChart";
+import { AddFromDocuments } from "@/components/changes/AddFromDocuments";
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -78,8 +79,22 @@ export default async function ContractPage({ params }: { params: Promise<{ id: s
       </div>
 
       <div>
+        {["admin", "editor", "contributor", "reporter"].includes(user.role) && (
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-white px-3 py-2 shadow-sm">
+            <span className="text-xs text-muted">
+              Payment documents for this contract – the application transmittal, the IPC letter, the payment certificate pack, with their Aconex mails: drop the files or a whole folder and the log below is updated.
+            </span>
+            <AddFromDocuments
+              endpoint="/api/payments/from-documents"
+              title={`Update the IPC log of ${String(c.title)} from documents`}
+              button="Upload payment files / folder"
+              intro="Drop the payment application transmittal, the Interim Payment Certificate letter or the payment certificate pack – for one application or many, with their Aconex mails. The application number, the dates, the Aconex references and the amounts are read and the IPC log of the contract named in the documents is written, whatever report is selected."
+              tip="A row already holding a different value for something the documents give stops the upload: the old and the new are shown side by side for you to replace or keep (the two can be mixed; a row left without a choice is kept as it is). Anything the files do not give is listed with the entry – use the pencil on the row to add it."
+            />
+          </div>
+        )}
         <p className="mb-2 text-xs text-muted">
-          Rows turn amber when the IPC is overdue and red when payment is overdue. Days late show red, early in green. Gross, advance recovery, retention, net, VAT and cumulative paid are calculated from the cumulative figures you enter.
+          Rows turn amber when the IPC is overdue and red when payment is overdue. Days late show red, early in green. Gross, advance recovery, retention, net, VAT and cumulative paid are calculated from the cumulative figures you enter. A certified application not yet paid shows when Finance is expected to pay, in amber and marked <em>exp.</em>: the invoice approval date plus the usual delay seen on this contract&apos;s own payments (else the IPC date plus the usual delay, else the contractual due date). Days late and cumulative paid follow it; the real date replaces it when you enter it.
         </p>
         <RegisterPage registerKey="payment_applications" isAdmin={user.role === "admin"} fixedFilter={{ contract_id: c.id }} hideFields={["contract_id"]} />
       </div>

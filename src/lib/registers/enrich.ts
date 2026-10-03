@@ -10,6 +10,7 @@ import { PROBABILITY_BANDS, IMPACT_BANDS, bandIndex, severity } from "./defs/ris
 import { EXPIRY_AMBER_DAYS, EXPIRY_RED_DAYS } from "./defs/bonds";
 import { revisedContractValues } from "../bonds/revised";
 import { closedContracts, closureByName, contractorKey, type ClosedContracts } from "../bonds/closed";
+import { listBondDocuments } from "../bonds/documents";
 import { getDb, getSetting } from "../db";
 import { computeCostReport } from "../cost-report/compute";
 import { FA_AMBER_DAYS } from "./defs/final-accounts";
@@ -81,6 +82,12 @@ export function enrichRows(def: RegisterDef, rows: RecordRow[]) {
   }
   if (def.key === "bonds" && rows.length) {
     const programmeId = Number(rows[0].programme_id);
+    const docs = listBondDocuments(rows.map((r) => Number(r.id)));
+    for (const r of rows) {
+      const list = docs.get(Number(r.id)) ?? [];
+      r.documents = list.map((d) => d.name).join("; ");
+      r.__docs = list.map((d) => ({ id: d.id, name: d.name, note: d.note }));
+    }
     const revised = revisedContractValues(getDb(), programmeId);
     const closed = closedContracts(getDb(), programmeId);
     // A bond / policy is superseded when a newer one of the same type exists for the same contractor and

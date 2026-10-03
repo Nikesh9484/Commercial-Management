@@ -10,6 +10,8 @@ import { Chip } from "@/components/ui/Chip";
 import { RegisterPage } from "@/components/register/RegisterPage";
 import { ExpiringSoonCard } from "@/components/bonds/ExpiringSoonCard";
 import { BondsAlertSummaries } from "@/components/bonds/BondsAlertSummaries";
+import { DuplicatesCard } from "@/components/bonds/DuplicatesCard";
+import type { DuplicateGroup } from "@/lib/bonds/duplicates";
 import { ExportButtons } from "@/components/ui/ExportButtons";
 import { AddFromDocuments } from "@/components/changes/AddFromDocuments";
 import { HorizontalBars } from "@/components/charts/HorizontalBars";
@@ -22,7 +24,7 @@ const num = (v: unknown) => (v === null || v === undefined || v === "" ? 0 : Num
  * filtered, and the register itself. The same filter is carried into the PDF and Excel reports, so a
  * download always matches what is on screen.
  */
-export function BondsWorkspace({ rows, isAdmin, hasPeriod, canUpload = false }: { rows: RecordRow[]; isAdmin: boolean; hasPeriod: boolean; canUpload?: boolean }) {
+export function BondsWorkspace({ rows, isAdmin, hasPeriod, canUpload = false, duplicates = [], canMerge = false }: { rows: RecordRow[]; isAdmin: boolean; hasPeriod: boolean; canUpload?: boolean; duplicates?: DuplicateGroup[]; canMerge?: boolean }) {
   const [filter, setFilter] = useState<BondsFilter>(NO_BONDS_FILTER);
 
   const visible = useMemo(() => filterBonds(rows, filter), [rows, filter]);
@@ -70,7 +72,7 @@ export function BondsWorkspace({ rows, isAdmin, hasPeriod, canUpload = false }: 
                 title="Add a bond or insurance from its documents"
                 button="Add from documents"
                 intro="Drop the policy schedule, the certificate of insurance or the bank guarantee – with its Aconex transmittal if you have it – for one or several at once. The type, the policy number, the insurer or bank, the contractor and contract, the period and the amount are read (scanned pages included) and the register is updated, whatever report is selected."
-                tip="A policy of the same type already held for that contractor stops the upload: the old and the new are shown side by side for you to replace or keep. Anything the files do not give is listed with the entry – use the pencil on the row to add it."
+                tip="A policy of the same type already held for that contractor stops the upload: the old and the new are shown side by side for you to replace or keep. A renewal, an extension or an amendment only moves the expiry date on (and the amount when it changes) – the start date stays the date the bond was first put in place. Anything the files do not give is listed with the entry – use the pencil on the row to add it."
               />
             )}
             {filtered && (
@@ -141,6 +143,8 @@ export function BondsWorkspace({ rows, isAdmin, hasPeriod, canUpload = false }: 
 
       {/* the two chase lists, each downloadable on its own, worked out from every row rather than the
           page filter – they are the same two lists whatever is filtered above */}
+      <DuplicatesCard groups={duplicates} canMerge={canMerge} />
+
       <BondsAlertSummaries rows={rows} hasPeriod={hasPeriod} contractor={filter.contractor} />
 
       <ExpiringSoonCard items={summary.expiring} expired={summary.expired} released={summary.released} superseded={summary.superseded} />
