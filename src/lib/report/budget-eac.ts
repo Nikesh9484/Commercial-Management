@@ -272,3 +272,101 @@ export function buildBudgetEac(d: ReportData): BudgetEac {
   ];
   return { portfolio: "Triple Bay Portfolio", programme: { code: d.programme.code, name: d.programme.name }, month, yyyymm, periodLabel: d.period.label, assets, dvos, pvos, ews, notes };
 }
+
+/* ------------------------------------------------------------------ */
+/* Level 02 as a table: every figure the sheet's formulas give, for the page, the PDF and the sheets */
+
+export interface Level02Row {
+  kind: "line" | "subtotal" | "total";
+  program: string;
+  asset: string;
+  subCategory: string;
+  contractCode: string;
+  name: string;
+  isHold: boolean;
+  previousBudget: number;
+  transfers: number;
+  currentBudget: number;
+  contracts: number;
+  dvos: number;
+  committed: number;
+  uncommitted: number;
+  pvos: number;
+  earlyWarnings: number;
+  budgetToRelease: number;
+  finalAccount: number;
+  variance: number;
+  use: Record<EacColumn, number>;
+  totalUse: number;
+}
+
+export const LEVEL02_MONEY: { key: keyof Omit<Level02Row, "kind" | "program" | "asset" | "subCategory" | "contractCode" | "name" | "isHold" | "use">; label: string; group: "ho" | "site" }[] = [
+  { key: "previousBudget", label: "Previous Approved Budget", group: "ho" },
+  { key: "transfers", label: "Approved Budget Transfers", group: "ho" },
+  { key: "currentBudget", label: "Currently Approved Budget", group: "ho" },
+  { key: "contracts", label: "Contracts", group: "ho" },
+  { key: "dvos", label: "DVO's", group: "ho" },
+  { key: "committed", label: "Committed", group: "ho" },
+  { key: "uncommitted", label: "Uncommitted", group: "ho" },
+  { key: "pvos", label: "PVO's", group: "ho" },
+  { key: "earlyWarnings", label: "Early Warnings", group: "site" },
+  { key: "budgetToRelease", label: "Budget to Release [Not Required]", group: "site" },
+  { key: "finalAccount", label: "Final Account", group: "site" },
+  { key: "variance", label: "Variance", group: "site" },
+  { key: "totalUse", label: "Total Uncommitted Utilisation", group: "site" },
+];
+
+const zeroUse = (): Record<EacColumn, number> => ({ voUnderProcess: 0, eotClaims: 0, otherClaims: 0, finalAccount: 0, uncommittedScope: 0, plantSupply: 0, ffe: 0, btOtherAsset: 0, notRequired: 0 });
+
+/** The rows of Level 02 with the sheet's own arithmetic applied, one sub-total per asset and a grand total. */
+export function level02Table(e: BudgetEac): { rows: Level02Row[]; total: Level02Row } {
+  const blank = (kind: Level02Row["kind"], name: string, asset = "", subCategory = ""): Level02Row => ({ kind, program: e.programme.code, asset, subCategory, contractCode: "", name, isHold: false, previousBudget: 0, transfers: 0, currentBudget: 0, contracts: 0, dvos: 0, committed: 0, uncommitted: 0, pvos: 0, earlyWarnings: 0, budgetToRelease: 0, finalAccount: 0, variance: 0, use: zeroUse(), totalUse: 0 });
+  const add = (into: Level02Row, r: Level02Row) => {
+    for (const m of LEVEL02_MONEY) if (m.key !== "variance") into[m.key] = r2(into[m.key] + r[m.key]);
+    for (const c of EAC_COLUMNS) into.use[c.key] = r2(into.use[c.key] + r.use[c.key]);
+    into.variance = r2(into.finalAccount - into.currentBudget);
+  };
+  const rows: Level02Row[] = [];
+  const total = blank("total", "GRAND TOTAL");
+  for (const a of e.assets) {
+    const sub = blank("subtotal", "Sub-Total Development Cost", a.name);
+    for (const l of a.lines) {
+      const use = zeroUse();
+      for (const w of e.ews) if (w.vendor === l.name) use[w.column] = r2(use[w.column] + w.value);
+      const used = EAC_COLUMNS.reduce((t, c) => t + (c.key === "notRequired" ? 0 : use[c.key]), 0);
+      const totalUse = r2(used + use.notRequired);
+      const committed = r2(l.contracts + l.dvos);
+      const row: Level02Row = {
+        kind: "line",
+        program: l.program,
+        asset: l.asset,
+        subCategory: l.subCategory,
+        contractCode: l.contractCode,
+        name: l.name,
+        isHold: l.isHold,
+        previousBudget: l.previousBudget,
+        transfers: r2(l.currentBudget - l.previousBudget),
+        currentBudget: l.currentBudget,
+        contracts: l.contracts,
+        dvos: l.dvos,
+        committed,
+        uncommitted: r2(l.currentBudget - committed),
+        pvos: l.pvos,
+        // the sheet's own formulas: N = (AC − AA) × −1, O = AA × −1, P = SUM(K:O), Q = P − H
+        earlyWarnings: r2(-used),
+        budgetToRelease: r2(-use.notRequired),
+        finalAccount: 0,
+        variance: 0,
+        use,
+        totalUse,
+      };
+      row.finalAccount = r2(committed + row.uncommitted + l.pvos + row.earlyWarnings + row.budgetToRelease);
+      row.variance = r2(row.finalAccount - l.currentBudget);
+      rows.push(row);
+      add(sub, row);
+    }
+    rows.push(sub);
+    add(total, sub);
+  }
+  return { rows, total };
+}

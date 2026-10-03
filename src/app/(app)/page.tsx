@@ -28,7 +28,7 @@ export default async function HomePage() {
   if (!ctx.programme) {
     return (
       <div>
-        <PageHeader exportSection="exec" title="Executive Summary" />
+        <PageHeader exportSection="exec" exportName="Executive Summary" title="Executive Summary" />
         <div className="card flex items-center gap-2 p-5 text-sm text-muted">
           <AlertTriangle size={16} /> Add a programme under Settings and select it in the top bar.
         </div>
@@ -53,7 +53,7 @@ export default async function HomePage() {
 
   return (
     <div className="space-y-5">
-      <PageHeader exportSection="exec"
+      <PageHeader exportSection="exec" exportName="Executive Summary"
         eyebrow={`${ctx.programme.code} · ${ctx.asset?.code ?? ""} · Module 11`}
         title="Executive Summary"
         subtitle={`${ctx.period?.label ?? "No reporting period"}${ctx.period ? ` · cut-off ${formatDate(ctx.period.period_end)}` : ""} · all amounts SAR`}

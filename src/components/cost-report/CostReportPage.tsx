@@ -137,13 +137,16 @@ export function CostReportPage({ canEdit, isAdmin, initialTab }: { canEdit: bool
             ["setup", "Line setup"],
           ] as [Tab, string][]
         ).map(([k, label]) => (
-          <button
-            key={k}
-            onClick={() => setTab(k)}
-            className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium transition ${tab === k ? "border-navy text-navy" : "border-transparent text-muted hover:text-ink"}`}
-          >
-            {label}
-          </button>
+          <Fragment key={k}>
+            <button onClick={() => setTab(k)} className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium transition ${tab === k ? "border-navy text-navy" : "border-transparent text-muted hover:text-ink"}`}>
+              {label}
+            </button>
+            {k === "level2" && (
+              <Link href="/modules/cost-report?tab=level02r1" className="-mb-px border-b-2 border-transparent px-4 py-2 text-sm font-medium text-muted transition hover:text-ink" title="The head office Budget EAC layout of Level 02 (consolidated Uncommitted Costs and Early Warnings)">
+                Level 02 (R1)
+              </Link>
+            )}
+          </Fragment>
         ))}
       </div>
 

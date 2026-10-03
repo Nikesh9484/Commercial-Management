@@ -62,7 +62,7 @@ export function OwnLayoutCard({ periodId, periodLabel, template, canUpload }: { 
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <a className={`btn btn-sm btn-excel ${tpl ? "" : "pointer-events-none opacity-50"}`} href={`/api/report/own-layout?period=${periodId}`} title="Download the month's report in your own workbook layout">
-            <FileSpreadsheet size={14} /> Download report workbook
+            <FileSpreadsheet size={14} /> Full cost report – my template (Excel)
           </a>
           {canUpload && (
             <>

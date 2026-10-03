@@ -5,6 +5,8 @@ import { getPeriod, latestPeriod, type PeriodRow } from "../../snapshots";
 import { snapshotRows } from "../../view-mode";
 import { XWorkbook, type XSheet } from "./xlsx";
 import { readReportTemplate } from "./templates";
+import { getReportData } from "../data";
+import { addLevel02R1Sheet } from "./level02r1";
 
 /**
  * The month's report written back into the project's own report workbook: the same tabs, the same
@@ -697,6 +699,14 @@ export async function renderOwnLayout(programmeId: number, periodId: number | nu
       }
       notes.push(`Early Warning: ${written} rows updated (the sheet keeps its package sections; a new early warning is added by hand).`);
     }
+  }
+
+  // ---- Level 02 (R1): the head office Budget EAC layout of Level 02, as a tab of its own
+  try {
+    const { lines, assets } = await addLevel02R1Sheet(wb, getReportData(programmeId, period.id));
+    notes.push(`Level 02 (R1): ${lines} lines in ${assets} asset(s) written in the head office Budget EAC layout (the tab is added at the end, or replaced when the workbook already has one).`);
+  } catch (e) {
+    notes.push(`Level 02 (R1): not written – ${e instanceof Error ? e.message : String(e)}.`);
   }
 
   const bytes = await wb.save();

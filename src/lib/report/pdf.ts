@@ -19,6 +19,7 @@ import { buildFaReport } from "./fa-report";
 import { buildPeriodSummary, sar, sarMove } from "./period-summary";
 import { getAccommodationSummary, getCustomsSummary } from "../recovery/summary";
 import { buildCashflowForecast, monthLabel, type CashMonth } from "../cashflow/forecast";
+import { buildBudgetEac, level02Table, LEVEL02_MONEY, EAC_COLUMNS, type Level02Row } from "./budget-eac";
 import { buildUncommittedTable } from "./uncommitted-ew";
 import { buildAconexReconciliation, ACONEX_MEASURES } from "../recovery/aconex";
 
@@ -79,6 +80,7 @@ export function resolveSections(keys: string[], opts: SectionOptions = {}): { ti
     else if (k === "aconex_report") out.push({ title: "Aconex Cost Check – control accounts vs cost report", run: aconexReport });
     else if (k === "level1") out.push({ title: "Schedule A – Cost Report Level 1 (Executive)", run: costLevel1 });
     else if (k === "level2") out.push({ title: "Schedule B – Cost Report Level 2 (Detailed)", run: costLevel2 });
+    else if (k === "level02r1") out.push({ title: "Cost Report Level 02 (R1) – head office Budget EAC layout", run: costLevel02R1 });
     else if (k === "cashflow") out.push({ title: "Schedule I – Cash Flow", run: cashflow });
     else {
       const sched = REPORT_SCHEDULES.find((sc) => sc.letter === k.toUpperCase());
@@ -2103,6 +2105,53 @@ function costLevel2(ctx: Ctx) {
   };
   part("Columns E – I", ["E", "F", "G", "H", "I"]);
   part("Columns J – S", ["J", "K", "L", "M", "N", "O", "P", "Q", "R", "S"]);
+}
+
+/** Level 02 in the head office "Budget EAC" layout (Peter Ayliffe's consolidated format): the head office columns, the site forecast and how the uncommitted budget is used. */
+function costLevel02R1(ctx: Ctx) {
+  const { data } = ctx;
+  const e = buildBudgetEac(data);
+  const t = level02Table(e);
+  const money = (v: unknown) => (typeof v === "number" ? formatMoney(v) : String(v ?? ""));
+  const textCols: Col[] = [
+    { key: "subCategory", label: "Sub-category", width: 1 },
+    { key: "contractCode", label: "Contract Code", width: 1.2 },
+    { key: "name", label: "Name", width: 2 },
+  ];
+  const flat = (row: Level02Row): Record<string, unknown> => ({
+    ...row,
+    subCategory: row.kind === "subtotal" ? `Sub-Total ${row.asset}` : row.kind === "total" ? "GRAND TOTAL" : row.subCategory,
+    ...Object.fromEntries(EAC_COLUMNS.map((c) => [`use_${c.key}`, row.use[c.key]])),
+  });
+  const rows = t.rows.map(flat);
+  const bands: TableOpts["bands"] = [];
+  let i = 0;
+  for (const a of e.assets) {
+    bands.push({ index: i, label: a.name, kind: "section" });
+    i += a.lines.length + 1;
+  }
+  const m = (key: string, label: string, width = 1.15): Col => ({ key, label, width, align: "right", format: money });
+  const part = (title: string, cols: Col[]) => {
+    subheading(ctx, title, `${e.month} · ${e.periodLabel} · the Level 02 tab of the head office "Programme XX Budget EAC" workbook, filled from the dashboard · source: ${data.sources.cost_report}`);
+    table(ctx, [...textCols, ...cols], rows, {
+      zebra: true,
+      bands,
+      rowStyle: (row) => (row.kind === "subtotal" ? { bold: true, bg: "#FFEB9C", color: "#9C5700" } : row.isHold ? { color: MUTED } : undefined),
+      totalRow: flat(t.total),
+    });
+  };
+  part("As per Head Office cost report", LEVEL02_MONEY.filter((c) => c.group === "ho").map((c) => m(c.key, c.label)));
+  part("Site forecast and how the uncommitted budget is used", [...LEVEL02_MONEY.filter((c) => c.group === "site").map((c) => m(c.key, c.label)), ...EAC_COLUMNS.map((c) => m(`use_${c.key}`, c.label, 1))]);
+  doc_notes(ctx, e.notes);
+}
+
+function doc_notes(ctx: Ctx, notes: string[]) {
+  const { doc } = ctx;
+  ensureSpace(ctx, 80);
+  doc.moveDown(0.4);
+  doc.fillColor(MUTED).font("Helvetica").fontSize(7.5);
+  for (const n of notes) doc.text(`• ${n}`, { width: PAGE.width - PAGE.margin * 2 });
+  doc.fillColor("#172033").fontSize(9);
 }
 
 /* ------------------------------------------------------------------ */

@@ -20,6 +20,7 @@ const NAMES: Record<string, string> = {
   minutes: "Minutes_of_Meeting",
   level1: "Cost_Report_Level_1",
   level2: "Cost_Report_Level_2",
+  level02r1: "Cost_Report_Level_02_R1",
   cashflow: "Cash_Flow",
   claims_report: "Claims_Status_Report",
   fa_report: "Final_Account_Status_Report",

@@ -1,6 +1,6 @@
 import { ExportButtons } from "@/components/ui/ExportButtons";
 
-export function PageHeader({ title, subtitle, actions, eyebrow, exportSection }: { title: string; subtitle?: string; actions?: React.ReactNode; eyebrow?: string; exportSection?: string }) {
+export function PageHeader({ title, subtitle, actions, eyebrow, exportSection, exportName }: { title: string; subtitle?: string; actions?: React.ReactNode; eyebrow?: string; exportSection?: string; /** names the PDF / Excel buttons ("Executive Summary PDF") when other downloads sit beside them */ exportName?: string }) {
   return (
     <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
       <div>
@@ -11,7 +11,7 @@ export function PageHeader({ title, subtitle, actions, eyebrow, exportSection }:
       {(actions || exportSection) && (
         <div className="flex flex-wrap items-center gap-2">
           {actions}
-          {exportSection && <ExportButtons section={exportSection} />}
+          {exportSection && <ExportButtons section={exportSection} name={exportName} />}
         </div>
       )}
     </div>

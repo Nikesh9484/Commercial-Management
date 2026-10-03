@@ -46,7 +46,7 @@ function MovementChart({ rows, net }: { rows: { key: string; label: string; shor
   const V = 110; // value column
   const H = all.length * 26 + 8;
   return (
-    <svg viewBox={`0 0 ${L + W + V} ${H}`} className="w-full" role="img" aria-label="Forecast movement analysis">
+    <svg viewBox={`0 0 ${L + W + V} ${H}`} width="100%" height={H} preserveAspectRatio="xMinYMid meet" className="block" role="img" aria-label="Forecast movement analysis">
       {all.map((r, i) => {
         const y = 4 + i * 26;
         const len = (Math.abs(r.value) / max) * (W / 2 - 4);

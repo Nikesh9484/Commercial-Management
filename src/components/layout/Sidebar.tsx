@@ -105,6 +105,7 @@ export function Sidebar({ open, onClose, role, project }: { open: boolean; onClo
             <div className="pl-4">
               {link("/modules/cost-report?tab=level1", "Level 1 – Executive", FileText)}
               {link("/modules/cost-report?tab=level2", "Level 2 – Detailed", FileText)}
+              {link("/modules/cost-report?tab=level02r1", "Level 02 (R1)", FileText)}
               {link("/modules/cost-report?tab=setup", "Line setup", FileText)}
             </div>
           )}

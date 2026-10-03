@@ -190,10 +190,10 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
                       ) : it.section === "deck" ? (
                         <>
                           <a className="btn btn-sm btn-ppt" href={`/api/export?section=deck&format=pptx${pid}`}>
-                            <Presentation size={14} /> PowerPoint
+                            <Presentation size={14} /> Presentation (PowerPoint)
                           </a>
                           <a className="btn btn-sm btn-pdf" href={`/api/export?section=deck&format=pdf${pid}`}>
-                            <FileDown size={14} /> PDF slides
+                            <FileDown size={14} /> Presentation (PDF)
                           </a>
                         </>
                       ) : (

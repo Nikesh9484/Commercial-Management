@@ -7,13 +7,13 @@ export function DeckButtons({ size = "sm", periodId }: { size?: "sm" | "md"; per
   return (
     <span className="inline-flex items-center gap-1.5">
       <a className={`${cls} btn-ppt`} href={`/api/export?section=deck&format=pptx${pid}`} title="Cost report presentation as an animated, fully editable PowerPoint: native charts, tables and text">
-        <Presentation size={14} /> PowerPoint
+        <Presentation size={14} /> Presentation (PowerPoint)
       </a>
       <a className={`${cls} btn-pdf`} href={`/api/export?section=deck&format=pdf${pid}`} title="The same presentation as a PDF (16:9 slides)">
-        <FileDown size={14} /> PDF slides
+        <FileDown size={14} /> Presentation (PDF)
       </a>
       <a className={`${cls} btn-excel`} href={`/api/export?section=dashboard&format=xlsx${pid}`} title="The whole dashboard as one Excel workbook: headline tiles, native charts and one sheet per module, with live formulas">
-        <FileSpreadsheet size={14} /> Excel dashboard
+        <FileSpreadsheet size={14} /> Dashboard workbook (Excel)
       </a>
     </span>
   );

@@ -416,6 +416,80 @@ export class XWorkbook {
     s.dirty = true;
   }
 
+  /**
+   * Appends fonts, fills, borders, number formats and cell formats to the workbook's styles and returns
+   * the index of each new cell format, so a sheet built from scratch can carry its own look.
+   */
+  async addStyles(spec: { fonts: string[]; fills: string[]; borders: string[]; numFmts: string[]; xfs: ((ids: { font: number[]; fill: number[]; border: number[]; numFmt: number[] }) => string)[] }): Promise<number[]> {
+    const path = "xl/styles.xml";
+    let xml = (await this.zip.file(path)?.async("string")) ?? "";
+    if (!xml) return spec.xfs.map(() => 0);
+    const appendTo = (tag: string, items: string[]): number => {
+      const open = xml.indexOf(`<${tag}`);
+      if (open < 0 || !items.length) return 0;
+      const gt = xml.indexOf(">", open);
+      const head = xml.slice(open, gt + 1);
+      const count = Number(head.match(/\bcount="(\d+)"/)?.[1] ?? 0);
+      const close = xml.indexOf(`</${tag}>`, gt);
+      const newHead = /\bcount="\d+"/.test(head) ? head.replace(/\bcount="\d+"/, `count="${count + items.length}"`) : head.replace(/>$/, ` count="${count + items.length}">`);
+      xml = `${xml.slice(0, open)}${newHead}${xml.slice(gt + 1, close)}${items.join("")}${xml.slice(close)}`;
+      return count;
+    };
+    // custom number formats take ids above the built-in ones and above any the workbook already has
+    const usedFmt = [...xml.matchAll(/numFmtId="(\d+)"/g)].map((m) => Number(m[1]));
+    let nextFmt = Math.max(163, ...usedFmt) + 1;
+    const numFmtIds = spec.numFmts.map(() => nextFmt++);
+    if (spec.numFmts.length) {
+      if (!xml.includes("<numFmts")) xml = xml.replace(/(<styleSheet\b[^>]*>)/, `$1<numFmts count="0"></numFmts>`);
+      appendTo("numFmts", spec.numFmts.map((code, i) => `<numFmt numFmtId="${numFmtIds[i]}" formatCode="${esc(code)}"/>`));
+    }
+    const font0 = appendTo("fonts", spec.fonts);
+    const fill0 = appendTo("fills", spec.fills);
+    const border0 = appendTo("borders", spec.borders);
+    const ids = { font: spec.fonts.map((_f, i) => font0 + i), fill: spec.fills.map((_f, i) => fill0 + i), border: spec.borders.map((_b, i) => border0 + i), numFmt: numFmtIds };
+    const xf0 = appendTo("cellXfs", spec.xfs.map((fn) => fn(ids)));
+    this.zip.file(path, xml);
+    return spec.xfs.map((_x, i) => xf0 + i);
+  }
+
+  /**
+   * Adds a sheet built from scratch (or replaces the one of that name): the worksheet part, its
+   * relationship, its content type and its entry in the workbook's sheet list, at the end of the tabs.
+   */
+  async addSheet(name: string, xml: string): Promise<void> {
+    const existing = this.sheets.find((s) => s.name.toLowerCase() === name.toLowerCase());
+    if (existing) {
+      this.zip.file(existing.path, xml);
+      const i = this.sheets.indexOf(existing);
+      this.sheets[i] = new XSheet(existing.name, existing.path, () => xml);
+      return;
+    }
+    const used = new Set(this.sheets.map((s) => s.path));
+    let n = this.sheets.length + 1;
+    while (used.has(`xl/worksheets/sheet${n}.xml`) || this.zip.file(`xl/worksheets/sheet${n}.xml`)) n++;
+    const path = `xl/worksheets/sheet${n}.xml`;
+    this.zip.file(path, xml);
+    const relsPath = "xl/_rels/workbook.xml.rels";
+    const rels = (await this.zip.file(relsPath)?.async("string")) ?? "";
+    const ridNos = [...rels.matchAll(/\bId="rId(\d+)"/g)].map((m) => Number(m[1]));
+    const rid = `rId${Math.max(0, ...ridNos) + 1}`;
+    this.zip.file(relsPath, rels.replace("</Relationships>", `<Relationship Id="${rid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${n}.xml"/></Relationships>`));
+    const ctPath = "[Content_Types].xml";
+    const ct = (await this.zip.file(ctPath)?.async("string")) ?? "";
+    if (ct && !ct.includes(`/${path}"`)) this.zip.file(ctPath, ct.replace("</Types>", `<Override PartName="/${path}" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>`));
+    // the sheet list sits near the start of workbook.xml
+    const wbBytes = this.workbookBytes;
+    const close = wbBytes.indexOf("</sheets>");
+    if (close >= 0) {
+      const head = wbBytes.toString("utf8", 0, close);
+      const sheetIds = [...head.matchAll(/\bsheetId="(\d+)"/g)].map((m) => Number(m[1]));
+      const entry = `<sheet name="${esc(name)}" sheetId="${Math.max(0, ...sheetIds) + 1}" r:id="${rid}"/>`;
+      this.workbookBytes = Buffer.concat([wbBytes.subarray(0, close), Buffer.from(entry, "utf8"), wbBytes.subarray(close)]);
+      this.workbookXml = this.workbookXml.replace("</sheets>", `${entry}</sheets>`);
+    }
+    this.sheets.push(new XSheet(name, path, () => xml));
+  }
+
   /** The workbook recalculates when it opens, so every total reflects the values written. */
   async save(): Promise<Buffer> {
     for (const s of this.sheets) if (s.dirty && !s.untouched) this.zip.file(s.path, s.serialize());

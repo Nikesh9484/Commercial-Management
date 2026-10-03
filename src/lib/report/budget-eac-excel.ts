@@ -95,12 +95,17 @@ interface Level02Ref {
 const USE_LETTERS: Record<EacColumn, string> = { voUnderProcess: "S", eotClaims: "T", otherClaims: "U", finalAccount: "V", uncommittedScope: "W", plantSupply: "X", ffe: "Y", btOtherAsset: "Z", notRequired: "AA" };
 const BREAKDOWN_LETTERS: Record<EacColumn, string> = { voUnderProcess: "I", eotClaims: "J", otherClaims: "K", finalAccount: "L", uncommittedScope: "M", plantSupply: "N", ffe: "O", btOtherAsset: "P", notRequired: "Q" };
 
-function level02(wb: ExcelJS.Workbook, e: BudgetEac): Level02Ref {
-  const ws = wb.addWorksheet(LEVEL02, { properties: { tabColor: { argb: PURPLE } }, views: [{ showGridLines: false, state: "frozen", xSplit: 5, ySplit: 6 }], pageSetup: { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
+/**
+ * The Level 02 sheet. Linked, its DVO, PVO and utilisation cells are the template's SUMIFs over the
+ * schedule tabs; on its own (the "Level 02 (R1)" sheet of a report download) the same figures go in
+ * as values, so the sheet stands without the other tabs.
+ */
+function level02(wb: ExcelJS.Workbook, e: BudgetEac, opts: { linked: boolean; name?: string } = { linked: true }): Level02Ref {
+  const ws = wb.addWorksheet(opts.name ?? LEVEL02, { properties: { tabColor: { argb: PURPLE } }, views: [{ showGridLines: false, state: "frozen", xSplit: 5, ySplit: 6 }], pageSetup: { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
   const widths: Record<string, number> = { A: 14.5, B: 21.5, C: 20, D: 23.2, E: 41.3, F: 23.5, G: 13.5, H: 16.5, I: 15.3, J: 14.5, K: 15.5, L: 14.5, M: 13, N: 13, O: 13, P: 14.7, Q: 14.5, R: 2.5, S: 14.5, T: 13, U: 13, V: 13, W: 13, X: 13, Y: 13, Z: 13, AA: 13, AB: 2.5, AC: 14.5 };
   for (const [l, w] of Object.entries(widths)) ws.getColumn(colIndex(l)).width = w;
   for (let i = colIndex("AD"); i <= colIndex("AS"); i++) ws.getColumn(i).width = 13;
-  for (const l of ["A", "F", "G"]) ws.getColumn(colIndex(l)).hidden = true;
+  if (opts.linked) for (const l of ["A", "F", "G"]) ws.getColumn(colIndex(l)).hidden = true;
   titleRows(ws, e, false);
   ws.getCell("J3").value = "Approved Contract Changes";
   ws.getCell("J3").font = { ...ARIAL, bold: true };
@@ -189,10 +194,10 @@ function level02(wb: ExcelJS.Workbook, e: BudgetEac): Level02Ref {
       put("G", f(`H${row}-F${row}`, l.currentBudget - l.previousBudget), true);
       put("H", l.currentBudget, true);
       put("I", l.contracts, true);
-      put("J", f(`SUMIF(DVOs!C:C,E${row},DVOs!E:E)`, l.dvos), true);
+      put("J", opts.linked ? f(`SUMIF(DVOs!C:C,E${row},DVOs!E:E)`, l.dvos) : l.dvos, true);
       put("K", f(`SUM(I${row}:J${row})`, l.contracts + l.dvos), true);
       put("L", f(`H${row}-K${row}`, l.currentBudget - l.contracts - l.dvos), true);
-      put("M", f(`SUMIF(PVOs!C:C,E${row},PVOs!E:E)`, l.pvos), true);
+      put("M", opts.linked ? f(`SUMIF(PVOs!C:C,E${row},PVOs!E:E)`, l.pvos) : l.pvos, true);
       const use: Record<EacColumn, number> = { voUnderProcess: 0, eotClaims: 0, otherClaims: 0, finalAccount: 0, uncommittedScope: 0, plantSupply: 0, ffe: 0, btOtherAsset: 0, notRequired: 0 };
       for (const w of e.ews) if (w.vendor === l.name) use[w.column] += w.value;
       const used = EAC_COLUMNS.reduce((t, c) => t + (c.key === "notRequired" ? 0 : use[c.key]), 0);
@@ -203,6 +208,7 @@ function level02(wb: ExcelJS.Workbook, e: BudgetEac): Level02Ref {
       for (const c of EAC_COLUMNS) {
         const col = USE_LETTERS[c.key];
         if (c.key === "notRequired") put(col, 0, true);
+        else if (!opts.linked) put(col, use[c.key], true);
         else put(col, f(`SUMIF(${q(BREAKDOWN)}!$C:$C,$E${row},${q(BREAKDOWN)}!${BREAKDOWN_LETTERS[c.key]}:${BREAKDOWN_LETTERS[c.key]})`, use[c.key]), true);
       }
       put("AC", f(`SUM(S${row}:AA${row})`, used), true);
@@ -437,6 +443,27 @@ function notesSheet(wb: ExcelJS.Workbook, e: BudgetEac, d: ReportData) {
   put("• Early Warning Breakdown: move any amount to another column if its wording was sorted wrongly, and add the final account adjustments and transfers to other assets.");
   put("• UC tab: list any contract under approval.");
   put("• Level 01 'Reasons for Variance': write the narrative.");
+}
+
+/** The Level 02 sheet on its own, in a report download: the template's layout, the figures as values. */
+export function level02R1Sheet(wb: ExcelJS.Workbook, d: ReportData) {
+  const e = buildBudgetEac(d);
+  level02(wb, e, { linked: false, name: "Level 02 (R1)" });
+  const ws = wb.getWorksheet("Level 02 (R1)")!;
+  const r = ws.rowCount + 2;
+  const put = (text: string, bold = false) => {
+    const c = ws.getCell(r + (bold ? 0 : 1), 2);
+    c.value = text;
+    c.font = { ...ARIAL, bold, italic: !bold, color: { argb: "FF595959" } };
+  };
+  put(`Level 02 (R1) – ${e.programme.name} – ${e.periodLabel}: the head office "Budget EAC" layout, filled from the dashboard. DVOs, PVOs and the uncommitted utilisation are written as values here; the full workbook with the schedule tabs is on the Reports page.`, true);
+  put(e.notes.slice(0, 3).join(" "));
+  ws.mergeCells(r, 2, r, 17);
+  ws.mergeCells(r + 1, 2, r + 1, 17);
+  ws.getRow(r).height = 30;
+  ws.getRow(r + 1).height = 60;
+  ws.getCell(r, 2).alignment = { wrapText: true, vertical: "top" };
+  ws.getCell(r + 1, 2).alignment = { wrapText: true, vertical: "top" };
 }
 
 export async function renderBudgetEacWorkbook(d: ReportData): Promise<{ buffer: Buffer; fileName: string }> {
