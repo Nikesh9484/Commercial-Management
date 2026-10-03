@@ -53,6 +53,7 @@ const ICONS: Record<string, LucideIcon> = {
   LayoutDashboard,
   FileDown,
   HandCoins,
+  KeyRound,
 };
 
 export function Sidebar({
@@ -160,15 +161,6 @@ export function Sidebar({
                   "/modules/final-accounts",
                   "Final Account Status",
                   FileText,
-                )}
-              </div>
-            )}
-            {m.slug === "cost-recovery" && (
-              <div className="pl-4">
-                {link(
-                  "/modules/cost-recovery?tab=leases",
-                  "Accommodation lease agreements",
-                  KeyRound,
                 )}
               </div>
             )}

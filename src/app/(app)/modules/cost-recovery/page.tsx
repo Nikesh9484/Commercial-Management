@@ -9,16 +9,13 @@ import { getAccommodationSummary, getCustomsSummary } from "@/lib/recovery/summa
 import { formatDate, formatMoney, formatMonthYear } from "@/lib/format";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { RegisterPage } from "@/components/register/RegisterPage";
-import { AddFromDocuments } from "@/components/changes/AddFromDocuments";
-import { LeaseAlertsCard } from "@/components/recovery/LeaseAlertsCard";
 import { MarkRecoveredButton } from "@/components/recovery/MarkRecoveredButton";
 import { canEditRegister } from "@/lib/registers/types";
-import { getLeaseSummary } from "@/lib/leases/summary";
 import { ExportButtons } from "@/components/ui/ExportButtons";
 
 export const metadata = { title: "Cost Recovery – Accommodation & Customs" };
 
-type Tab = "accommodation" | "customs" | "leases";
+type Tab = "accommodation" | "customs";
 
 /**
  * Module 13 – what contractors owe RSG: staff accommodation charges (the construction village
@@ -30,8 +27,7 @@ export default async function CostRecoveryPage({ searchParams }: { searchParams:
   const mod = getModule("cost-recovery")!;
   const ctx = getAppContext();
   const { tab: tabParam } = await searchParams;
-  const tab: Tab = tabParam === "customs" ? "customs" : tabParam === "leases" ? "leases" : "accommodation";
-  const canUpload = ["admin", "editor", "contributor", "reporter"].includes(user.role);
+  const tab: Tab = tabParam === "customs" ? "customs" : "accommodation";
   const canImport = user.role === "admin" || user.role === "editor";
   if (!ctx.programme) {
     return (
@@ -46,7 +42,6 @@ export default async function CostRecoveryPage({ searchParams }: { searchParams:
   const acc = getAccommodationSummary(listRecords(getRegisterDef("accommodation_recovery")!), listRecords(getRegisterDef("accommodation_invoices")!));
   const cus = getCustomsSummary(listRecords(getRegisterDef("customs_recovery")!), listRecords(getRegisterDef("changes")!), listRecords(getRegisterDef("customs_declarations")!));
   const leaseRows = listRecords(getRegisterDef("lease_agreements")!);
-  const leases = getLeaseSummary(leaseRows);
   // the lease agreement(s) behind each accommodation tracker contractor, by our contractor record or by name
   const leaseOf = (contractor: string) => {
     const key = contractor.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -59,7 +54,6 @@ export default async function CostRecoveryPage({ searchParams }: { searchParams:
   };
   const tabs: { key: Tab; label: string; count: string }[] = [
     { key: "accommodation", label: "Accommodation cost recovery", count: `${acc.totals.rows}` },
-    { key: "leases", label: "Lease agreements", count: `${leases.total}${leases.alerts.length ? ` · ${leases.alerts.length} !` : ""}` },
     { key: "customs", label: "Customs duty recovery", count: `${cus.totals.rows}` },
   ];
   const money = (v: number) => formatMoney(v);
@@ -69,7 +63,7 @@ export default async function CostRecoveryPage({ searchParams }: { searchParams:
       <PageHeader
         eyebrow={`Module ${mod.no}`}
         title={mod.title}
-        subtitle="Money owed back to RSG by contractors: accommodation charges invoiced under the construction village lease agreements, and customs duties RSG paid on their imports. Both trackers are uploaded when they change, not every month, so the figures here are as of the tracker's own date and do not depend on the report selected in the top bar."
+        subtitle="Money owed back to RSG by contractors: accommodation charges invoiced under the construction village lease agreements, and customs duties RSG paid on their imports. Both trackers are uploaded when they change, not every month, so the figures here are as of the tracker's own date and do not depend on the report selected in the top bar. The lease agreements themselves live on their own page, Accommodation Lease Agreements."
         actions={
           <span className="inline-flex flex-wrap items-center gap-1.5 rounded-xl border border-line bg-white px-2 py-1 shadow-sm">
             <ExportButtons section="recovery_report" label="Cost recovery report" />
@@ -132,7 +126,7 @@ export default async function CostRecoveryPage({ searchParams }: { searchParams:
                           {leaseOf(c.contractor).length ? (
                             leaseOf(c.contractor).map((l) => (
                               <div key={String(l.id)} className="whitespace-nowrap">
-                                <Link href="/modules/cost-recovery?tab=leases" className="font-mono text-navy hover:underline">{String(l.agreement_no)}</Link>
+                                <Link href="/modules/lease-agreements" className="font-mono text-navy hover:underline">{String(l.agreement_no)}</Link>
                                 <span className={`ml-1 ${l.lease_status__tone === "red" ? "text-red-700" : l.lease_status__tone === "amber" ? "text-amber-700" : "text-muted"}`}>
                                   {String(l.lease_status ?? "")}{l.current_expiry ? ` · to ${formatDate(String(l.current_expiry))}` : ""}{l.current_fee ? ` · ${money(Number(l.current_fee))}` : ""}
                                 </span>
@@ -387,36 +381,6 @@ export default async function CostRecoveryPage({ searchParams }: { searchParams:
         </>
       )}
 
-      {tab === "leases" && (
-        <>
-          <div className="card flex flex-wrap items-center justify-between gap-3 p-4">
-            <div className="text-sm text-muted">
-              The Labour Accommodation Lease Agreements behind the accommodation charges: the tenant, the works contract they serve, the term, the lease fee, the deposit and the room rates, with every amendment logged and the current fee and expiry carried forward. Each agreement is tied to the accommodation invoice tracker rows of the same contractor, so what has been invoiced, what is outstanding and what is overdue sit beside the lease itself.
-            </div>
-            {canUpload && (
-              <AddFromDocuments
-                endpoint="/api/leases/from-documents"
-                title="Add a lease agreement or an amendment from its documents"
-                button="Upload lease agreement / amendment"
-                intro="Drop the signed Labour Accommodation Lease Agreement, or an Agreement Amendment, for one tenant or several at once (a folder is fine). The agreement number and date, the tenant, the works contract, the term and commencement, the lease fee, the security deposit, the room rates and the monthly fee histogram are read and the tracker is written; the document is filed in the Contract Library under the contractor."
-                tip="An amendment is matched to its agreement by tenant and works contract (else by agreement number): it is logged under the agreement and moves the current fee and expiry on. An agreement already on the tracker stops the upload with the old and the new side by side for you to replace or keep."
-              />
-            )}
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <Stat label="Lease agreements" value={String(leases.total)} sub={`${leases.active} active · ${leases.expired} expired · ${leases.total - leases.active - leases.expired} closed / terminated`} tone={leases.expired ? "red" : undefined} />
-            <Stat label="Current lease fees (active)" value={money(leases.currentFee)} sub={`${money(leases.invoiced)} invoiced to date on the tracker · ${money(leases.outstanding)} outstanding`} />
-            <Stat label="Expiring or to extend" value={String(leases.expiring + leases.extensionNeeded)} sub={`${leases.expiring} within 60 days · ${leases.extensionNeeded} where the works run past the lease`} tone={leases.extensionNeeded ? "red" : leases.expiring ? "amber" : "green"} />
-            <Stat label="Deposits and invoices" value={`${leases.depositMissing} · ${leases.overdueInvoices}`} sub={`${leases.depositMissing} deposit(s) not received · ${leases.overdueInvoices} invoice(s) overdue${leases.overdueValue ? ` (${money(leases.overdueValue)})` : ""}`} tone={leases.overdueInvoices || leases.depositMissing ? "amber" : "green"} />
-          </div>
-          <LeaseAlertsCard s={leases} />
-          {leases.total === 0 && (
-            <div className="card p-5 text-sm text-muted">No lease agreement on the tracker yet. Upload the signed agreements (and their amendments) with the button above – or drop them on the Feed documents page – and each one is read and listed here.</div>
-          )}
-          <RegisterPage registerKey="lease_agreements" isAdmin={user.role === "admin"} />
-          <RegisterPage registerKey="lease_amendments" isAdmin={user.role === "admin"} />
-        </>
-      )}
 
     </div>
   );

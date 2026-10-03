@@ -32,12 +32,12 @@ export function LeaseAlertsCard({ s, compact = false }: { s: LeaseSummary; compa
         ))}
       </ul>
       {compact && s.alerts.length > shown.length && (
-        <Link href="/modules/cost-recovery?tab=leases" className="mt-2 inline-block text-xs text-accent hover:underline">
+        <Link href="/modules/lease-agreements" className="mt-2 inline-block text-xs text-accent hover:underline">
           {s.alerts.length - shown.length} more on the lease tracker
         </Link>
       )}
       {compact && (
-        <Link href="/modules/cost-recovery?tab=leases" className="mt-2 ml-3 inline-block text-xs text-accent hover:underline">
+        <Link href="/modules/lease-agreements" className="mt-2 ml-3 inline-block text-xs text-accent hover:underline">
           Open the lease tracker
         </Link>
       )}
