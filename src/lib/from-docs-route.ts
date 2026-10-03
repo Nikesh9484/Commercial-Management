@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { NextResponse } from "next/server";
+import { requestBackup } from "./cloud-backup";
 import { withUser } from "./api";
 
 /** a scanned certificate pack or contract can run to a few hundred MB */
@@ -42,7 +43,10 @@ export function fromDocumentsRoute(opts: { dir: string; refuse: (user: UserInfo)
           .sort()
           .map((f) => ({ name: f.replace(/^\d{3}-/, ""), bytes: fs.readFileSync(path.join(dir, f)) }));
         const result = await withHeavyLock(() => opts.run(files, user, body.decisions ?? {}));
-        if (!result.needsDecision) fs.rmSync(dir, { recursive: true, force: true });
+        if (!result.needsDecision) {
+          fs.rmSync(dir, { recursive: true, force: true });
+          if (result.entries.length) requestBackup("documents");
+        }
         return NextResponse.json(result);
       }
       const part = Buffer.from(String(body.data ?? ""), "base64");

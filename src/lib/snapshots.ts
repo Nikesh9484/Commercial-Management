@@ -1,3 +1,4 @@
+import { requestBackup } from "./cloud-backup";
 import type Database from "better-sqlite3";
 import { getDb, getSetting, setSetting } from "./db";
 import { allRegisters } from "./registers";
@@ -190,6 +191,12 @@ export function nearestStoredBefore(db: Database.Database, reportNo: number, pro
  * the copy stored when it was imported, so locking it later never captures another month's figures.
  */
 export function lockPeriod(periodId: number, user: UserInfo, opts: { force?: boolean } = {}): { registers: number; records: number } {
+  const out = lockPeriodInner(periodId, user, opts);
+  requestBackup("lock");
+  return out;
+}
+
+function lockPeriodInner(periodId: number, user: UserInfo, opts: { force?: boolean } = {}): { registers: number; records: number } {
   if (user.role !== "admin") throw new AuthError("Only an Admin can lock a reporting period.");
   const db = getDb();
   const period = getPeriod(periodId);

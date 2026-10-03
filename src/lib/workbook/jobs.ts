@@ -5,7 +5,7 @@ import { ValidationError } from "../registers/engine";
 import fs from "node:fs";
 import path from "node:path";
 import { getDb, getSetting } from "../db";
-import { putTrace, getTrace } from "../cloud-backup";
+import { putTrace, getTrace, requestBackup } from "../cloud-backup";
 
 /** The last step an import reached, kept in the database so it survives a restart of the server. */
 export interface ImportTrace {
@@ -104,6 +104,7 @@ export function startImportJob(req: ImportRequest, user: UserInfo): ImportJob {
       job.result = result;
       job.phase = "Done";
       trace("done");
+      requestBackup("import");
     })
     .catch((e: unknown) => {
       job.status = "failed";

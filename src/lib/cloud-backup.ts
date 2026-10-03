@@ -2,8 +2,8 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { S3Client, GetObjectCommand, PutObjectCommand, HeadObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
-import { getDb, restoreBackupIfMissing } from "./db";
+import { S3Client, GetObjectCommand, PutObjectCommand, HeadObjectCommand, DeleteObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
+import { closeDb, getDb, restoreBackupIfMissing } from "./db";
 
 /**
  * Cloud backup of the SQLite database file.
@@ -22,6 +22,8 @@ const KEY = process.env.BACKUP_S3_OBJECT || "commercial.db";
 const INTERVAL_MS = 20_000;
 /** A changed database is uploaded at most this often (each upload is the whole file, ~25 MB of bandwidth). */
 const MIN_UPLOAD_GAP_MS = 3 * 60_000;
+/** After a start, the cloud copy is watched this long for the previous server's final upload. */
+const STARTUP_WATCH_MS = 10 * 60_000;
 
 /** Where backups go: an S3-compatible bucket, or a (private) GitHub repository. */
 export type Provider = "s3" | "github" | null;
@@ -32,10 +34,20 @@ export function provider(): Provider {
   return null;
 }
 
+export interface StoredCopy {
+  key: string;
+  size: number;
+  modified: string | null;
+}
+
 interface Store {
   exists(key: string): Promise<boolean>;
   /** Size in bytes of the stored file, null when there is none. */
   size(key: string): Promise<number | null>;
+  /** An identity for the stored version (ETag or content sha): changes whenever someone uploads. */
+  stamp(key: string): Promise<string | null>;
+  /** The copies under a prefix ("daily/", "conflict/"), newest first. */
+  list(prefix: string): Promise<StoredCopy[]>;
   get(key: string): Promise<Buffer | null>;
   put(key: string, body: Buffer): Promise<void>;
   del(key: string): Promise<void>;
@@ -62,6 +74,24 @@ function s3Store(): Store {
       } catch {
         return null;
       }
+    },
+    async stamp(key) {
+      try {
+        const h = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+        return `${h.ETag ?? ""}|${h.ContentLength ?? 0}|${h.LastModified?.toISOString() ?? ""}`;
+      } catch {
+        return null;
+      }
+    },
+    async list(prefix) {
+      const out: StoredCopy[] = [];
+      let token: string | undefined;
+      do {
+        const r = await s3.send(new ListObjectsV2Command({ Bucket: bucket, Prefix: prefix, ContinuationToken: token }));
+        for (const o of r.Contents ?? []) if (o.Key && o.Key !== prefix) out.push({ key: o.Key, size: Number(o.Size ?? 0), modified: o.LastModified?.toISOString() ?? null });
+        token = r.IsTruncated ? r.NextContinuationToken : undefined;
+      } while (token);
+      return out.sort((a, b) => b.key.localeCompare(a.key));
     },
     async get(key) {
       const obj = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
@@ -99,6 +129,17 @@ function githubStore(): Store {
     },
     async size(key) {
       return (await meta(key))?.size ?? null;
+    },
+    async stamp(key) {
+      return (await sha(key)) ?? null;
+    },
+    async list(prefix) {
+      const dir = prefix.replace(/\/$/, "");
+      const r = await fetch(url(dir), { headers: { ...headers, Accept: "application/vnd.github+json" } });
+      if (r.status === 404) return [];
+      if (!r.ok) throw new Error(`GitHub ${r.status} listing ${dir}: ${(await r.text()).slice(0, 200)}`);
+      const j = (await r.json()) as { name: string; size?: number; type?: string }[];
+      return (Array.isArray(j) ? j : []).filter((x) => x.type === "file").map((x) => ({ key: `${dir}/${x.name}`, size: Number(x.size ?? 0), modified: null })).sort((a, b) => b.key.localeCompare(a.key));
     },
     async get(key) {
       const r = await fetch(url(key), { headers: { ...headers, Accept: "application/vnd.github.raw+json" } });
@@ -146,13 +187,26 @@ export interface BackupStatus {
   lastUploadAt: string | null;
   lastError: string | null;
   uploads: number;
+  /** Something worth telling the Admin: a newer copy adopted at start, or a conflicting copy kept aside. */
+  notice: string | null;
 }
 
-type G = typeof globalThis & { __cdBackup?: BackupStatus; __cdBackupTimer?: NodeJS.Timeout; __cdBackupBusy?: boolean; __cdLastSeen?: string; __cdRestoreFailed?: boolean };
+type G = typeof globalThis & {
+  __cdBackup?: BackupStatus;
+  __cdBackupTimer?: NodeJS.Timeout;
+  __cdBackupBusy?: boolean;
+  __cdLastSeen?: string;
+  __cdRestoreFailed?: boolean;
+  /** the cloud copy's identity as last seen by this server (restored from it, or uploaded by it) */
+  __cdKnownStamp?: string | null;
+  /** the local file's signature right after the restore: unchanged means nothing was written here yet */
+  __cdRestoreSig?: string;
+  __cdBackupWanted?: string | null;
+};
 const g = globalThis as G;
 
 export function backupStatus(): BackupStatus {
-  if (!g.__cdBackup) g.__cdBackup = { enabled: isConfigured(), bucket: isConfigured() ? store().label : null, restoredAt: null, restoredFrom: null, lastUploadAt: null, lastError: null, uploads: 0 };
+  if (!g.__cdBackup) g.__cdBackup = { enabled: isConfigured(), bucket: isConfigured() ? store().label : null, restoredAt: null, restoredFrom: null, lastUploadAt: null, lastError: null, uploads: 0, notice: null };
   return g.__cdBackup;
 }
 
@@ -186,6 +240,8 @@ export async function restoreIfNeeded(): Promise<void> {
     getDb();
     status.restoredFrom = how === "restored" ? "cloud" : how === "present" ? "local" : "fresh";
     status.restoredAt = new Date().toISOString();
+    g.__cdKnownStamp = await store().stamp(KEY).catch(() => null);
+    g.__cdRestoreSig = changeSignature();
     console.log(`[backup] database ${how === "restored" ? "restored from" : how === "present" ? "already on disk; backups go to" : "started fresh; backups go to"} ${store().label}/${KEY}`);
   } catch (e) {
     status.lastError = `Restore failed: ${e instanceof Error ? e.message : String(e)}`;
@@ -269,9 +325,15 @@ export async function backupNow(reason = "manual", opts: { force?: boolean } = {
   g.__cdBackupBusy = true;
   let tmp: string | null = null;
   try {
+    const st = store();
+    // Another server uploaded since this one last saw the cloud copy (a deploy: the old instance's final
+    // upload lands after the new one has already restored). Nothing written here yet → take that copy;
+    // something written here → keep the other copy aside before this one goes up, so nothing is lost.
+    if (!opts.force && (await reconcileWithRemote(st))) {
+      return;
+    }
     tmp = await snapshotAsync();
     const body = fs.readFileSync(tmp);
-    const st = store();
     // Never replace a backup with a much smaller database: an empty or half-filled database on a fresh
     // disk must not overwrite months of data. An Admin can force it from Settings when it is intended.
     const remote = await st.size(KEY);
@@ -288,6 +350,8 @@ export async function backupNow(reason = "manual", opts: { force?: boolean } = {
     status.lastError = null;
     status.uploads++;
     g.__cdLastSeen = changeSignature();
+    g.__cdBackupWanted = null;
+    g.__cdKnownStamp = await st.stamp(KEY).catch(() => null);
     console.log(`[backup] uploaded ${body.length} bytes (${reason})`);
   } catch (e) {
     status.lastError = `Upload failed: ${e instanceof Error ? e.message : String(e)}`;
@@ -298,26 +362,146 @@ export async function backupNow(reason = "manual", opts: { force?: boolean } = {
   }
 }
 
+/** The cloud copy changed under us: adopt it when nothing was written here, otherwise keep it aside. Returns true when the upload must be skipped. */
+async function reconcileWithRemote(st: Store): Promise<boolean> {
+  const status = backupStatus();
+  const known = g.__cdKnownStamp;
+  if (known === undefined || known === null) return false; // nothing to compare with (fresh store)
+  const now = await st.stamp(KEY).catch(() => null);
+  if (!now || now === known) return false;
+  const untouched = g.__cdRestoreSig !== undefined && changeSignature() === g.__cdRestoreSig && status.uploads === 0;
+  if (untouched) {
+    const ok = await adoptRemote(st, KEY);
+    if (ok) {
+      status.notice = `A newer cloud copy was found at ${new Date().toISOString().slice(0, 16).replace("T", " ")} (uploaded by the previous server as it stopped) and has been taken into use – nothing had been changed here yet.`;
+      console.log("[backup] newer cloud copy adopted – nothing had been written locally");
+      return true;
+    }
+    return false;
+  }
+  const keep = `conflict/${new Date().toISOString().replace(/[:.]/g, "-")}.db`;
+  try {
+    const bytes = await st.get(KEY);
+    if (bytes) {
+      await st.put(keep, bytes);
+      status.notice = `The cloud backup had been changed by another server after this one started; that copy was kept as ${keep} before this server's data replaced it. If anything is missing here, restore ${keep} from Settings → Database backup.`;
+      console.warn(`[backup] cloud copy changed by another writer – kept as ${keep}`);
+    }
+  } catch (e) {
+    console.error("[backup] could not keep the conflicting copy:", e instanceof Error ? e.message : String(e));
+  }
+  g.__cdKnownStamp = now;
+  return false;
+}
+
+/** Replaces the database on this server with a copy from the store (validated), reopening it afterwards. */
+async function adoptRemote(st: Store, key: string): Promise<boolean> {
+  const status = backupStatus();
+  try {
+    const bytes = await st.get(key);
+    if (!bytes || bytes.length < 100 || bytes.subarray(0, 15).toString("latin1") !== "SQLite format 3") throw new Error(`${key} is not a SQLite database`);
+    const file = dbPath();
+    fs.writeFileSync(`${file}.incoming`, bytes);
+    closeDb();
+    for (const suffix of ["-wal", "-shm"]) fs.rmSync(`${file}${suffix}`, { force: true });
+    fs.renameSync(`${file}.incoming`, file);
+    getDb();
+    g.__cdKnownStamp = await st.stamp(KEY).catch(() => null);
+    g.__cdRestoreSig = changeSignature();
+    g.__cdLastSeen = g.__cdRestoreSig;
+    status.restoredFrom = "cloud";
+    status.restoredAt = new Date().toISOString();
+    return true;
+  } catch (e) {
+    status.lastError = `Could not take the cloud copy ${key} into use: ${e instanceof Error ? e.message : String(e)}`;
+    console.error("[backup]", status.lastError);
+    return false;
+  }
+}
+
+/** Asks for an upload at the next tick, whatever the usual gap between uploads – after an import, a lock, documents filed. */
+export function requestBackup(reason: string): void {
+  if (!isConfigured()) return;
+  g.__cdBackupWanted = reason;
+}
+
+/** The copies in the store: the current one, the dated daily copies and any copies kept aside. */
+export async function listCopies(): Promise<StoredCopy[]> {
+  if (!isConfigured()) return [];
+  const st = store();
+  const current = await st.size(KEY);
+  const out: StoredCopy[] = current ? [{ key: KEY, size: current, modified: null }] : [];
+  for (const prefix of ["conflict/", "daily/"]) {
+    try {
+      out.push(...(await st.list(prefix)));
+    } catch (e) {
+      console.error(`[backup] could not list ${prefix}:`, e instanceof Error ? e.message : String(e));
+    }
+  }
+  return out;
+}
+
+/** A copy from the store, for downloading. */
+export async function getCopy(key: string): Promise<Buffer | null> {
+  if (!isConfigured()) return null;
+  return store().get(key);
+}
+
+/**
+ * Restores a copy from the store over the database on this server (Admin, on purpose). The database
+ * as it stands is first uploaded as conflict/before-restore-….db, so the step can be undone.
+ */
+export async function restoreCopy(key: string): Promise<{ keptAs: string }> {
+  if (!isConfigured()) throw new Error("Cloud backup is not set up.");
+  const st = store();
+  const keptAs = `conflict/before-restore-${new Date().toISOString().replace(/[:.]/g, "-")}.db`;
+  const tmp = await snapshotAsync();
+  try {
+    await st.put(keptAs, fs.readFileSync(tmp));
+  } finally {
+    fs.rm(tmp, { force: true }, () => {});
+  }
+  const ok = await adoptRemote(st, key);
+  if (!ok) throw new Error(backupStatus().lastError ?? "The copy could not be restored.");
+  backupStatus().notice = `Restored ${key}; the database as it was before is kept as ${keptAs}.`;
+  await backupNow("restore", { force: true });
+  return { keptAs };
+}
+
 /** Starts the periodic upload loop and the shutdown hook (once per process). */
 export function startBackupLoop(): void {
   if (!isConfigured() || g.__cdBackupTimer) return;
   g.__cdLastSeen = changeSignature();
+  const startedAt = Date.now();
   g.__cdBackupTimer = setInterval(() => {
+    // in the minutes after a start, watch for the previous server's final upload even when nothing
+    // has been written here: it is taken into use while this server is still untouched
+    if (Date.now() - startedAt < STARTUP_WATCH_MS && !g.__cdBackupBusy) {
+      g.__cdBackupBusy = true;
+      void reconcileWithRemote(store())
+        .catch((e) => console.error("[backup] start-up check failed:", e instanceof Error ? e.message : String(e)))
+        .finally(() => {
+          g.__cdBackupBusy = false;
+        });
+      return;
+    }
     const sig = changeSignature();
     if (sig === g.__cdLastSeen) return;
     // not while an import is writing (its result goes up once it is done), and not more than every few minutes
     const running = currentImportTrace();
     if (running && running.status === "running") return;
     const last = backupStatus().lastUploadAt ? Date.parse(backupStatus().lastUploadAt!) : 0;
-    if (Date.now() - last < MIN_UPLOAD_GAP_MS) return;
-    void backupNow("changed");
+    if (!g.__cdBackupWanted && Date.now() - last < MIN_UPLOAD_GAP_MS) return;
+    void backupNow(g.__cdBackupWanted ?? "changed");
   }, INTERVAL_MS);
   g.__cdBackupTimer.unref();
   const onExit = (signal: string) => {
     console.log(`[backup] ${signal} received – final upload`);
     const running = currentImportTrace();
     if (running && running.status === "running") putTraceSync({ ...running, ended: `${signal} received by the process while the import was running (the host stopped the instance – a restart, a deploy, or a failed health check)` });
-    backupNow("shutdown").finally(() => process.exit(0));
+    const done = backupNow("shutdown").finally(() => process.exit(0));
+    setTimeout(() => process.exit(0), 25_000).unref();
+    void done;
   };
   process.once("SIGTERM", () => onExit("SIGTERM"));
   process.once("SIGINT", () => onExit("SIGINT"));

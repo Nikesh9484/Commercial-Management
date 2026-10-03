@@ -64,6 +64,17 @@ export function restoreBackupIfMissing(dbPath: string): "restored" | "fresh" | "
   throw new Error(`The database is missing and the cloud backup could not be restored (exit ${r.status ?? r.signal}). Refusing to start with an empty database – check the BACKUP_* settings and restart.`);
 }
 
+/** Closes the open database so its file can be replaced; the next getDb() reopens it. */
+export function closeDb(): void {
+  const g = globalThis as G;
+  if (!g.__cdDb) return;
+  try {
+    g.__cdDb.close();
+  } finally {
+    g.__cdDb = undefined;
+  }
+}
+
 export function getDb(): Database.Database {
   const g = globalThis as G;
   if (g.__cdDb) return g.__cdDb;

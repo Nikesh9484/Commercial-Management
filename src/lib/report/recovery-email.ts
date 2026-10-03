@@ -2,6 +2,8 @@ import type { ReportData } from "./data";
 import type { EmailSummary } from "./email";
 import type { RecordRow } from "../registers/types";
 import { getAccommodationSummary, getCustomsSummary } from "../recovery/summary";
+import { getDb } from "../db";
+import { contractorKey } from "../bonds/name-key";
 import { formatDate, formatMoney, formatMonthYear } from "../format";
 import { APP_NAME } from "../brand";
 
@@ -19,6 +21,31 @@ const td = 'style="padding:4px 10px;border:1px solid #dfe5ee;font-size:12px"';
 const tdr = 'style="padding:4px 10px;border:1px solid #dfe5ee;font-size:12px;text-align:right;font-family:Consolas,monospace"';
 const th = 'style="padding:4px 10px;border:1px solid #dfe5ee;font-size:12px;background:#f3f5f8;text-align:left"';
 const n = (v: unknown) => (v === null || v === undefined || v === "" ? 0 : Number(v) || 0);
+const sameCo = (a: unknown, b: unknown) => {
+  const ka = contractorKey(a);
+  const kb = contractorKey(b);
+  return !!ka && !!kb && (ka === kb || ka.includes(kb) || kb.includes(ka));
+};
+/** The cost report lines of the programme with their package, for naming a contract in a letter. */
+function costLinesOf(programmeId: number): Map<number, { code: string; name: string; package: string }> {
+  try {
+    const rows = getDb().prepare("SELECT l.id, l.code, l.name, p.name AS package FROM cost_lines l LEFT JOIN packages p ON p.id = l.package_id WHERE l.programme_id = ?").all(programmeId) as { id: number; code: string | null; name: string | null; package: string | null }[];
+    return new Map(rows.map((r) => [r.id, { code: String(r.code ?? ""), name: String(r.name ?? ""), package: String(r.package ?? "") }]));
+  } catch {
+    return new Map();
+  }
+}
+/** The lease agreements of a contractor on the lease tracker, with their amendments. */
+function leasesOf(programmeId: number, contractor: string): { lease: Record<string, unknown>; amendments: Record<string, unknown>[] }[] {
+  try {
+    const db = getDb();
+    const leases = db.prepare("SELECT l.*, k.name AS contractor_name FROM lease_agreements l LEFT JOIN contractors k ON k.id = l.contractor_id WHERE l.programme_id = ?").all(programmeId) as Record<string, unknown>[];
+    const mine = leases.filter((l) => sameCo(l.contractor_name, contractor));
+    return mine.map((lease) => ({ lease, amendments: db.prepare("SELECT * FROM lease_amendments WHERE agreement_id = ? ORDER BY amendment_no, amendment_date").all(lease.id) as Record<string, unknown>[] }));
+  } catch {
+    return [];
+  }
+}
 const plusDays = (iso: string, days: number) => {
   const d = new Date(iso + "T00:00:00Z");
   d.setUTCDate(d.getUTCDate() + days);
@@ -49,34 +76,80 @@ export function buildAccommodationEmail(data: ReportData, sender: { name: string
   text.push("", `Subject: ${subject}`, "");
   html.push(`<p><b>Subject: ${esc(subject)}</b></p>`);
   both(
-    `<p>Further to the Lease Agreement${leaseNames.length === 1 ? "" : "s"} for accommodation at the AMAALA Construction Village, our records as at ${esc(asOf)} show an overdue balance of <b>SAR ${formatMoney(outstanding)}</b> (inclusive of VAT) against the ${esc(leaseNames.join(", "))} account${leaseNames.length === 1 ? "" : "s"}. The invoices below remain unpaid beyond the 14-day settlement period stated in the lease.</p>`,
-    `Further to the Lease Agreement${leaseNames.length === 1 ? "" : "s"} for accommodation at the AMAALA Construction Village, our records as at ${asOf} show an overdue balance of SAR ${formatMoney(outstanding)} (inclusive of VAT) against the ${leaseNames.join(", ")} account${leaseNames.length === 1 ? "" : "s"}. The invoices below remain unpaid beyond the 14-day settlement period stated in the lease.`,
+    `<p>Further to the Lease Agreement${leaseNames.length === 1 ? "" : "s"} for accommodation at the AMAALA Construction Village, our records as at ${esc(asOf)} show an overdue balance of <b>SAR ${formatMoney(outstanding)}</b> (inclusive of VAT) against the ${esc(leaseNames.join(", "))} account${leaseNames.length === 1 ? "" : "s"}. The account is set out below, lease by lease and invoice by invoice; the unpaid invoices remain open beyond the 14-day settlement period stated in the lease.</p>`,
+    `Further to the Lease Agreement${leaseNames.length === 1 ? "" : "s"} for accommodation at the AMAALA Construction Village, our records as at ${asOf} show an overdue balance of SAR ${formatMoney(outstanding)} (inclusive of VAT) against the ${leaseNames.join(", ")} account${leaseNames.length === 1 ? "" : "s"}. The account is set out below, lease by lease and invoice by invoice; the unpaid invoices remain open beyond the 14-day settlement period stated in the lease.`,
   );
   const notYet: string[] = [];
   const late: number[] = [];
+  const programmeId = Number((data.programme as { id?: number }).id ?? 0);
+  const thr = th.replace('text-align:left', "text-align:right");
   for (const g of groups) {
+    // 1. the lease agreement(s) behind the account, from the lease tracker
+    const leases = programmeId ? leasesOf(programmeId, g.contractor) : [];
+    for (const { lease: l, amendments } of leases) {
+      const terms = [
+        `Lease Agreement ${esc(l.agreement_no)}${l.agreement_date ? ` dated ${formatDate(String(l.agreement_date))}` : ""}`,
+        l.contract_code ? `works contract ${esc(l.contract_code)}` : "",
+        l.commencement_date ? `commencement ${formatDate(String(l.commencement_date))}` : "",
+        l.term_months ? `term ${String(l.term_months)} months` : "",
+        l.expiry_date ? `expiry ${formatDate(String(l.expiry_date))}` : "",
+        n(l.lease_fee) ? `lease fee SAR ${formatMoney(n(l.lease_fee))}` : "",
+        n(l.security_deposit) ? `security deposit SAR ${formatMoney(n(l.security_deposit))}${l.deposit_received ? " (received)" : " (not yet received)"}` : "",
+      ].filter(Boolean);
+      const amend = amendments.map((a) => `Amendment No ${String(a.amendment_no ?? "?")}${a.amendment_date ? ` of ${formatDate(String(a.amendment_date))}` : ""}${n(a.new_fee) ? `: lease fee SAR ${formatMoney(n(a.new_fee))}` : ""}${a.new_expiry ? `, expiry ${formatDate(String(a.new_expiry))}` : ""}`);
+      const current = [n(l.current_fee) ? `current lease fee SAR ${formatMoney(n(l.current_fee))}` : "", l.current_expiry ? `current expiry ${formatDate(String(l.current_expiry))}` : ""].filter(Boolean).join(", ");
+      both(
+        `<p><b>${terms[0]}</b>${terms.length > 1 ? ` – ${terms.slice(1).join(", ")}` : ""}.${amend.length ? ` ${esc(amend.join("; "))}.` : ""}${current ? ` ${esc(current.charAt(0).toUpperCase() + current.slice(1))}.` : ""}</p>`,
+        `${terms.map((t) => t.replace(/<[^>]+>/g, "")).join(", ")}.${amend.length ? ` ${amend.join("; ")}.` : ""}${current ? ` ${current}.` : ""}`,
+      );
+    }
     for (const lease of g.rows) {
       const leaseKey = String(lease.tracker_key ?? "").split("|").slice(1).join("|") || String(lease.tracker_key ?? "");
-      const mine = g.detail.unpaid.filter((i) => String(i.lease_key ?? "") === leaseKey || String(i.tracker_name ?? "") === String(lease.tracker_name ?? ""));
-      const heading = `${String(lease.tracker_name)}${lease.program_name ? ` – ${String(lease.program_name)}` : ""} (outstanding SAR ${formatMoney(n(lease.outstanding))})`;
-      if (!mine.length) {
-        if (n(lease.outstanding) > 0.5) both(`<p><b>${esc(heading)}</b><br>Invoiced to date SAR ${formatMoney(n(lease.invoiced_gross))} (incl. VAT), received or recovered SAR ${formatMoney(n(lease.received_total))}, withheld under IPC SAR ${formatMoney(n(lease.withheld_in_ipc))}.</p>`, `${heading}: invoiced to date ${formatMoney(n(lease.invoiced_gross))} (incl. VAT), received or recovered ${formatMoney(n(lease.received_total))}, withheld under IPC ${formatMoney(n(lease.withheld_in_ipc))}.`);
+      const all = g.detail.invoices.filter((i) => String(i.lease_key ?? "") === leaseKey || String(i.tracker_name ?? "") === String(lease.tracker_name ?? ""));
+      const mine = all.filter((i) => i.status === "Unpaid" || i.status === "Part-paid");
+      const heading = `${String(lease.tracker_name)}${lease.program_name ? ` – ${String(lease.program_name)}` : ""}${lease.asset_ref ? ` (asset ${String(lease.asset_ref)})` : ""} – outstanding SAR ${formatMoney(n(lease.outstanding))}`;
+      html.push(`<p><b>${esc(heading)}</b></p>`);
+      text.push("", heading);
+      // 2. the account as the tracker holds it, line by line
+      const build: [string, number][] = [
+        ["Lease agreement sum", n(lease.lease_sum)],
+        ["Assessed to date (net of VAT)", n(lease.assessment_to_date)],
+        ["Invoiced to date (excl. VAT)", n(lease.invoiced_net)],
+        ["Assessed, not yet invoiced", n(lease.not_yet_invoiced)],
+        ["Invoiced to date (incl. VAT)", n(lease.invoiced_gross)],
+        ["Received and recovered", n(lease.received_total)],
+        ["Of which confirmed by Finance", n(lease.confirmed_by_finance)],
+        ["Awaiting Finance confirmation", n(lease.awaiting_confirmation)],
+        ["Offset through an IPC", n(lease.offset_via_ipc)],
+        [`Withheld under IPC${lease.ipc_ref ? ` (${String(lease.ipc_ref)})` : ""}`, n(lease.withheld_in_ipc)],
+        ["Outstanding (incl. VAT)", n(lease.outstanding)],
+        ["To be settled in the final account", n(lease.deemed_settled_fa)],
+      ];
+      const shown = build.filter(([, v], i) => Math.abs(v) > 0.004 || i === 4 || i === 5 || i === 10);
+      html.push(`<table cellspacing="0" cellpadding="0" style="border-collapse:collapse;min-width:420px"><tr><th ${th}>Account position as at ${esc(asOf)}</th><th ${thr}>SAR</th></tr>${shown.map(([l, v]) => `<tr><td ${td}>${esc(l)}</td><td ${tdr}>${l.startsWith("Outstanding") ? `<b>${formatMoney(v)}</b>` : formatMoney(v)}</td></tr>`).join("")}</table>`);
+      text.push(`  Account position as at ${asOf}:`, ...shown.map(([l, v]) => `    ${l}: ${formatMoney(v)}`));
+      if (lease.note) both(`<p style="font-size:12px;color:#555">Tracker note: ${esc(lease.note)}</p>`, `  Tracker note: ${String(lease.note)}`);
+      // 3. every invoice issued under the lease, the unpaid ones in bold
+      if (!all.length) {
+        both(`<p style="font-size:12px;color:#555">The invoice-by-invoice list (invoice number, occupancy period, dates, amount, received, unpaid, days overdue) is added to this letter once the accommodation invoice tracker has been uploaded again – its invoice sets are read into the dashboard.</p>`, "  (The invoice-by-invoice list is added once the accommodation invoice tracker has been uploaded again.)");
         continue;
       }
       const unpaidSum = mine.reduce((t, i) => t + n(i.balance_due), 0);
       const credit = g.detail.overpaid;
-      html.push(`<p><b>${esc(heading)}</b></p>`);
-      html.push(`<table cellspacing="0" cellpadding="0" style="border-collapse:collapse;min-width:640px"><tr><th ${th}>Invoice no.</th><th ${th}>Occupancy period</th><th ${th}>Invoice date</th><th ${th}>Issued on</th><th ${th}>Due date</th><th ${th}>Amount incl. VAT (SAR)</th><th ${th}>Unpaid (SAR)</th><th ${th}>Days overdue</th></tr>`);
-      text.push("", heading, "  Invoice no | Occupancy period | Invoice date | Issued on | Due date | Amount incl. VAT | Unpaid | Days overdue");
-      for (const i of mine) {
-        const part = i.status === "Part-paid" ? " (part-paid)" : "";
-        const days = n(i.days_overdue) > 0 ? String(n(i.days_overdue)) : "due";
-        html.push(`<tr><td ${td}>${esc(i.invoice_no)}</td><td ${td}>${esc(formatMonthYear(i.invoice_period as string))}</td><td ${td}>${esc(formatDate(i.invoice_date as string))}</td><td ${td}>${esc(formatDate(i.issued_date as string))}</td><td ${td}>${esc(formatDate(i.due_date as string))}</td><td ${tdr}>${formatMoney(n(i.amount_gross))}</td><td ${tdr}>${formatMoney(n(i.balance_due))}${part}</td><td ${tdr}>${days}</td></tr>`);
-        text.push(`  ${String(i.invoice_no ?? "")} | ${formatMonthYear(i.invoice_period as string)} | ${formatDate(i.invoice_date as string)} | ${formatDate(i.issued_date as string)} | ${formatDate(i.due_date as string)} | ${formatMoney(n(i.amount_gross))} | ${formatMoney(n(i.balance_due))}${part} | ${days}`);
+      html.push(`<table cellspacing="0" cellpadding="0" style="border-collapse:collapse;min-width:640px"><tr><th ${th}>Set</th><th ${th}>Invoice no.</th><th ${th}>Occupancy period</th><th ${th}>Invoice date</th><th ${th}>Issued on</th><th ${th}>Due date</th><th ${thr}>Excl. VAT (SAR)</th><th ${thr}>Incl. VAT (SAR)</th><th ${thr}>Received (SAR)</th><th ${thr}>Offset / withheld (SAR)</th><th ${thr}>Unpaid (SAR)</th><th ${th}>Status</th><th ${th}>Settled on</th><th ${thr}>Days overdue</th></tr>`);
+      text.push("  Set | Invoice no | Occupancy period | Invoice date | Issued on | Due date | Excl. VAT | Incl. VAT | Received | Offset / withheld | Unpaid | Status | Settled on | Days overdue");
+      for (const i of all) {
+        const open = i.status === "Unpaid" || i.status === "Part-paid";
+        const b = (x: string) => (open ? `<b>${x}</b>` : x);
+        const days = n(i.days_overdue) > 0 ? String(n(i.days_overdue)) : open ? "due" : "";
+        const offset = n(i.offset_via_ipc) + n(i.withheld_in_ipc);
+        html.push(`<tr${open ? ' style="background:#fff7f7"' : ""}><td ${td}>${esc(i.set_no)}</td><td ${td}>${b(esc(i.invoice_no))}</td><td ${td}>${esc(formatMonthYear(i.invoice_period as string))}</td><td ${td}>${esc(formatDate(i.invoice_date as string))}</td><td ${td}>${esc(formatDate(i.issued_date as string))}</td><td ${td}>${esc(formatDate(i.due_date as string))}</td><td ${tdr}>${formatMoney(n(i.amount_net))}</td><td ${tdr}>${formatMoney(n(i.amount_gross))}</td><td ${tdr}>${formatMoney(n(i.received))}</td><td ${tdr}>${offset ? formatMoney(offset) : "–"}</td><td ${tdr}>${b(formatMoney(n(i.balance_due)))}</td><td ${td}>${esc(i.status)}</td><td ${td}>${i.actual_settlement_date ? esc(formatDate(String(i.actual_settlement_date))) : "–"}</td><td ${tdr}>${days}</td></tr>`);
+        text.push(`  ${String(i.set_no ?? "")} | ${String(i.invoice_no ?? "")} | ${formatMonthYear(i.invoice_period as string)} | ${formatDate(i.invoice_date as string)} | ${formatDate(i.issued_date as string)} | ${formatDate(i.due_date as string)} | ${formatMoney(n(i.amount_net))} | ${formatMoney(n(i.amount_gross))} | ${formatMoney(n(i.received))} | ${offset ? formatMoney(offset) : "–"} | ${formatMoney(n(i.balance_due))} | ${String(i.status ?? "")} | ${i.actual_settlement_date ? formatDate(String(i.actual_settlement_date)) : "–"} | ${days}`);
       }
+      const sum = (k: string) => all.reduce((t, i) => t + n(i[k]), 0);
       const totalNote = credit > 0.5 ? `${formatMoney(unpaidSum)} less SAR ${formatMoney(credit)} overpaid = <b>${formatMoney(unpaidSum - credit)}</b>` : `<b>${formatMoney(unpaidSum)}</b>`;
-      html.push(`<tr><td ${td} colspan="6"><b>Total</b></td><td ${tdr}>${totalNote}</td><td ${td}></td></tr></table>`);
-      text.push(`  Total: ${credit > 0.5 ? `${formatMoney(unpaidSum)} less SAR ${formatMoney(credit)} overpaid = ${formatMoney(unpaidSum - credit)}` : formatMoney(unpaidSum)}`);
+      html.push(`<tr><td ${td} colspan="6"><b>Total – ${all.length} invoice(s), ${mine.length} unpaid</b></td><td ${tdr}><b>${formatMoney(sum("amount_net"))}</b></td><td ${tdr}><b>${formatMoney(sum("amount_gross"))}</b></td><td ${tdr}><b>${formatMoney(sum("received"))}</b></td><td ${tdr}>${formatMoney(sum("offset_via_ipc") + sum("withheld_in_ipc"))}</td><td ${tdr}>${totalNote}</td><td ${td} colspan="3"></td></tr></table>`);
+      text.push(`  Total – ${all.length} invoice(s), ${mine.length} unpaid: incl. VAT ${formatMoney(sum("amount_gross"))}, received ${formatMoney(sum("received"))}, unpaid ${credit > 0.5 ? `${formatMoney(unpaidSum)} less SAR ${formatMoney(credit)} overpaid = ${formatMoney(unpaidSum - credit)}` : formatMoney(unpaidSum)}`);
     }
     if (g.detail.notYetInvoiced > 0.5) notYet.push(`SAR ${formatMoney(g.detail.notYetInvoiced)} (${g.contractor})`);
     if (g.detail.lateHistory.count) late.push(g.detail.lateHistory.min, g.detail.lateHistory.max);
@@ -113,22 +186,38 @@ export function buildCustomsEmail(data: ReportData, sender: { name: string; emai
   both(`<p>Dear ${esc(one ? one.contractor : "Sir / Madam")},</p>`, `Dear ${one ? one.contractor : "Sir / Madam"},`);
   text.push("", `Subject: ${subject}`, "");
   html.push(`<p><b>Subject: ${esc(subject)}</b></p>`);
+  const programmeId = Number((data.programme as { id?: number }).id ?? 0);
+  const lines = programmeId ? costLinesOf(programmeId) : new Map();
+  const thr = th.replace('text-align:left', "text-align:right");
   for (const g of groups) {
     const contracts = [...new Set(g.rows.map((r) => String(r.contract_code ?? "")).filter(Boolean))].join(", ");
     const payer = g.payer || "the Contractor";
+    // where the imports belong: programme, asset codes, contracts with their cost report line and package
+    const where = g.rows.map((r) => {
+      const line = r.cost_line_id ? lines.get(Number(r.cost_line_id)) : undefined;
+      return [r.contract_code ? `contract ${String(r.contract_code)}` : "", line ? `${line.code} ${line.name}`.trim() : "", line?.package ? `package ${line.package}` : "", r.asset_ref ? `asset ${String(r.asset_ref)}` : "", r.other_contract_note ? String(r.other_contract_note) : ""].filter(Boolean).join(" · ");
+    }).filter(Boolean);
+    both(
+      `<p>Programme ${esc(data.programme.code)} – ${esc(data.programme.name)}${where.length ? `; ${esc(where.join("; "))}` : ""}.</p>`,
+      `Programme ${data.programme.code} – ${data.programme.name}${where.length ? `; ${where.join("; ")}` : ""}.`,
+    );
     both(
       `<p>Under ${contracts ? `Contract ${esc(contracts)}` : "your Contract"} the customs duties on imported goods are borne by ${esc(payer)}. Our records as at ${esc(asOf)} show that RSG / AMAALA has paid customs duties of <b>SAR ${formatMoney(g.totals.rsgPaid)}</b> on ${esc(g.contractor)}'s imports${g.rsgPaidList.length ? `, on the ${g.rsgPaidList.length} customs declaration${g.rsgPaidList.length === 1 ? "" : "s"} listed below` : ""}.</p>`,
       `Under ${contracts ? `Contract ${contracts}` : "your Contract"} the customs duties on imported goods are borne by ${payer}. Our records as at ${asOf} show that RSG / AMAALA has paid customs duties of SAR ${formatMoney(g.totals.rsgPaid)} on ${g.contractor}'s imports${g.rsgPaidList.length ? `, on the ${g.rsgPaidList.length} customs declaration${g.rsgPaidList.length === 1 ? "" : "s"} listed below` : ""}.`,
     );
-    if (g.rsgPaidList.length) {
-      html.push(`<table cellspacing="0" cellpadding="0" style="border-collapse:collapse;min-width:640px"><tr><th ${th}>Payment date</th><th ${th}>Bayan no.</th><th ${th}>Port</th><th ${th}>Supplier</th><th ${th}>Invoice no.</th><th ${th}>Customs duty (SAR)</th><th ${th}>Paid by RSG (SAR)</th></tr>`);
-      text.push("  Payment date | Bayan no | Port | Supplier | Invoice no | Customs duty | Paid by RSG");
-      for (const d of g.rsgPaidList) {
-        html.push(`<tr><td ${td}>${esc(formatDate((d.payment_date ?? d.statement_date) as string))}</td><td ${td}>${esc(d.bayan_no)}</td><td ${td}>${esc(d.port)}</td><td ${td}>${esc(d.supplier)}</td><td ${td}>${esc(d.invoice_no)}</td><td ${tdr}>${formatMoney(n(d.customs_duty))}</td><td ${tdr}>${formatMoney(n(d.rsg_paid) || n(d.customs_duty))}</td></tr>`);
-        text.push(`  ${formatDate((d.payment_date ?? d.statement_date) as string)} | ${String(d.bayan_no ?? "")} | ${String(d.port ?? "")} | ${String(d.supplier ?? "")} | ${String(d.invoice_no ?? "")} | ${formatMoney(n(d.customs_duty))} | ${formatMoney(n(d.rsg_paid) || n(d.customs_duty))}`);
+    if (g.declarations.length) {
+      // every customs declaration on the contractor's imports, the ones RSG paid in bold
+      both(`<p>Customs declarations on ${esc(g.contractor)}'s imports, from the customs recovery tracker (${g.declarations.length} declaration(s), ${g.rsgPaidList.length} paid by RSG):</p>`, `Customs declarations on ${g.contractor}'s imports (${g.declarations.length}, ${g.rsgPaidList.length} paid by RSG):`);
+      html.push(`<table cellspacing="0" cellpadding="0" style="border-collapse:collapse;min-width:640px"><tr><th ${th}>Payment date</th><th ${th}>Bayan no.</th><th ${th}>Port</th><th ${th}>Statement</th><th ${th}>Customs broker</th><th ${th}>Supplier / manufacturer</th><th ${th}>Invoice no.</th><th ${thr}>Goods value (SAR)</th><th ${thr}>VAT (SAR)</th><th ${thr}>Customs duty (SAR)</th><th ${th}>Who paid</th><th ${thr}>Paid by RSG (SAR)</th><th ${thr}>Paid by contractor (SAR)</th><th ${th}>SNB status</th><th ${th}>Remarks</th></tr>`);
+      text.push("  Payment date | Bayan no | Port | Statement | Customs broker | Supplier | Invoice no | Goods value | VAT | Customs duty | Who paid | Paid by RSG | Paid by contractor | SNB status | Remarks");
+      for (const d of g.declarations) {
+        const rsg = d.paid_by === "RSG" || n(d.rsg_paid) > 0;
+        const b = (x: string) => (rsg ? `<b>${x}</b>` : x);
+        html.push(`<tr${rsg ? ' style="background:#fff7f7"' : ""}><td ${td}>${esc(formatDate((d.payment_date ?? d.statement_date) as string))}</td><td ${td}>${b(esc(d.bayan_no))}</td><td ${td}>${esc(d.port)}</td><td ${td}>${esc(d.statement_type)}</td><td ${td}>${esc(d.broker)}</td><td ${td}>${esc(d.supplier)}</td><td ${td}>${esc(d.invoice_no)}</td><td ${tdr}>${formatMoney(n(d.goods_value))}</td><td ${tdr}>${formatMoney(n(d.vat_amount))}</td><td ${tdr}>${formatMoney(n(d.customs_duty))}</td><td ${td}>${esc(d.paid_by)}</td><td ${tdr}>${b(formatMoney(n(d.rsg_paid) || (d.paid_by === "RSG" ? n(d.customs_duty) : 0)))}</td><td ${tdr}>${formatMoney(n(d.contractor_paid))}</td><td ${td}>${esc(d.snb_status)}</td><td ${td}>${esc(d.remarks)}</td></tr>`);
+        text.push(`  ${formatDate((d.payment_date ?? d.statement_date) as string)} | ${String(d.bayan_no ?? "")} | ${String(d.port ?? "")} | ${String(d.statement_type ?? "")} | ${String(d.broker ?? "")} | ${String(d.supplier ?? "")} | ${String(d.invoice_no ?? "")} | ${formatMoney(n(d.goods_value))} | ${formatMoney(n(d.vat_amount))} | ${formatMoney(n(d.customs_duty))} | ${String(d.paid_by ?? "")} | ${formatMoney(n(d.rsg_paid) || (d.paid_by === "RSG" ? n(d.customs_duty) : 0))} | ${formatMoney(n(d.contractor_paid))} | ${String(d.snb_status ?? "")} | ${String(d.remarks ?? "")}`);
       }
-      html.push(`<tr><td ${td} colspan="6"><b>Total paid by RSG</b></td><td ${tdr}><b>${formatMoney(g.rsgPaidListed)}</b></td></tr></table>`);
-      text.push(`  Total paid by RSG: ${formatMoney(g.rsgPaidListed)}`);
+      html.push(`<tr><td ${td} colspan="9"><b>Total</b></td><td ${tdr}><b>${formatMoney(g.declarations.reduce((t, d) => t + n(d.customs_duty), 0))}</b></td><td ${td}></td><td ${tdr}><b>${formatMoney(g.rsgPaidListed)}</b></td><td ${tdr}><b>${formatMoney(g.declarations.reduce((t, d) => t + n(d.contractor_paid), 0))}</b></td><td ${td} colspan="2"></td></tr></table>`);
+      text.push(`  Total: customs duty ${formatMoney(g.declarations.reduce((t, d) => t + n(d.customs_duty), 0))}, paid by RSG ${formatMoney(g.rsgPaidListed)}, paid by contractor ${formatMoney(g.declarations.reduce((t, d) => t + n(d.contractor_paid), 0))}`);
     }
     // how the amount is made up, contract by contract, from the tracker's own columns – so the figure
     // is never a bare total, even before the declaration-level Breakdown sheet is uploaded

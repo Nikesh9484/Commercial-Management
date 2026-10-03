@@ -1351,15 +1351,16 @@ function recoveryReport(ctx: Ctx) {
       const rows: Record<string, unknown>[] = [];
       for (const c of withDecl) {
         rows.push({ __span: true, date: `${c.contractor} – ${c.rsgPaidList.length} declaration(s), SAR ${formatMoney(c.rsgPaidListed)} paid by RSG · still to recover SAR ${formatMoney(c.totals.stillToRecover)}` });
-        for (const d of c.rsgPaidList) rows.push({ date: formatDate((d.payment_date ?? d.statement_date) as string), bayan: String(d.bayan_no ?? ""), port: String(d.port ?? ""), supplier: String(d.supplier ?? ""), invoice: String(d.invoice_no ?? ""), duty: Number(d.customs_duty ?? 0), rsg: Number(d.rsg_paid ?? 0) || Number(d.customs_duty ?? 0) });
+        for (const d of c.rsgPaidList) rows.push({ date: formatDate((d.payment_date ?? d.statement_date) as string), bayan: String(d.bayan_no ?? ""), port: String(d.port ?? ""), broker: String(d.broker ?? ""), supplier: String(d.supplier ?? ""), invoice: String(d.invoice_no ?? ""), duty: Number(d.customs_duty ?? 0), rsg: Number(d.rsg_paid ?? 0) || Number(d.customs_duty ?? 0) });
       }
       table(
         ctx,
         [
           { key: "date", label: "Payment date", width: 0.9 },
           { key: "bayan", label: "Bayan no", width: 0.9 },
-          { key: "port", label: "Port", width: 1.6 },
-          { key: "supplier", label: "Supplier", width: 2 },
+          { key: "port", label: "Port", width: 1.3 },
+          { key: "broker", label: "Broker", width: 1.3 },
+          { key: "supplier", label: "Supplier", width: 1.8 },
           { key: "invoice", label: "Invoice no", width: 1 },
           { key: "duty", label: "Customs duty", width: 1, align: "right", format: money },
           { key: "rsg", label: "Paid by RSG", width: 1, align: "right", format: money },

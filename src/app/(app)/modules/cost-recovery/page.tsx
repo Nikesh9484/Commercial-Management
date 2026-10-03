@@ -335,6 +335,7 @@ export default async function CostRecoveryPage({ searchParams }: { searchParams:
                                 <th className="px-2 py-1">Payment date</th>
                                 <th className="px-2 py-1">Bayan no</th>
                                 <th className="px-2 py-1">Port</th>
+                                <th className="px-2 py-1">Broker</th>
                                 <th className="px-2 py-1">Supplier</th>
                                 <th className="px-2 py-1">Invoice no</th>
                                 <th className="px-2 py-1 text-right">Goods value</th>
@@ -350,6 +351,7 @@ export default async function CostRecoveryPage({ searchParams }: { searchParams:
                                   <td className="whitespace-nowrap px-2 py-1">{formatDate((d.payment_date ?? d.statement_date) as string)}</td>
                                   <td className="whitespace-nowrap px-2 py-1">{String(d.bayan_no ?? "")}</td>
                                   <td className="max-w-[10rem] truncate px-2 py-1" title={String(d.port ?? "")}>{String(d.port ?? "")}</td>
+                                  <td className="max-w-[10rem] truncate px-2 py-1" title={String(d.broker ?? "")}>{String(d.broker ?? "")}</td>
                                   <td className="max-w-[14rem] truncate px-2 py-1" title={String(d.supplier ?? "")}>{String(d.supplier ?? "")}</td>
                                   <td className="whitespace-nowrap px-2 py-1">{String(d.invoice_no ?? "")}</td>
                                   <td className="whitespace-nowrap px-2 py-1 text-right tnum">{money(Number(d.goods_value ?? 0))}</td>

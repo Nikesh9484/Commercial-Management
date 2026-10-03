@@ -543,23 +543,34 @@ export function convertCustomsTracker(sheets: SheetValues[], ctx: RecoveryContex
   // duty; the ones whose supplier is one of our tracker vendors – or one of our contractors – are the
   // declarations behind each contractor's recovery.
   const declarations: unknown[][] = [];
-  const breakdown = findSheet(sheets, "Breakdown") ?? findSheet(sheets, "Detail1");
-  const bh = breakdown ? findHeaderRow(breakdown, "bayan no", "who paid") : null;
-  if (breakdown && bh !== null) {
+  // every Breakdown sheet – the tracker keeps one per year ("Breakdown", "Breakdown (2025)") – and Detail1 as a fallback
+  const breakdowns = sheets.filter((x) => /^breakdown/i.test(x.name.trim()));
+  if (!breakdowns.length) {
+    const d1 = findSheet(sheets, "Detail1");
+    if (d1) breakdowns.push(d1);
+  }
+  const seen = new Set<string>();
+  for (const breakdown of breakdowns) {
+    const bh = findHeaderRow(breakdown, "bayan no", "who paid");
+    if (bh === null) continue;
     const head = breakdown.rows.get(bh) ?? [];
     const col = (re: RegExp) => head.findIndex((v) => re.test(cellText(v).toLowerCase().replace(/\s+/g, " ").trim()));
     const c = {
-      payDate: col(/^payment date/), stmtDate: col(/^statement date/), port: col(/^port/), type: col(/^type of statement/), duty: col(/^custom duties$/), bayan: col(/^bayan no/), broker: col(/^customs broker name/), supplier: col(/^manufacturer/), goods: col(/^sar value/), vat: col(/^value added tax/), who: col(/^who paid/), invoice: col(/^invoice no/), snb: col(/^rsg snb status/), rsgPaid: col(/^paid amount by rsg/), remarks: col(/^remarks/), contractorPaid: col(/^paid amount by contractor/), pvoAmt: col(/^pvo ?\/ ?dvo amount/), pvoRef: col(/^pvo ?\/ ?dvo reference/),
+      payDate: col(/^payment date/), stmtDate: col(/^statement date/), port: col(/^port/), type: col(/^type of statement/), duty: col(/^custom duties$/), bayan: col(/^bayan no/), broker: col(/^customs broker name/), supplier: col(/^manufacturer/), goods: col(/^sar value/), vat: col(/^value added tax/), who: col(/^who paid/), invoice: col(/^invoice no/), snb: col(/^rsg snb status/), rsgPaid: col(/^paid amount by rsg/), remarks: col(/^remarks/), contractorPaid: col(/^paid amount by contractor/), pvoAmt: col(/^pvo ?\/ ?dvo amount/), pvoRef: col(/^pvo ?\/ ?dvo reference/), code: col(/^contract code/), otherCode: col(/^if different contract/),
     };
     const vendorList: KnownContractor[] = [...byKey.values()].map((r, i) => ({ id: i + 1, name: String(r.vendor ?? "") })).filter((v) => looksLikeCompanyName(v.name));
     const recOfVendor = (v: KnownContractor) => [...byKey.values()][v.id - 1];
-    const seen = new Set<string>();
     for (const [, v] of rows(breakdown)) {
       const supplier = c.supplier >= 0 ? txt(v, c.supplier) : "";
-      if (!supplier) continue;
-      if (!looksLikeCompanyName(supplier)) continue;
-      const hit = matchSupplier(supplier, vendorList);
-      let rec: Rec | undefined = hit ? recOfVendor(hit) : undefined;
+      // the site team's contract code on the declaration ties it to our contract outright
+      const codeCell = [c.otherCode, c.code].map((i) => (i >= 0 ? txt(v, i) : "")).find((x) => /\d{3}[A-Z]\d{2}/i.test(x)) ?? "";
+      const codeFrag = codeCell ? /(\d{3}[A-Z]\d{2})/i.exec(codeCell.toUpperCase())?.[1] ?? "" : "";
+      let rec: Rec | undefined = codeFrag ? byKey.get(`contract:${codeFrag.toLowerCase()}`) : undefined;
+      if (!rec) {
+        if (!supplier || !looksLikeCompanyName(supplier)) continue;
+        const hit = matchSupplier(supplier, vendorList);
+        rec = hit ? recOfVendor(hit) : undefined;
+      }
       if (!rec) {
         // a supplier that is one of our contractors under its own name (the tracker's vendor row may be blank or garbled)
         const contractor = matchSupplier(supplier, ctx.contractors);
@@ -601,7 +612,7 @@ export function convertCustomsTracker(sheets: SheetValues[], ctx: RecoveryContex
       ]);
     }
   }
-  notes.push(`Customs recovery tracker${asOf ? ` as of ${asOf}` : ""}: ${kept} contract annotation(s) for ${ctx.programmeName} (asset codes ${ctx.programmeCode}) and ${vendorRows} vendor row(s) with customs figures for our contractors, ${out.length} row(s) in all; ${declarations.length} customs declaration(s) of theirs on the Breakdown sheet.`);
+  notes.push(`Customs recovery tracker${asOf ? ` as of ${asOf}` : ""}: ${kept} contract annotation(s) for ${ctx.programmeName} (asset codes ${ctx.programmeCode}) and ${vendorRows} vendor row(s) with customs figures for our contractors, ${out.length} row(s) in all; ${declarations.length} customs declaration(s) of theirs on the Breakdown sheet${breakdowns.length > 1 ? `s (${breakdowns.map((b) => b.name).join(", ")})` : ""}.`);
   const noFigures = out.filter((r) => r[18] === null && r[20] === null).length;
   if (noFigures) notes.push(`${noFigures} contract(s) carry no customs figures yet on the tracker (the vendor's figures could not be tied to them): only the contract details are recorded.`);
   return {
