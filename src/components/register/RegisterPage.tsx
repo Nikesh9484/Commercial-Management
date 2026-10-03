@@ -117,6 +117,11 @@ export function RegisterPage({
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText] = useState("");
+  /** The row last clicked: Ctrl+C copies it, Ctrl+V pastes next to it. */
+  const [focusedId, setFocusedId] = useState<number | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; row: RecordRow } | null>(null);
+  /** Where pasted rows go: the reference of the row they should follow (they sort right after it as "… (copy)"). */
+  const [pasteAfter, setPasteAfter] = useState<{ ref: string; where: string } | null>(null);
   useEffect(() => {
     try {
       const raw = localStorage.getItem(`colwidths:${registerKey}`);
@@ -380,22 +385,87 @@ ${lines.join("\n")}`)) return;
   }
 
   const canPaste = !!data && (data.canEdit || data.canCreate);
-  // Ctrl+V anywhere on the page (outside a box) with rows on the clipboard opens the paste window with them
+  const refOf = useCallback((r: RecordRow | undefined | null) => (r && def ? String(r[def.displayField] ?? "").trim() : ""), [def]);
+  /** The paste position for "above" / "below" a row: the reference the new rows should follow. */
+  const anchorFor = useCallback(
+    (row: RecordRow, where: "above" | "below"): { ref: string; where: string } | null => {
+      if (!def) return null;
+      const field = def.fields.find((f) => f.key === def.displayField);
+      if (!field?.unique || (field.type !== "text" && field.type !== "textarea")) return null;
+      if (where === "below") return { ref: refOf(row), where: `below ${refOf(row)}` };
+      const i = visible.findIndex((x) => x.id === row.id);
+      const prev = i > 0 ? visible[i - 1] : null;
+      return prev ? { ref: refOf(prev), where: `above ${refOf(row)}` } : { ref: refOf(row), where: `next to ${refOf(row)}` };
+    },
+    [def, visible, refOf],
+  );
+  const pasteRowsOpen = (text: string, anchor: { ref: string; where: string } | null) => {
+    setPasteAfter(anchor);
+    setPasteText(text);
+    setPasteOpen(true);
+  };
+  // Ctrl+V anywhere on the page (outside a box) with rows on the clipboard opens the paste window with them,
+  // placed above the row last clicked; Ctrl+C with a row clicked (and no text selected) copies that row
   useEffect(() => {
-    if (!canPaste) return;
+    if (!data) return;
+    const inBox = (t: HTMLElement | null) => !!t && !!t.closest("input, textarea, select, [contenteditable=true]");
     const onPaste = (e: ClipboardEvent) => {
-      const target = e.target as HTMLElement | null;
-      if (target && target.closest("input, textarea, select, [contenteditable=true]")) return;
-      if (document.querySelector("[role=dialog]")) return;
+      if (!canPaste) return;
+      if (inBox(e.target as HTMLElement | null) || document.querySelector("[role=dialog]")) return;
       const text = e.clipboardData?.getData("text/plain") ?? "";
       if (!/\t/.test(text) || !/\n/.test(text.trim())) return;
       e.preventDefault();
-      setPasteText(text);
-      setPasteOpen(true);
+      const row = focusedId !== null ? visible.find((x) => Number(x.id) === focusedId) : undefined;
+      pasteRowsOpen(text, row ? anchorFor(row, "above") : null);
     };
+    const onCopy = (e: ClipboardEvent) => {
+      if (inBox(e.target as HTMLElement | null) || document.querySelector("[role=dialog]")) return;
+      const sel = window.getSelection();
+      if (sel && !sel.isCollapsed) return; // text selected: the page-wide table copy handles it
+      const rows = selected.size ? visible.filter((r) => selected.has(Number(r.id))) : focusedId !== null ? visible.filter((r) => Number(r.id) === focusedId) : [];
+      if (!rows.length) return;
+      const { text, html } = tableClipboard(
+        tableFields.map((f) => f.label),
+        rows.map((r) => tableFields.map((f) => displayValue(f, r))),
+      );
+      e.clipboardData?.setData("text/plain", text);
+      e.clipboardData?.setData("text/html", html);
+      e.preventDefault();
+      toast(`${rows.length === 1 ? "Row" : `${rows.length} rows`} copied – click a row and press Ctrl+V to paste above it.`);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenu(null);
+    };
+    const onClick = () => setMenu(null);
     document.addEventListener("paste", onPaste);
-    return () => document.removeEventListener("paste", onPaste);
-  }, [canPaste]);
+    document.addEventListener("copy", onCopy);
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("click", onClick);
+    return () => {
+      document.removeEventListener("paste", onPaste);
+      document.removeEventListener("copy", onCopy);
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("click", onClick);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- toast is stable; the rest are the inputs
+  }, [data, canPaste, focusedId, selected, visible, tableFields, anchorFor]);
+  /** Opens the right-click menu for a row. */
+  const rowMenu = (r: RecordRow) => (e: React.MouseEvent) => {
+    e.preventDefault();
+    setFocusedId(Number(r.id));
+    setMenu({ x: Math.min(e.clientX, window.innerWidth - 260), y: Math.min(e.clientY, window.innerHeight - 220), row: r });
+  };
+  /** Pastes from the clipboard next to a row (from the menu); when the browser will not hand the clipboard over, the paste window opens for Ctrl+V. */
+  const pasteFromMenu = async (row: RecordRow, where: "above" | "below") => {
+    const anchor = anchorFor(row, where);
+    let text = "";
+    try {
+      text = (await navigator.clipboard.readText()) ?? "";
+    } catch {
+      text = "";
+    }
+    pasteRowsOpen(/\t/.test(text) ? text : "", anchor);
+  };
 
   if (loadError) return <div className="card p-6 text-sm text-red-700">{loadError}</div>;
   if (!data || !def) return <div className="card p-6 text-sm text-muted">Loading…</div>;
@@ -579,7 +649,7 @@ ${lines.join("\n")}`)) return;
                     </thead>
                     <tbody>
                       {rows.map((r) => (
-                        <tr key={r.id} onDoubleClick={() => data.canEdit && openEdit(r)}>
+                        <tr key={r.id} onClick={() => setFocusedId(Number(r.id))} onContextMenu={rowMenu(r)} onDoubleClick={() => data.canEdit && openEdit(r)} className={focusedId === Number(r.id) ? "outline outline-2 -outline-offset-2 outline-accent/60" : ""}>
                           {tableFields.map((f) => (
                             <td key={f.key} style={colWidths[f.key] ? widthStyle(f) : undefined} className={`${isNumeric(f) ? "tnum text-right" : ""} ${colWidths[f.key] ? "overflow-hidden text-ellipsis whitespace-nowrap" : ""} ${stageTint(registerKey, f.key).td}`} title={f.type === "textarea" || colWidths[f.key] ? String(r[f.key] ?? "") : undefined}>
                               <Cell field={f} row={r} />
@@ -689,7 +759,13 @@ ${lines.join("\n")}`)) return;
                 </tr>
               )}
               {pageRows.map((r) => (
-                <tr key={r.id} onDoubleClick={() => data.canEdit && openEdit(r)} className={`${ROW_TONE[String(r.__row_tone ?? "")] ?? ""} ${selected.has(Number(r.id)) ? "bg-sky-50!" : ""}`}>
+                <tr
+                  key={r.id}
+                  onClick={() => setFocusedId(Number(r.id))}
+                  onContextMenu={rowMenu(r)}
+                  onDoubleClick={() => data.canEdit && openEdit(r)}
+                  className={`${ROW_TONE[String(r.__row_tone ?? "")] ?? ""} ${selected.has(Number(r.id)) ? "bg-sky-50!" : ""} ${focusedId === Number(r.id) ? "outline outline-2 -outline-offset-2 outline-accent/60" : ""}`}
+                >
                   <td className="w-8 pr-0" data-nocopy>
                     <input type="checkbox" aria-label={`Select ${String(r[def.displayField ?? "id"] ?? r.id)}`} checked={selected.has(Number(r.id))} onChange={() => toggleSelected(Number(r.id))} />
                   </td>
@@ -852,7 +928,46 @@ ${lines.join("\n")}`)) return;
       </Modal>
 
       <ImportDialog registerKey={registerKey} title={def.title} open={importOpen} onClose={() => setImportOpen(false)} onDone={load} />
-      <PasteDialog registerKey={registerKey} title={def.title} singular={def.singular} fields={def.fields} open={pasteOpen} initialText={pasteText} onClose={() => setPasteOpen(false)} onDone={() => { void load(); router.refresh(); }} />
+      <PasteDialog
+        registerKey={registerKey}
+        title={def.title}
+        singular={def.singular}
+        fields={def.fields}
+        open={pasteOpen}
+        initialText={pasteText}
+        after={pasteAfter}
+        onClose={() => setPasteOpen(false)}
+        onDone={(ids) => {
+          if (ids.length) {
+            setSelected(new Set(ids));
+            setFocusedId(ids[0]);
+          }
+          void load();
+          router.refresh();
+        }}
+      />
+      {menu && (
+        <div
+          role="menu"
+          className="fixed z-50 min-w-[15rem] rounded-lg border border-line bg-white py-1 text-sm shadow-xl"
+          style={{ left: menu.x, top: menu.y }}
+          onClick={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          <div className="truncate px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted">{refOf(menu.row) || `#${menu.row.id}`}</div>
+          <MenuItem icon={<Copy size={14} />} label="Copy this row" hint="Ctrl+C" onClick={() => { setMenu(null); void copyRows([menu.row], "Row"); }} />
+          {selected.size > 0 && <MenuItem icon={<Copy size={14} />} label={`Copy the ${selected.size} ticked row(s)`} onClick={() => { setMenu(null); void copyRows(visible.filter((r) => selected.has(Number(r.id))), `${selected.size} row(s)`); }} />}
+          {canPaste && (
+            <>
+              <MenuItem icon={<ClipboardPaste size={14} />} label="Paste rows above this row" hint="Ctrl+V" onClick={() => { setMenu(null); void pasteFromMenu(menu.row, "above"); }} />
+              <MenuItem icon={<ClipboardPaste size={14} />} label="Paste rows below this row" onClick={() => { setMenu(null); void pasteFromMenu(menu.row, "below"); }} />
+            </>
+          )}
+          <div className="my-1 border-t border-line" />
+          {data.canEdit && <MenuItem icon={<Pencil size={14} />} label="Edit" onClick={() => { setMenu(null); openEdit(menu.row); }} />}
+          <MenuItem icon={<History size={14} />} label="History" onClick={() => { setMenu(null); setHistoryFor(menu.row); }} />
+        </div>
+      )}
     </div>
   );
 }
@@ -862,6 +977,16 @@ function TotalCell({ field: f, rows }: { field: FieldDef; rows: RecordRow[] }) {
   if (f.type === "money") return <>{formatMoney(total)}</>;
   if (f.type === "percent") return <>{formatPercent(total)}</>;
   return <>{formatNumber(total, Number.isInteger(total) ? 0 : 2)}</>;
+}
+
+function MenuItem({ icon, label, hint, onClick }: { icon: React.ReactNode; label: string; hint?: string; onClick: () => void }) {
+  return (
+    <button type="button" role="menuitem" className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-ink hover:bg-page" onClick={onClick}>
+      <span className="text-muted">{icon}</span>
+      <span className="flex-1">{label}</span>
+      {hint && <span className="text-[11px] text-muted">{hint}</span>}
+    </button>
+  );
 }
 
 function isNumeric(f: FieldDef) {

@@ -11,6 +11,8 @@ export interface PasteResult {
   /** References changed to keep them unique ("EW-1" → "EW-1 (copy)"). */
   renamed: string[];
   errors: { row: number; message: string }[];
+  /** The ids of the rows added. */
+  ids: number[];
 }
 
 /** Splits text copied from a dashboard table or from Excel into cells: one row per line, tab-separated (or ; / , when no tab is present). */
@@ -26,7 +28,7 @@ export function splitPasted(text: string): string[][] {
  * ignored, the ID included, so every pasted row becomes a new entry. A reference that already exists
  * in this project (the item number, the EW number…) gets "(copy)" added so the row still goes in.
  */
-export function pasteRows(def: RegisterDef, text: string, user: UserInfo): PasteResult {
+export function pasteRows(def: RegisterDef, text: string, user: UserInfo, opts: { after?: string | null } = {}): PasteResult {
   const grid = splitPasted(text);
   if (grid.length < 2) throw new ValidationError("Paste at least a heading row and one row of values.");
   const fieldOf = (h: string) => {
@@ -54,7 +56,9 @@ export function pasteRows(def: RegisterDef, text: string, user: UserInfo): Paste
     const rows = listRecords(def);
     for (const f of uniques) taken.set(f.key, new Set(rows.map((r) => String(r[f.key] ?? "").trim().toLowerCase()).filter(Boolean)));
   }
-  const result: PasteResult = { created: 0, skipped: 0, matched, ignored, renamed: [], errors: [] };
+  const result: PasteResult = { created: 0, skipped: 0, matched, ignored, renamed: [], errors: [], ids: [] };
+  // pasted next to a row: every new row takes that row's reference, made unique below, so it sorts right after it
+  const anchorField = opts.after ? def.fields.find((f) => f.key === def.displayField && f.unique && (f.type === "text" || f.type === "textarea")) : undefined;
   for (let i = headerAt + 1; i < grid.length; i++) {
     const cells = grid[i];
     if (/^total\b/i.test(String(cells[0] ?? ""))) continue;
@@ -71,6 +75,7 @@ export function pasteRows(def: RegisterDef, text: string, user: UserInfo): Paste
       result.skipped++;
       continue;
     }
+    if (anchorField && opts.after) input[anchorField.key] = opts.after;
     for (const f of uniques) {
       const v = String(input[f.key] ?? "").trim();
       if (!v) continue;
@@ -88,8 +93,9 @@ export function pasteRows(def: RegisterDef, text: string, user: UserInfo): Paste
       set.add(candidate.toLowerCase());
     }
     try {
-      createRecord(def, input, user);
+      const row = createRecord(def, input, user);
       result.created++;
+      result.ids.push(Number(row.id));
     } catch (e) {
       const msg = e instanceof ValidationError ? `${e.message}${e.fieldErrors ? " " + Object.values(e.fieldErrors).join(" ") : ""}` : e instanceof Error ? e.message : String(e);
       result.errors.push({ row: i + 1, message: msg });

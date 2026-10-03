@@ -12,6 +12,7 @@ interface Result {
   ignored: string[];
   renamed: string[];
   errors: { row: number; message: string }[];
+  ids: number[];
 }
 
 /** Which pasted headings this tracker understands – worked out on the page so the user sees it before adding. */
@@ -27,7 +28,7 @@ function preview(text: string, fields: FieldDef[]): { rows: number; matched: str
   return { rows: lines.length - headerAt - 1, matched: heads.filter((h) => known.has(norm(h)) && norm(h) !== "id"), ignored: heads.filter((h) => !known.has(norm(h)) || norm(h) === "id") };
 }
 
-export function PasteDialog({ registerKey, title, singular, fields, open, initialText, onClose, onDone }: { registerKey: string; title: string; singular: string; fields: FieldDef[]; open: boolean; initialText: string; onClose: () => void; onDone: () => void }) {
+export function PasteDialog({ registerKey, title, singular, fields, open, initialText, after, onClose, onDone }: { registerKey: string; title: string; singular: string; fields: FieldDef[]; open: boolean; initialText: string; after?: { ref: string; where: string } | null; onClose: () => void; onDone: (ids: number[]) => void }) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<Result | null>(null);
@@ -48,12 +49,12 @@ export function PasteDialog({ registerKey, title, singular, fields, open, initia
     setBusy(true);
     setError(null);
     setResult(null);
-    const res = await fetch(`/api/registers/${registerKey}/paste`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+    const res = await fetch(`/api/registers/${registerKey}/paste`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, after: after?.ref ?? null }) });
     const j = await res.json().catch(() => ({}));
     setBusy(false);
     if (!res.ok) return setError(j.error ?? "The rows could not be added.");
     setResult(j);
-    if (j.created) onDone();
+    if (j.created) onDone(j.ids ?? []);
   }
 
   return (
@@ -77,6 +78,11 @@ export function PasteDialog({ registerKey, title, singular, fields, open, initia
         <p className="text-muted">
           Copy rows from any tracker (the Copy button, the copy icon on a row, or select the rows and press Ctrl+C) or from Excel – together with their heading row – and paste them here. Columns are matched by their heading; the ID is ignored, so every row is added as a new {singular.toLowerCase()}. A reference that already exists gets &ldquo;(copy)&rdquo; added so you can renumber it.
         </p>
+        {after && (
+          <p className="rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900">
+            The rows go in <span className="font-medium">{after.where}</span>: each takes the reference &ldquo;{after.ref} (copy)&rdquo; so it sits there in the list – rename it afterwards with the pencil.
+          </p>
+        )}
         <textarea className="input min-h-[10rem] w-full font-mono text-xs" data-rawcopy value={text} onChange={(e) => setText(e.target.value)} placeholder={"Paste here (Ctrl+V)…"} spellCheck={false} />
         {text.trim() && (
           <div className="rounded-md border border-line bg-page px-3 py-2 text-xs">
