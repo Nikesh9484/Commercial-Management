@@ -85,12 +85,12 @@ export function getAccommodationSummary(rows: RecordRow[], invoices: RecordRow[]
   const asOf = rows.map((r) => String(r.tracker_date ?? "")).filter(Boolean).sort().pop() ?? null;
   const groups = new Map<string, RecordRow[]>();
   for (const r of rows) {
-    const name = String(r.contractor_id__label ?? r.tracker_name ?? "");
+    const name = String(r.contractor_id__label || r.tracker_name || "");
     groups.set(name, [...(groups.get(name) ?? []), r]);
   }
   const invoicesOf = new Map<string, RecordRow[]>();
   for (const i of invoices) {
-    const name = String(i.contractor_id__label ?? i.tracker_name ?? "");
+    const name = String(i.contractor_id__label || i.tracker_name || "");
     invoicesOf.set(name, [...(invoicesOf.get(name) ?? []), i]);
   }
   const byContractor = [...groups]
@@ -170,7 +170,7 @@ export function customsWithDvo(rows: RecordRow[], changes: RecordRow[]): (Record
       let recovered = 0;
       let source = "";
       const lineId = Number(r.cost_line_id);
-      const ck = contractorKey(r.contractor_id__label ?? r.vendor);
+      const ck = contractorKey(r.contractor_id__label || r.vendor);
       if (lineId && dvoByLine.has(lineId) && !usedLine.has(lineId)) {
         const d = dvoByLine.get(lineId)!;
         recovered = d.amount;
@@ -221,12 +221,12 @@ export function getCustomsSummary(rawRows: RecordRow[], changes: RecordRow[] = [
   const asOf = rows.map((r) => String(r.tracker_date ?? "")).filter(Boolean).sort().pop() ?? null;
   const groups = new Map<string, typeof rows>();
   for (const r of rows) {
-    const name = String(r.contractor_id__label ?? r.vendor ?? "");
+    const name = String(r.contractor_id__label || r.vendor || "");
     groups.set(name, [...(groups.get(name) ?? []), r]);
   }
   const declOf = new Map<string, RecordRow[]>();
   for (const d of declarations) {
-    const name = String(d.contractor_id__label ?? d.vendor ?? "");
+    const name = String(d.contractor_id__label || d.vendor || "");
     declOf.set(name, [...(declOf.get(name) ?? []), d]);
   }
   const byDate = (a: RecordRow, b: RecordRow) => String(a.payment_date ?? a.statement_date ?? "").localeCompare(String(b.payment_date ?? b.statement_date ?? ""));

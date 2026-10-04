@@ -7,6 +7,20 @@ const fs = require("node:fs");
 
 const MAX_ROWS_PER_SHEET = 20000;
 const [input, output] = process.argv.slice(2);
+/* Options from the caller (JSON in WORKBOOK_READER_OPTS):
+     preview  – keep only the first N non-empty rows of every sheet (a quick look at what the file is)
+     sheets   – regular expressions (sources, case-insensitive); only sheets whose name matches are read
+     maxCols  – cells past this column are dropped (helper columns at the far right of a big tracker)
+   The output is one JSON value per line: {"sheet":name} … [row, cells, struck?] … {"end":true,"rowCount":n,"truncated":b} */
+let opts = {};
+try {
+  opts = JSON.parse(process.env.WORKBOOK_READER_OPTS || "{}") || {};
+} catch {
+  opts = {};
+}
+const wanted = Array.isArray(opts.sheets) && opts.sheets.length ? opts.sheets.map((x) => new RegExp(x, "i")) : null;
+const previewRows = Number(opts.preview) > 0 ? Number(opts.preview) : 0;
+const maxCols = Number(opts.maxCols) > 0 ? Number(opts.maxCols) : 0;
 
 /**
  * A monthly report workbook can carry an enormous list of defined names (one VBH report held
@@ -26,6 +40,8 @@ async function slim(file) {
   zip.file("xl/workbook.xml", stripped);
   zip.remove("xl/calcChain.xml");
   const out = `${file}.slim.xlsx`;
+  // the slim copy is kept for the next pass over the same file (a preview, then the full read); the caller removes it
+  if (fs.existsSync(out) && fs.statSync(out).size > 0) return out;
   await new Promise((resolve, reject) => zip.generateNodeStream({ type: "nodebuffer", streamFiles: true, compression: "DEFLATE" }).pipe(fs.createWriteStream(out)).on("finish", resolve).on("error", reject));
   return out;
 }
@@ -49,40 +65,38 @@ function plain(v) {
   if (global.gc) global.gc();
   const reader = new ExcelJS.stream.xlsx.WorkbookReader(source, { worksheets: "emit", sharedStrings: "cache", styles: "cache", hyperlinks: "ignore", entries: "ignore" });
   const out = fs.createWriteStream(output);
-  out.write("[");
-  let firstSheet = true;
+  const limit = previewRows || MAX_ROWS_PER_SHEET;
   for await (const ws of reader) {
+    const name = ws.name || `Sheet${ws.id}`;
+    const skip = wanted && !wanted.some((re) => re.test(name));
     let kept = 0;
     let truncated = false;
     let rowCount = 0;
-    // rows are written as they stream past, so a big sheet never sits whole in memory
-    out.write((firstSheet ? "" : ",") + `{"name":${JSON.stringify(ws.name || `Sheet${ws.id}`)},"rows":[`);
-    let firstRow = true;
+    if (!skip) out.write(`${JSON.stringify({ sheet: name })}\n`);
+    // rows are written as they stream past, so a big sheet never sits whole in memory; a sheet that is
+    // not wanted (or already previewed) is still run through so the reader moves on to the next one
     for await (const row of ws) {
-      if (kept >= MAX_ROWS_PER_SHEET) {
-        truncated = true;
-        break;
+      if (skip || kept >= limit) {
+        if (!skip && !previewRows) truncated = true;
+        continue;
       }
-      const values = row.values;
+      let values = row.values;
       if (!Array.isArray(values)) continue;
+      if (maxCols && values.length > maxCols + 1) values = values.slice(0, maxCols + 1);
       const cells = values.map(plain);
       if (!cells.some((v) => v !== null && v !== "")) continue;
       // cells struck through (a change cancelled in the tracker): their column numbers travel with the row
       const struck = [];
       row.eachCell((c, i) => {
-        if (c.font && c.font.strike && c.value !== null && c.value !== undefined && c.value !== "") struck.push(i);
+        if ((!maxCols || i <= maxCols) && c.font && c.font.strike && c.value !== null && c.value !== undefined && c.value !== "") struck.push(i);
       });
-      if (!out.write((firstRow ? "" : ",") + JSON.stringify(struck.length ? [row.number, cells, struck] : [row.number, cells]))) await new Promise((r) => out.once("drain", r));
-      firstRow = false;
+      if (!out.write(`${JSON.stringify(struck.length ? [row.number, cells, struck] : [row.number, cells])}\n`)) await new Promise((r) => out.once("drain", r));
       rowCount = row.number;
       kept++;
     }
-    out.write(`],"rowCount":${rowCount},"truncated":${truncated}}`);
-    firstSheet = false;
+    if (!skip) out.write(`${JSON.stringify({ end: true, rowCount, truncated })}\n`);
   }
-  out.write("]");
   await new Promise((resolve, reject) => out.end((e) => (e ? reject(e) : resolve())));
-  if (source !== input) fs.unlinkSync(source);
 })().catch((e) => {
   console.error(e && e.message ? e.message : String(e));
   process.exit(2);

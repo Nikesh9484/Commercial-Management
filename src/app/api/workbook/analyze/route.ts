@@ -3,12 +3,12 @@ import { withUser } from "@/lib/api";
 import { AuthError } from "@/lib/auth";
 import { analyzeWorkbook, type WorkbookAnalysis } from "@/lib/workbook/analyze";
 import { storeUpload, uploadPath, appendUploadPart, finishUploadParts, saveConverted } from "@/lib/workbook/import";
-import { readWorkbookValues } from "@/lib/workbook/read";
+import { readWorkbookValues, readWorkbookPreview } from "@/lib/workbook/read";
 import { withHeavyLock, releaseMemory } from "@/lib/workbook/heavy";
 import { looksLikeMarinaReport, convertMarinaReport, toSheetValues } from "@/lib/workbook/marina";
 import { looksLikeVbhReport, convertVbhReport } from "@/lib/workbook/vbh";
 import { looksLikeClaimsTracker, convertClaimsTracker, codeFrag, type KnownLine } from "@/lib/workbook/claims-tracker";
-import { looksLikeAccommodationTracker, looksLikeCustomsTracker, convertRecoveryTrackers, type RecoveryContext } from "@/lib/workbook/recovery";
+import { looksLikeAccommodationTracker, looksLikeCustomsTracker, convertRecoveryTrackers, trackerReadPlan, type RecoveryContext } from "@/lib/workbook/recovery";
 import { csvToSheets, looksLikeAconexExport, convertAconexExport } from "@/lib/workbook/aconex";
 import { todayIso } from "@/lib/format";
 import { getAppContext } from "@/lib/context";
@@ -68,7 +68,9 @@ export async function POST(req: Request, ctx: unknown) {
     bytes = Buffer.alloc(0); // let the copy go before parsing
     return withHeavyLock(async () => {
     releaseMemory();
-    let worksheets = csvText !== null ? csvToSheets(csvText, name || "export.csv") : await readWorkbookValues(uploadPath(fileId));
+    // a quick look at the first rows first: a cost-recovery tracker is then read without its pivot and ranking sheets
+    const plan = csvText !== null ? null : trackerReadPlan(await readWorkbookPreview(uploadPath(fileId)));
+    let worksheets = csvText !== null ? csvToSheets(csvText, name || "export.csv") : await readWorkbookValues(uploadPath(fileId), plan ?? {});
     let conversion: WorkbookAnalysis["conversion"];
     // the stand-alone trackers name their project on the import page; everything else follows the top bar
     const programmeFor = () => {

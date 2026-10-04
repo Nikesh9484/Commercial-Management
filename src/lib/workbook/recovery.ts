@@ -60,6 +60,10 @@ const NAME_FILLER = new Set(["company", "co", "ltd", "llc", "limited", "l", "wll
 function coreWords(name: unknown): string[] {
   return nameWords(String(name ?? "").replace(/\(.*?\)/g, " ").split(/\s[-–]\s/)[0]).filter((w) => !NAME_FILLER.has(w));
 }
+/** The same, keeping what follows a dash ("MME – Majestic Marine Engineering" → mme, majestic, marine). */
+function coreWordsFull(name: unknown): string[] {
+  return nameWords(String(name ?? "").replace(/\(.*?\)/g, " ")).filter((w) => !NAME_FILLER.has(w));
+}
 
 /** Two words of a company name that are the same bar a typo ("Khalleej" / "Khaleej"): one letter added, dropped or changed. */
 function sameWord(a: string, b: string): boolean {
@@ -93,16 +97,7 @@ export function matchContractor(name: string, contractors: KnownContractor[]): K
   if (exact.length) return exact.find((c) => c.primary) ?? exact[0];
   const words = coreWords(name);
   if (!words.length) return null;
-  const hits = contractors.filter((c) => {
-    const cw = coreWords(c.name);
-    if (!cw.length) return false;
-    // one word ("Depa", "STUDIO"): only a contractor whose name is that word, or one of our contract
-    // holders whose name starts with it ("DEPA Saudi Arabia for Contracting …")
-    if (words.length === 1) return sameWord(cw[0], words[0]) && (cw.length === 1 || !!c.primary);
-    const a = words.every((w) => has(cw, w));
-    const b = cw.every((w) => has(words, w));
-    return a || b;
-  });
+  const hits = contractorHits(words, contractors);
   if (hits.length === 1) return hits[0];
   if (hits.length > 1) {
     // the record on a cost report line wins, then the most words in common, then the closest name
@@ -412,11 +407,56 @@ function matchSupplier(supplier: string, companies: KnownContractor[]): KnownCon
   return best?.c ?? null;
 }
 
+/** Every contractor a name could be, before the tie-break – more than one left means the name is ambiguous. */
+function contractorHits(words: string[], contractors: KnownContractor[]): KnownContractor[] {
+  return contractors.filter((c) => {
+    const cw = coreWords(c.name);
+    if (!cw.length) return false;
+    // one word ("Depa", "STUDIO"): only a contractor whose name is that word (a typo allowed), or one of our
+    // contract holders whose name starts with exactly it ("DEPA Saudi Arabia for Contracting …") –
+    // "Rational" is not "National Center …"
+    if (words.length === 1) return cw.length === 1 ? sameWord(cw[0], words[0]) : cw[0] === words[0] && !!c.primary;
+    // every word of the tracker's name in the contractor's full name ("MME Marine Engineering" in "MME – Majestic Marine Engineering")
+    const a = words.every((w) => has(coreWordsFull(c.name), w));
+    // the other way round only for a name of two words or more: a company known by one word ("Foster",
+    // "NAS") is not every vendor that happens to contain it ("Foster Refrigerator", "Qamrun Nas and Sons")
+    const b = cw.length >= 2 && cw.every((w) => has(words, w));
+    return a || b;
+  });
+}
+
+/** Our contractors a tracker vendor could be when no single one fits (two Nova companies for "Nova Composites Industries"). */
+export function contractorCandidates(name: string, contractors: KnownContractor[]): KnownContractor[] {
+  if (!looksLikeCompanyName(name)) return [];
+  const words = coreWords(name);
+  if (!words.length) return [];
+  const hits = contractorHits(words, contractors);
+  if (hits.length >= 2) return hits;
+  if (hits.length === 1) return [];
+  // a looser look: the same first word and at least one more word in common ("Nova Composites Industries"
+  // against "Nova Composite Industrial Company" and "Nova Composites Manufcturing")
+  return contractors.filter((c) => {
+    const cw = coreWordsFull(c.name);
+    return cw.length >= 2 && sameWord(cw[0], words[0]) && words.filter((w) => has(cw, w)).length >= 2;
+  });
+}
+
 /** The tracker's vendor cell is free text: a real company name is matched loosely, a stray word only when it is a contractor's exact name. */
 function matchVendor(name: string, contractors: KnownContractor[]): KnownContractor | null {
   if (looksLikeCompanyName(name)) return matchContractor(name, contractors);
   const key = contractorKey(name);
   return (key && contractors.find((c) => contractorKey(c.name) === key)) || null;
+}
+
+/**
+ * The sheets a tracker is read from, decided on a preview of its first rows – the AMAALA customs
+ * tracker also carries pivots, rankings and untraceable-vendor lists that run to tens of thousands
+ * of cells and are not needed; leaving them out keeps a 30 MB tracker within the server's memory.
+ */
+export function trackerReadPlan(preview: SheetValues[]): { sheets: RegExp[]; maxCols?: number } | null {
+  if (looksLikeCustomsTracker(preview)) return { sheets: [/^summary/i, /^breakdown/i, /^detail1$/i], maxCols: 64 };
+  if (looksLikeAccommodationTracker(preview)) return { sheets: [/invoice tracker/i] };
+  return null;
 }
 
 export function looksLikeCustomsTracker(sheets: SheetValues[]): boolean {
@@ -437,6 +477,7 @@ export function convertCustomsTracker(sheets: SheetValues[], ctx: RecoveryContex
   let total = 0;
   let kept = 0;
   let vendorRows = 0;
+  const ambiguous: string[] = [];
   if (s) {
     const hdr = findHeaderRow(s, "vendor", "customs") ?? 3;
     // The vendor block (A–H) and the commercial lead's block (K–AE) are not always on the same row
@@ -486,11 +527,15 @@ export function convertCustomsTracker(sheets: SheetValues[], ctx: RecoveryContex
       const ours = programmeCodeOf(txt(v, 13)) === ctx.programmeCode.toUpperCase();
       const frag = ours && txt(v, 14) ? fragOf(txt(v, 14)) : "";
       const contractor = matchVendor(vendor, ctx.contractors);
-      if (!contractor && !ours) continue;
+      // a vendor that fits more than one of our contractors is kept under its own name, with the candidates noted
+      const rivals = contractor ? [] : contractorCandidates(vendor, ctx.contractors);
+      if (!contractor && !ours && !rivals.length) continue;
       vendorRows++;
+      if (rivals.length) ambiguous.push(`${vendor} (${rivals.map((r) => r.name).join(" or ")})`);
       const owned = contractor ? [...byKey.values()].filter((x) => x.contractor_id === contractor.name) : [];
       const own = frag ? byKey.get(`contract:${frag.toLowerCase()}`) : undefined;
       const rec: Rec = own ?? (owned.length === 1 ? owned[0] : (byKey.get(`vendor:${vendor.toLowerCase()}`) ?? { tracker_key: `vendor:${vendor.toLowerCase()}`, vendor, contractor_id: contractor?.name ?? null }));
+      if (rivals.length) rec.comments = [rivals.length > 1 ? `Vendor fits more than one of our contractors (${rivals.map((r) => r.name).join("; ")}) – tie it to the right contract on the tracker.` : `Vendor may be ${rivals[0].name} – confirm and tie it to the contract on the tracker.`, txt(v, 9)].filter(Boolean).join(" ");
       Object.assign(rec, {
         vendor: rec.vendor ?? vendor,
         vat_deferred: money(v, 2),
@@ -613,6 +658,7 @@ export function convertCustomsTracker(sheets: SheetValues[], ctx: RecoveryContex
     }
   }
   notes.push(`Customs recovery tracker${asOf ? ` as of ${asOf}` : ""}: ${kept} contract annotation(s) for ${ctx.programmeName} (asset codes ${ctx.programmeCode}) and ${vendorRows} vendor row(s) with customs figures for our contractors, ${out.length} row(s) in all; ${declarations.length} customs declaration(s) of theirs on the Breakdown sheet${breakdowns.length > 1 ? `s (${breakdowns.map((b) => b.name).join(", ")})` : ""}.`);
+  if (ambiguous.length) notes.push(`${ambiguous.length} vendor(s) could not be tied to one contractor for certain and are listed under the vendor's own name until the tracker names the contract: ${ambiguous.join("; ")}.`);
   const noFigures = out.filter((r) => r[18] === null && r[20] === null).length;
   if (noFigures) notes.push(`${noFigures} contract(s) carry no customs figures yet on the tracker (the vendor's figures could not be tied to them): only the contract details are recorded.`);
   return {

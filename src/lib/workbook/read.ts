@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { execFile } from "node:child_process";
+import readline from "node:readline";
 
 /** One worksheet reduced to its cell values only (no formatting), read row by row to keep memory low. */
 export interface SheetValues {
@@ -23,12 +24,29 @@ export const MAX_ROWS_PER_SHEET = 20000;
  * row by row and keeps only cell values. A workbook that is too big for the memory limit then
  * fails with a clear message instead of crashing the web server.
  */
-export async function readWorkbookValues(filePath: string): Promise<SheetValues[]> {
+export interface ReadOptions {
+  /** only sheets whose name matches one of these are read (a big tracker's pivot and ranking sheets stay out) */
+  sheets?: RegExp[];
+  /** cells past this column are dropped */
+  maxCols?: number;
+  /** only the first N non-empty rows of every sheet: a quick look at what the workbook is */
+  preview?: number;
+  /** keep the slimmed copy of the workbook for a second pass (the caller of the last pass drops it) */
+  keepSlim?: boolean;
+}
+
+/** The first rows of every sheet – enough to tell what the workbook is before it is read in full. */
+export function readWorkbookPreview(filePath: string, rows = 20): Promise<SheetValues[]> {
+  return readWorkbookValues(filePath, { preview: rows, keepSlim: true });
+}
+
+export async function readWorkbookValues(filePath: string, opts: ReadOptions = {}): Promise<SheetValues[]> {
   const script = path.join(process.cwd(), "scripts", "read-workbook.cjs");
-  const outFile = `${filePath}.values.json`;
+  const outFile = `${filePath}.values.ndjson`;
   const heapMb = Number(process.env.WORKBOOK_READER_HEAP_MB || 112);
+  const readerOpts = JSON.stringify({ sheets: (opts.sheets ?? []).map((r) => r.source), maxCols: opts.maxCols ?? 0, preview: opts.preview ?? 0 });
   const result = await new Promise<{ code: number | null; signal: NodeJS.Signals | null; stderr: string }>((resolve, reject) => {
-    const child = execFile(process.execPath, [`--max-old-space-size=${heapMb}`, "--max-semi-space-size=8", "--expose-gc", script, filePath, outFile], { timeout: 120_000, maxBuffer: 1 << 20 }, (error, _stdout, stderr) => {
+    const child = execFile(process.execPath, [`--max-old-space-size=${heapMb}`, "--max-semi-space-size=8", "--expose-gc", script, filePath, outFile], { timeout: 120_000, maxBuffer: 1 << 20, env: { ...process.env, WORKBOOK_READER_OPTS: readerOpts } }, (error, _stdout, stderr) => {
       const err = error as (Error & { code?: number | string; signal?: NodeJS.Signals; killed?: boolean }) | null;
       if (err && typeof err.code !== "number" && !err.signal && !err.killed) return reject(err); // could not start node at all
       resolve({ code: err ? (typeof err.code === "number" ? err.code : null) : 0, signal: err?.signal ?? null, stderr: String(stderr ?? "") });
@@ -48,10 +66,30 @@ export async function readWorkbookValues(filePath: string): Promise<SheetValues[
       const msg = result.stderr.trim().split("\n").filter(Boolean).pop() || `exit code ${result.code}`;
       throw new Error(`The workbook could not be read: ${msg}`);
     }
-    const raw = JSON.parse(fs.readFileSync(outFile, "utf8")) as { name: string; rowCount: number; truncated: boolean; rows: [number, unknown[], number[]?][] }[];
-    return raw.map((s) => ({ name: s.name, rowCount: s.rowCount, truncated: s.truncated, rows: new Map(s.rows.map(([n, cells]) => [n, cells] as [number, unknown[]])), strikes: new Map(s.rows.filter((r) => r[2]?.length).map(([n, , struck]) => [n, struck!] as [number, number[]])) }));
+    // one JSON value per line, built straight into the sheets: the file is never held whole as one string
+    const sheets: SheetValues[] = [];
+    let cur: SheetValues | null = null;
+    const rl = readline.createInterface({ input: fs.createReadStream(outFile, { encoding: "utf8" }), crlfDelay: Infinity });
+    for await (const line of rl) {
+      if (!line) continue;
+      const v = JSON.parse(line) as { sheet?: string; end?: boolean; rowCount?: number; truncated?: boolean } | [number, unknown[], number[]?];
+      if (Array.isArray(v)) {
+        if (!cur) continue;
+        cur.rows.set(v[0], v[1]);
+        if (v[2]?.length) (cur.strikes ??= new Map()).set(v[0], v[2]);
+      } else if (v.sheet !== undefined) {
+        cur = { name: v.sheet, rows: new Map(), rowCount: 0, truncated: false, strikes: new Map() };
+        sheets.push(cur);
+      } else if (v.end && cur) {
+        cur.rowCount = v.rowCount ?? 0;
+        cur.truncated = !!v.truncated;
+        cur = null;
+      }
+    }
+    return sheets;
   } finally {
     fs.rmSync(outFile, { force: true });
+    if (!opts.keepSlim) fs.rmSync(`${filePath}.slim.xlsx`, { force: true });
   }
 }
 
