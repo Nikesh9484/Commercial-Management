@@ -44,6 +44,10 @@ interface DocRead {
   amountDue: number | null;
   workDoneToDate: number | null;
   recommendationDate: string;
+  /** a final payment certificate / application (the last one under the final account) */
+  isFinal: boolean;
+  /** the final contract price the pack states, when it does – the cumulative of the final certificate */
+  finalPrice: number | null;
   /** the pack's Payment Certificate History table: every certificate issued so far */
   history: HistoryRow[];
   note: string;
@@ -202,6 +206,15 @@ async function readOne(f: DocFile): Promise<DocRead | null> {
     }
     return best;
   })();
+  const isFinal = /\bFinal (?:Payment|Account)\b|\bFINAL (?:PAYMENT|ACCOUNT)\b/.test(`${subject}\n${head}`) || /Final Payment (?:Certificate|Application)/i.test(text);
+  const finalPrice = (() => {
+    for (const line of text.split("\n")) {
+      if (!/Final (?:Contract|Account) (?:Price|Sum|Value|Amount)/i.test(line)) continue;
+      const m = line.match(/([\d,]{7,}\.\d{2})\s*$/) ?? line.match(/([\d,]{7,}\.\d{2})/);
+      if (m) return num(m[1]);
+    }
+    return null;
+  })();
   const recommendationDate = dateOf(text.match(/Recommendation Date\s*\n?\s*(\d{1,2}-[A-Za-z]{3}-\d{2,4})/i)?.[1] ?? "") || dateOf(text.match(/Payment Certificate Date:?\s*\n?\s*(\d{1,2}[-\/][A-Za-z0-9]{2,3}[-\/]\d{2,4})/i)?.[1] ?? "");
   const label = kind === "ipa" ? "payment application (transmittal)" : kind === "ipc" ? "Interim Payment Certificate letter" : kind === "certificate" ? "payment certificate pack" : "";
   const note = kind === "unknown" ? "not recognised as a payment application, certificate letter or payment certificate – kept out" : `${label}${no ? ` No ${String(no).padStart(3, "0")}` : ""}${month ? ` – ${month}` : ""}${netCertified ? ` – SAR ${formatMoney(netCertified)}` : amountDue ? ` – SAR ${formatMoney(amountDue)}` : ""}`;
@@ -210,7 +223,7 @@ async function readOne(f: DocFile): Promise<DocRead | null> {
   // Application" carries none, and boilerplate can quote another certificate's number)
   const last = history[history.length - 1];
   if (last && (kind === "ipc" || kind === "certificate") && (no === null || no !== last.no) && [netCertified, amountDue].some((v) => v !== null && Math.abs(v - last.net) < 0.5)) no = last.no;
-  return { name: f.name, kind, text, programmeCode, acc, accCandidates, contractLine, mailNo, no, month, sentDate, letterDate, submittedOn, applicationRef, netCertified, amountDue, workDoneToDate, recommendationDate, history, note: history.length ? `${note} – history of ${history.length} certificates` : note };
+  return { name: f.name, kind, text, programmeCode, acc, accCandidates, contractLine, mailNo, no, month, sentDate, letterDate, submittedOn, applicationRef, netCertified, amountDue, workDoneToDate, recommendationDate, isFinal, finalPrice, history, note: history.length ? `${note} – history of ${history.length} certificates` : note };
 }
 
 interface Plan {
@@ -299,11 +312,19 @@ export async function addPaymentsFromDocuments(files: DocFile[], user: UserInfo,
   const plans: Plan[] = [];
   for (const [key, g] of groups) {
     // the letter that carries the certificate pack (its own PDF) over the bare Aconex mail print
-    const fullest = (kind: DocRead["kind"]) => g.docs.filter((d) => d.kind === kind).sort((a, b) => Number(Boolean(b.workDoneToDate)) - Number(Boolean(a.workDoneToDate)))[0];
+    const fullest = (kind: DocRead["kind"]) => g.docs.filter((d) => d.kind === kind).sort((a, b) => Number(Boolean(b.workDoneToDate)) - Number(Boolean(a.workDoneToDate)) || b.history.length - a.history.length)[0];
     const ipa = fullest("ipa");
     const ipc = fullest("ipc");
     const cert = fullest("certificate");
-    const no = ipa?.no ?? ipc?.no ?? cert?.no ?? null;
+    // the certificate history of any file in the group (the letter with its pack carries it; the bare letter does not)
+    const groupHistory = g.docs.map((d) => d.history).sort((a, b) => b.length - a.length)[0] ?? [];
+    const groupLast = groupHistory[groupHistory.length - 1];
+    const isFinal = g.docs.some((d) => d.isFinal);
+    const finalPrice = g.docs.map((d) => d.finalPrice).find((v) => v !== null) ?? null;
+    let no = ipa?.no ?? ipc?.no ?? cert?.no ?? null;
+    // a final certificate without a number of its own is the last one in the pack's history
+    if (no === null && groupLast && [ipc?.netCertified, cert?.amountDue, ipc?.amountDue].some((v) => v !== null && v !== undefined && Math.abs(v - groupLast.net) < 0.5)) no = groupLast.no;
+    if (no === null && groupLast && isFinal) no = groupLast.no;
     const month = ipa?.month || ipc?.month || cert?.month || g.docs.map((d) => d.month).find(Boolean) || "";
     const rows = db.prepare("SELECT * FROM payment_applications WHERE contract_id = ? ORDER BY sr_no, id").all(g.contract.id) as RecordRow[];
     const lastNo = (s: unknown) => Number(String(s ?? "").match(/(\d+)(?!.*\d)/)?.[1] ?? NaN);
@@ -372,7 +393,7 @@ export async function addPaymentsFromDocuments(files: DocFile[], user: UserInfo,
         // the letter alone gives the net for this IPC: the gross behind it is carried on the previous cumulative –
         // taken from the pack's own certificate history first (the rows it lists are not on the register yet
         // when the pack is read), then from the register's previous row
-        const histPrev = [...(ipc.history ?? []), ...(cert?.history ?? [])].filter((h) => no !== null && h.no < no).sort((a, b) => b.no - a.no)[0];
+        const histPrev = groupHistory.filter((h) => no !== null && h.no < no).sort((a, b) => b.no - a.no)[0];
         const packPrev = histPrev ? (adv + ret > 0 ? histPrev.cumulativeGross : histPrev.cumulativeNet) : 0;
         const prevCum = packPrev || Number(prev?.cumulative_certified ?? 0) || Number(prev?.cumulative_claimed ?? 0) || 0;
         const factor = 1 - adv - ret;
@@ -387,6 +408,33 @@ export async function addPaymentsFromDocuments(files: DocFile[], user: UserInfo,
           if (wrongOnRow) record.cumulative_claimed = existing?.cumulative_claimed !== null && Number(existing?.cumulative_claimed) < prevCum - 0.5 ? cumulative : record.cumulative_claimed;
         }
         if (!prevCum && no !== null && no > 1) result.warnings.push(`${ipc.name}: no previous certificate was found for IPC ${no} – the cumulative certified is this certificate's gross alone. Check the row, or upload the certificate pack with its history.`);
+      }
+    }
+    // whatever path gave the figure: a cumulative below the previous certificate's cumulative while this
+    // certificate pays out is not a cumulative – it is this certificate's amount, carried on the previous one
+    {
+      const histPrev = groupHistory.filter((h) => no !== null && h.no < no).sort((a, b) => b.no - a.no)[0];
+      const prevCum = (histPrev ? (adv + ret > 0 ? histPrev.cumulativeGross : histPrev.cumulativeNet) : 0) || Number(prev?.cumulative_certified ?? 0) || Number(prev?.cumulative_claimed ?? 0) || 0;
+      const paid = ipc?.netCertified ?? cert?.amountDue ?? null;
+      for (const k of ["cumulative_certified", "cumulative_claimed"] as const) {
+        const v = record[k];
+        if (typeof v !== "number" || prevCum <= 0 || v >= prevCum - 0.5 || paid === null || paid <= 0) continue;
+        const factor = 1 - adv - ret;
+        const gross = factor > 0 ? Math.round((v / factor) * 100) / 100 : v;
+        record[k] = Math.round((prevCum + gross) * 100) / 100;
+        push(`${k === "cumulative_certified" ? "Cumulative certified" : "Cumulative claimed"} – corrected`, `${formatMoney(v)} read is below the previous certificate's ${formatMoney(prevCum)}: taken as this certificate's amount, cumulative ${formatMoney(record[k] as number)}`, (ipc ?? cert)!.name);
+      }
+      // the final certificate closes on the final contract price the pack states
+      if (isFinal && finalPrice && typeof record.cumulative_certified === "number" && Math.abs(record.cumulative_certified - finalPrice) < 5 && Math.abs(record.cumulative_certified - finalPrice) >= 0.005) {
+        record.cumulative_certified = finalPrice;
+        push("Cumulative certified (final contract price)", finalPrice, (ipc ?? cert)!.name);
+      }
+      if (isFinal && finalPrice && typeof record.cumulative_claimed === "number" && Math.abs(record.cumulative_claimed - finalPrice) < 5) record.cumulative_claimed = finalPrice;
+      // a final certificate's month is the letter's month – its text quotes earlier valuation months
+      const letterMonth = monthLabel(ipc?.sentDate || ipc?.letterDate || cert?.recommendationDate || "");
+      if (isFinal && letterMonth && record.month !== letterMonth) {
+        record.month = letterMonth;
+        push("Month (final certificate – the letter's month)", letterMonth, (ipc ?? cert)!.name);
       }
     }
     if (!record.cumulative_claimed && record.cumulative_certified && !existing?.cumulative_claimed) record.cumulative_claimed = record.cumulative_certified;
@@ -421,7 +469,7 @@ export async function addPaymentsFromDocuments(files: DocFile[], user: UserInfo,
     // (a contract with no retention or advance: the cumulative net of the table is the cumulative certified;
     // otherwise the running total of the gross amounts is)
     const history: Plan["history"] = [];
-    const table = (ipc ?? cert)?.history ?? [];
+    const table = groupHistory;
     for (const h of table) {
       if (no !== null && h.no >= no) continue;
       const row = rows.find((r) => lastNo(r.application_no) === h.no || lastNo(r.ipc_no) === h.no) ?? null;
