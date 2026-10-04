@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { withUser } from "@/lib/api";
 import { getAppContext } from "@/lib/context";
 import { withHeavyLock } from "@/lib/workbook/heavy";
-import { appendUploadPart, finishUploadParts } from "@/lib/workbook/import";
+import fs from "node:fs";
+import { appendUploadPart, finishUploadParts, uploadPath } from "@/lib/workbook/import";
 import { renderOwnLayout } from "@/lib/report/own-layout";
 import { getReportTemplate, saveReportTemplate } from "@/lib/report/own-layout/templates";
 
@@ -32,7 +33,14 @@ export async function POST(req: Request, ctx: unknown) {
     if (!["admin", "editor"].includes(user.role)) return NextResponse.json({ error: "Only an Admin or an editor can change the report template." }, { status: 403 });
     const app = getAppContext();
     if (!app.programme) return NextResponse.json({ error: "Select a project in the top bar first." }, { status: 400 });
-    const body = (await req.json().catch(() => ({}))) as { uploadId?: string; name?: string; index?: number; count?: number; data?: string };
+    const body = (await req.json().catch(() => ({}))) as { uploadId?: string; name?: string; index?: number; count?: number; data?: string; fileId?: string };
+    // a workbook already uploaded for import (a locked month's report, skipped by the import) kept as the template
+    if (body.fileId) {
+      const file = uploadPath(String(body.fileId));
+      if (!fs.existsSync(file)) return NextResponse.json({ error: "The uploaded workbook is no longer on the server – upload it again." }, { status: 404 });
+      const t = saveReportTemplate(app.programme.id, String(body.name ?? "report.xlsx"), fs.readFileSync(file), user);
+      return NextResponse.json({ template: { name: t.name, size: t.size, uploaded_at: t.uploaded_at, uploaded_by: t.uploaded_by } });
+    }
     const uploadId = appendUploadPart(body.uploadId || null, Buffer.from(String(body.data ?? ""), "base64"));
     if ((body.index ?? 0) < (body.count ?? 1) - 1) return NextResponse.json({ uploadId });
     const bytes = finishUploadParts(uploadId);

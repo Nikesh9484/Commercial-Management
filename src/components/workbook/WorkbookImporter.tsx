@@ -213,7 +213,15 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo,
       const no = items[i].reportNo!;
       const existing = known.find((p) => p.report_no === no);
       if (existing && existing.status === "Locked") {
-        update(i, { status: "skipped", message: `${existing.label} is locked (issued). Unlock it in the report library first if it should be replaced.` });
+        // the issued month stays as issued; its workbook is still the latest layout, so it becomes the report template
+        let kept = "";
+        try {
+          const r = await fetch("/api/report/own-layout", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fileId: a.fileId, name: a.fileName }) });
+          if (r.ok) kept = " Its workbook is kept as the report template for the own-layout download.";
+        } catch {
+          kept = "";
+        }
+        update(i, { status: "skipped", message: `${existing.label} is locked (issued). Unlock it in the report library first if it should be replaced.${kept}` });
         continue;
       }
       update(i, { status: "importing", message: `Importing Report No ${no}…` });
