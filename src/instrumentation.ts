@@ -5,6 +5,8 @@ export async function register() {
     await backup.restoreIfNeeded();
     const { repairEarlyWarnings } = await import("./lib/repairs/early-warnings");
     repairEarlyWarnings();
+    const { repairPaymentCumulatives } = await import("./lib/repairs/payment-cumulatives");
+    repairPaymentCumulatives();
     backup.startBackupLoop();
     // the uploaded files beside the database: anything the disk lost comes back, anything never sent goes up
     const files = await import("./lib/file-store");
