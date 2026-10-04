@@ -7,6 +7,7 @@ import { contractorKey } from "@/lib/bonds/name-key";
 import { formatDate, formatMoney } from "@/lib/format";
 import { Chip } from "@/components/ui/Chip";
 import { ExportButtons } from "@/components/ui/ExportButtons";
+import { BondNoticeButton } from "@/components/bonds/BondNoticeButton";
 
 /**
  * The two lists the team chases every month, each with its own downloads: what has already expired,
@@ -98,7 +99,10 @@ function Summary({
           {title}
           <Chip tone={none ? "green" : tone}>{items.length}</Chip>
         </h2>
-        {hasPeriod && <ExportButtons section="bonds_report" params={`bondsExpiry=${bucket}${contractor ? `&bondsContractor=${encodeURIComponent(contractor)}` : ""}`} title={contractor ? `${title} – ${contractor}` : title} />}
+        <span className="inline-flex flex-wrap items-center gap-1.5">
+          {!none && <BondNoticeButton bucket={bucket} contractor={contractor} />}
+          {hasPeriod && <ExportButtons section="bonds_report" params={`bondsExpiry=${bucket}${contractor ? `&bondsContractor=${encodeURIComponent(contractor)}` : ""}`} title={contractor ? `${title} – ${contractor}` : title} />}
+        </span>
       </div>
       <p className="mb-3 text-xs leading-relaxed text-muted">{blurb}{contractor ? ` Showing ${contractor} only.` : ""}</p>
 
@@ -112,9 +116,12 @@ function Summary({
           <div className="max-h-96 overflow-y-auto pr-1">
             {groups.map((g) => (
               <div key={g.key} className="mb-2 last:mb-0">
-                <div className="flex items-baseline justify-between gap-2 border-b border-line pb-0.5">
+                <div className="flex items-center justify-between gap-2 border-b border-line pb-0.5">
                   <span className="min-w-0 truncate text-xs font-semibold text-ink">{g.contractor}</span>
-                  <span className="shrink-0 text-[11px] text-muted">{g.items.length}</span>
+                  <span className="inline-flex shrink-0 items-center gap-2 text-[11px] text-muted">
+                    {g.items.length}
+                    {g.key !== "__none__" && <BondNoticeButton bucket={bucket} contractor={g.contractor} size="xs" label="Email" />}
+                  </span>
                 </div>
                 <ul className="divide-y divide-line/70 text-sm">
                   {g.items.map((r) => {

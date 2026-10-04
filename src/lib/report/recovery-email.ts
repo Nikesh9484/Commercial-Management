@@ -6,6 +6,7 @@ import { getDb } from "../db";
 import { contractorKey } from "../bonds/name-key";
 import { formatDate, formatMoney, formatMonthYear } from "../format";
 import { APP_NAME } from "../brand";
+import { contractTermsFor, cite, under, citedList } from "../contracts/clauses";
 
 /**
  * The one-click chase emails of the Cost Recovery module – one per contractor, every contractor
@@ -156,12 +157,30 @@ export function buildAccommodationEmail(data: ReportData, sender: { name: string
   }
   if (notYet.length) both(`<p>In addition, we have assessed further occupancy at ${esc(notYet.join(" and "))}, net of VAT; these invoices will follow shortly.</p>`, `In addition, we have assessed further occupancy at ${notYet.join(" and ")}, net of VAT; these invoices will follow shortly.`);
   const lateText = late.length ? (Math.min(...late) === Math.max(...late) ? `${Math.max(...late)} days late` : `between ${Math.min(...late)} and ${Math.max(...late)} days late`) : "";
+  // the lease agreement's own clauses (fee, payment, late payment) and the works contract's set-off clause
+  const accProgramme = Number((data.programme as { id?: number }).id ?? 0);
+  const accCited: Parameters<typeof cite>[0][] = [];
+  const leaseClauses: string[] = [];
+  for (const g of groups) {
+    const cid = Number(g.rows.find((r) => r.contractor_id)?.contractor_id ?? 0) || null;
+    const lease = accProgramme ? contractTermsFor(accProgramme, { contractorId: cid, leases: true }) : null;
+    const works = accProgramme ? contractTermsFor(accProgramme, { contractCode: String(g.rows.find((r) => r.contract_code)?.contract_code ?? ""), contractorId: cid }) : null;
+    const l = [lease?.refs.lease_fee, lease?.refs.lease_payment, lease?.refs.lease_late].filter(Boolean);
+    const w = [works?.refs.set_off, works?.refs.employer_claims].filter(Boolean);
+    for (const r of [...l, ...w]) if (r) accCited.push(r);
+    if (l.length || w.length) leaseClauses.push(`${groups.length > 1 ? `${g.contractor}: ` : ""}${l.length ? `the charges are due ${under(l[0], "the Lease Agreement")}${l.slice(1).map((r) => ` and ${cite(r)}`).join("")}` : "the charges are due under the Lease Agreement"}${w.length ? `; an unpaid balance may be withheld from, or set off against, sums otherwise payable under the works contract ${under(w[0]).replace(/^under /, "under ")}${w[1] ? ` and ${cite(w[1])}` : ""}` : ""}.`);
+  }
+  if (leaseClauses.length) both(`<p>${leaseClauses.map((x) => esc(x.charAt(0).toUpperCase() + x.slice(1))).join(" ")}</p>`, leaseClauses.map((x) => x.charAt(0).toUpperCase() + x.slice(1)).join(" "));
   if (late.length) both(`<p>We note that earlier invoices${groups.length > 1 ? " on these accounts" : ""} were settled ${esc(lateText)}. Timely settlement of accommodation charges is a condition of the Lease Agreement and is separate from, and not contingent on, the progress of Interim Payment Certificates under the main contract.</p>`, `We note that earlier invoices${groups.length > 1 ? " on these accounts" : ""} were settled ${lateText}. Timely settlement of accommodation charges is a condition of the Lease Agreement and is separate from, and not contingent on, the progress of Interim Payment Certificates under the main contract.`);
   both(
     `<p>We request that:</p><ol><li>The full overdue amount of <b>SAR ${formatMoney(outstanding)}</b> is remitted by <b>${esc(payBy)}</b>, with the remittance advice sent to the commercial team and Finance so the receipt is recorded against the invoices listed above.</li><li>Any invoice you consider disputed is raised in writing within 7 days, quoting the invoice number and the grounds, so it can be reviewed with Finance.</li><li>Failing settlement by that date, the balance will be withheld from your next Interim Payment Certificate and recovered by contra-charge in line with the Lease Agreement and the Contract, and any balance still open at final account will be settled within the Final Account Statement.</li></ol>`,
     ["We request that:", `  1. The full overdue amount of SAR ${formatMoney(outstanding)} is remitted by ${payBy}, with the remittance advice sent to the commercial team and Finance so the receipt is recorded against the invoices listed above.`, "  2. Any invoice you consider disputed is raised in writing within 7 days, quoting the invoice number and the grounds, so it can be reviewed with Finance.", "  3. Failing settlement by that date, the balance will be withheld from your next Interim Payment Certificate and recovered by contra-charge in line with the Lease Agreement and the Contract, and any balance still open at final account will be settled within the Final Account Statement."].join("\n"),
   );
   both(`<p>Kind regards,</p><p><b>${esc(sender.name)}</b><br>Commercial Management – ${esc(data.programme.name)} (${esc(data.programme.code)})</p>`, ["", "Kind regards,", sender.name, `Commercial Management – ${data.programme.name} (${data.programme.code})`].join("\n"));
+  {
+    const list = citedList(accCited);
+    if (list) both(`<p style="font-size:12px;color:#555">Provisions referred to: ${esc(list)}.</p>`, `Provisions referred to: ${list}.`);
+  }
   html.push(`<p style="font-size:11px;color:#6b7280">Prepared with ${esc(APP_NAME)} from the accommodation invoice tracker as at ${esc(asOf)}.</p>`);
   return { subject, to: [], html: `<div style="font-family:Calibri,Arial,sans-serif;font-size:13px;color:#172033;line-height:1.45">${html.join("\n")}</div>`, text: text.join("\r\n"), fileBase: `Accommodation_Charges_${one ? fileTag(one.contractor) : "All"}_${data.programme.code}` };
 }
@@ -189,6 +208,7 @@ export function buildCustomsEmail(data: ReportData, sender: { name: string; emai
   const programmeId = Number((data.programme as { id?: number }).id ?? 0);
   const lines = programmeId ? costLinesOf(programmeId) : new Map();
   const thr = th.replace('text-align:left', "text-align:right");
+  const customsCited: Parameters<typeof cite>[0][] = [];
   for (const g of groups) {
     const contracts = [...new Set(g.rows.map((r) => String(r.contract_code ?? "")).filter(Boolean))].join(", ");
     const payer = g.payer || "the Contractor";
@@ -201,9 +221,13 @@ export function buildCustomsEmail(data: ReportData, sender: { name: string; emai
       `<p>Programme ${esc(data.programme.code)} – ${esc(data.programme.name)}${where.length ? `; ${esc(where.join("; "))}` : ""}.</p>`,
       `Programme ${data.programme.code} – ${data.programme.name}${where.length ? `; ${where.join("; ")}` : ""}.`,
     );
+    const cTerms = programmeId ? contractTermsFor(programmeId, { contractCode: String(g.rows.find((r) => r.contract_code)?.contract_code ?? ""), contractorId: Number(g.rows.find((r) => r.contractor_id)?.contractor_id ?? 0) || null }) : null;
+    const dutyClause = cTerms?.refs.customs ? ` (${cite(cTerms.refs.customs)})` : "";
+    const recoverClauses = [cTerms?.refs.employer_claims, cTerms?.refs.set_off, cTerms?.refs.payment].filter(Boolean);
+    for (const r of [cTerms?.refs.customs, ...recoverClauses]) if (r) customsCited.push(r);
     both(
-      `<p>Under ${contracts ? `Contract ${esc(contracts)}` : "your Contract"} the customs duties on imported goods are borne by ${esc(payer)}. Our records as at ${esc(asOf)} show that RSG / AMAALA has paid customs duties of <b>SAR ${formatMoney(g.totals.rsgPaid)}</b> on ${esc(g.contractor)}'s imports${g.rsgPaidList.length ? `, on the ${g.rsgPaidList.length} customs declaration${g.rsgPaidList.length === 1 ? "" : "s"} listed below` : ""}.</p>`,
-      `Under ${contracts ? `Contract ${contracts}` : "your Contract"} the customs duties on imported goods are borne by ${payer}. Our records as at ${asOf} show that RSG / AMAALA has paid customs duties of SAR ${formatMoney(g.totals.rsgPaid)} on ${g.contractor}'s imports${g.rsgPaidList.length ? `, on the ${g.rsgPaidList.length} customs declaration${g.rsgPaidList.length === 1 ? "" : "s"} listed below` : ""}.`,
+      `<p>Under ${contracts ? `Contract ${esc(contracts)}` : "your Contract"}${esc(dutyClause)} the customs duties on imported goods are borne by ${esc(payer)}. Our records as at ${esc(asOf)} show that RSG / AMAALA has paid customs duties of <b>SAR ${formatMoney(g.totals.rsgPaid)}</b> on ${esc(g.contractor)}'s imports${g.rsgPaidList.length ? `, on the ${g.rsgPaidList.length} customs declaration${g.rsgPaidList.length === 1 ? "" : "s"} listed below` : ""}.</p>`,
+      `Under ${contracts ? `Contract ${contracts}` : "your Contract"}${dutyClause} the customs duties on imported goods are borne by ${payer}. Our records as at ${asOf} show that RSG / AMAALA has paid customs duties of SAR ${formatMoney(g.totals.rsgPaid)} on ${g.contractor}'s imports${g.rsgPaidList.length ? `, on the ${g.rsgPaidList.length} customs declaration${g.rsgPaidList.length === 1 ? "" : "s"} listed below` : ""}.`,
     );
     if (g.declarations.length) {
       // every customs declaration on the contractor's imports, the ones RSG paid in bold
@@ -257,12 +281,20 @@ export function buildCustomsEmail(data: ReportData, sender: { name: string; emai
     if (g.totals.recoveredByDvo > 0.5) parts.push(`less SAR ${formatMoney(g.totals.recoveredByDvo)} already recovered through ${g.dvoNote || "the DVO recorded"}`);
     if (g.totals.unrecoverable > 0.5) parts.push(`SAR ${formatMoney(g.totals.unrecoverable)} treated as unrecoverable`);
     both(`<p>Recovery position: ${esc(parts.join("; "))} – <b>balance still to recover SAR ${formatMoney(g.totals.stillToRecover)}</b>.</p>`, `Recovery position: ${parts.join("; ")} – balance still to recover SAR ${formatMoney(g.totals.stillToRecover)}.`);
+    if (recoverClauses.length) {
+      const names = recoverClauses.map((r) => cite(r)).filter(Boolean).join(", ");
+      both(`<p>The amount is recoverable by the Employer ${esc(under(recoverClauses[0]))}${recoverClauses.length > 1 ? ` read with ${esc(names.replace(`${cite(recoverClauses[0])}, `, ""))}` : ""}: the Employer may set the sum off against, or deduct it from, amounts otherwise certified or payable under the Contract.</p>`, `The amount is recoverable by the Employer ${under(recoverClauses[0])}${recoverClauses.length > 1 ? ` read with ${names.replace(`${cite(recoverClauses[0])}, `, "")}` : ""}: the Employer may set the sum off against, or deduct it from, amounts otherwise certified or payable under the Contract.`);
+    }
   }
   both(
     `<p>We request that:</p><ol><li>You confirm the declarations and amounts above, or raise any item you consider disputed in writing with the Bayan number and the grounds, by <b>${esc(replyBy)}</b>.</li><li>The balance of <b>SAR ${formatMoney(still)}</b> is recovered through a Determined Variation Order and deducted from your next Interim Payment Certificate, in line with the Contract; any balance still open at final account will be settled within the Final Account Statement.</li></ol>`,
     ["We request that:", `  1. You confirm the declarations and amounts above, or raise any item you consider disputed in writing with the Bayan number and the grounds, by ${replyBy}.`, `  2. The balance of SAR ${formatMoney(still)} is recovered through a Determined Variation Order and deducted from your next Interim Payment Certificate, in line with the Contract; any balance still open at final account will be settled within the Final Account Statement.`].join("\n"),
   );
   both(`<p>Kind regards,</p><p><b>${esc(sender.name)}</b><br>Commercial Management – ${esc(data.programme.name)} (${esc(data.programme.code)})</p>`, ["", "Kind regards,", sender.name, `Commercial Management – ${data.programme.name} (${data.programme.code})`].join("\n"));
+  {
+    const list = citedList(customsCited);
+    if (list) both(`<p style="font-size:12px;color:#555">Contract provisions referred to: ${esc(list)}.</p>`, `Contract provisions referred to: ${list}.`);
+  }
   html.push(`<p style="font-size:11px;color:#6b7280">Prepared with ${esc(APP_NAME)} from the customs recovery tracker as at ${esc(asOf)}.</p>`);
   return { subject, to: [], html: `<div style="font-family:Calibri,Arial,sans-serif;font-size:13px;color:#172033;line-height:1.45">${html.join("\n")}</div>`, text: text.join("\r\n"), fileBase: `Customs_Duties_${one ? fileTag(one.contractor) : "All"}_${data.programme.code}` };
 }

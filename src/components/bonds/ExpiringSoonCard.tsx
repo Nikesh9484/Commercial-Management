@@ -3,6 +3,7 @@ import { ShieldAlert, ShieldCheck } from "lucide-react";
 import type { ExpiringItem } from "@/lib/bonds/summary";
 import { formatDate } from "@/lib/format";
 import { Chip } from "@/components/ui/Chip";
+import { BondNoticeButton } from "@/components/bonds/BondNoticeButton";
 
 /** Alert card listing bonds / insurances expiring within 60 days (used on the Executive Summary). */
 export function ExpiringSoonCard({ items, expired, released = 0, superseded = 0 }: { items: ExpiringItem[]; expired: number; released?: number; superseded?: number }) {
@@ -16,7 +17,10 @@ export function ExpiringSoonCard({ items, expired, released = 0, superseded = 0 
           {tone === "green" ? <ShieldCheck size={18} className="text-emerald-600" /> : <ShieldAlert size={18} className={tone === "red" ? "text-red-600" : "text-amber-600"} />}
           Bonds &amp; insurance expiring soon
         </h2>
-        <Chip tone={tone}>{items.length === 0 ? "None within 60 days" : `${items.length} within 60 days`}</Chip>
+        <span className="inline-flex items-center gap-2">
+          {items.length > 0 && <BondNoticeButton bucket="d60" size="xs" />}
+          <Chip tone={tone}>{items.length === 0 ? "None within 60 days" : `${items.length} within 60 days`}</Chip>
+        </span>
       </div>
       {expired > 0 && <p className="mb-2 text-xs font-medium text-red-700">{expired} already expired on live contracts.</p>}
       {(released > 0 || superseded > 0) && <p className="mb-2 text-xs text-muted">Not counted: {released} released (contract closed), {superseded} superseded by a newer policy.</p>}
