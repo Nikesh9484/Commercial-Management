@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import zlib from "node:zlib";
 import { S3Client, GetObjectCommand, PutObjectCommand, HeadObjectCommand, DeleteObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
 import { closeDb, getDb, restoreBackupIfMissing } from "./db";
 
@@ -21,9 +22,31 @@ import { closeDb, getDb, restoreBackupIfMissing } from "./db";
 const KEY = process.env.BACKUP_S3_OBJECT || "commercial.db";
 const INTERVAL_MS = 20_000;
 /** A changed database is uploaded at most this often (each upload is the whole file, ~25 MB of bandwidth). */
-const MIN_UPLOAD_GAP_MS = 3 * 60_000;
+const MIN_UPLOAD_GAP_MS = 90_000;
 /** After a start, the cloud copy is watched this long for the previous server's final upload. */
 const STARTUP_WATCH_MS = 10 * 60_000;
+/** The plain size of the copy in the store travels beside it (the copy itself is compressed). */
+const META_KEY = `${KEY}.json`;
+
+/** Backups go up gzip-compressed (a 40 MB database is about 6 MB): a fraction of the memory and time of the plain file. */
+function pack(plain: Buffer): Buffer {
+  return zlib.gzipSync(plain, { level: 6 });
+}
+/** A copy from the store as a plain SQLite file, whether it was stored compressed or (older copies) plain. */
+export function unpack(bytes: Buffer): Buffer {
+  return bytes.length > 2 && bytes[0] === 0x1f && bytes[1] === 0x8b ? zlib.gunzipSync(bytes) : bytes;
+}
+function isSqlite(b: Buffer): boolean {
+  return b.length >= 100 && b.subarray(0, 15).toString("latin1") === "SQLite format 3";
+}
+/** The last audit entry made by a person (the top-bar context switch is not one): how "has anything been done here?" is answered. */
+function auditMark(): number {
+  try {
+    return Number((getDb().prepare("SELECT COALESCE(MAX(id), 0) AS n FROM audit_log WHERE action <> 'context'").get() as { n: number }).n);
+  } catch {
+    return -1;
+  }
+}
 
 /** Where backups go: an S3-compatible bucket, or a (private) GitHub repository. */
 export type Provider = "s3" | "github" | null;
@@ -201,6 +224,8 @@ type G = typeof globalThis & {
   __cdKnownStamp?: string | null;
   /** the local file's signature right after the restore: unchanged means nothing was written here yet */
   __cdRestoreSig?: string;
+  /** the last audit entry right after the restore: the same later means nobody has done anything here yet */
+  __cdRestoreAudit?: number;
   __cdBackupWanted?: string | null;
 };
 const g = globalThis as G;
@@ -242,6 +267,7 @@ export async function restoreIfNeeded(): Promise<void> {
     status.restoredAt = new Date().toISOString();
     g.__cdKnownStamp = await store().stamp(KEY).catch(() => null);
     g.__cdRestoreSig = changeSignature();
+    g.__cdRestoreAudit = auditMark();
     console.log(`[backup] database ${how === "restored" ? "restored from" : how === "present" ? "already on disk; backups go to" : "started fresh; backups go to"} ${store().label}/${KEY}`);
   } catch (e) {
     status.lastError = `Restore failed: ${e instanceof Error ? e.message : String(e)}`;
@@ -333,16 +359,29 @@ export async function backupNow(reason = "manual", opts: { force?: boolean } = {
       return;
     }
     tmp = await snapshotAsync();
-    const body = fs.readFileSync(tmp);
+    const plain = fs.readFileSync(tmp);
+    fs.rm(tmp, { force: true }, () => {});
+    tmp = null;
     // Never replace a backup with a much smaller database: an empty or half-filled database on a fresh
     // disk must not overwrite months of data. An Admin can force it from Settings when it is intended.
-    const remote = await st.size(KEY);
-    if (!opts.force && remote && body.length < remote / 2) {
-      status.lastError = `Upload skipped: the database on this server (${Math.round(body.length / 1048576)} MB) is much smaller than the cloud backup (${Math.round(remote / 1048576)} MB). If this is intended, use "Back up now (replace)" in Settings.`;
+    // (The copy in the store is compressed; its plain size is kept beside it. An older plain copy has none.)
+    const remoteStored = await st.size(KEY);
+    let remotePlain = remoteStored;
+    try {
+      const meta = await st.get(META_KEY);
+      const parsed = meta ? (JSON.parse(meta.toString("utf8")) as { plainSize?: number }) : null;
+      if (parsed?.plainSize) remotePlain = parsed.plainSize;
+    } catch {
+      /* no meta yet */
+    }
+    if (!opts.force && remotePlain && plain.length < remotePlain / 2) {
+      status.lastError = `Upload skipped: the database on this server (${Math.round(plain.length / 1048576)} MB) is much smaller than the cloud backup (${Math.round(remotePlain / 1048576)} MB). If this is intended, use "Back up now (replace)" in Settings.`;
       console.error("[backup]", status.lastError);
       return;
     }
+    const body = pack(plain);
     await st.put(KEY, body);
+    await st.put(META_KEY, Buffer.from(JSON.stringify({ plainSize: plain.length, storedSize: body.length, at: new Date().toISOString(), reason }), "utf8")).catch(() => {});
     const day = new Date().toISOString().slice(0, 10);
     const dailyKey = `daily/${day}.db`;
     if (!(await st.exists(dailyKey))) await st.put(dailyKey, body);
@@ -352,7 +391,7 @@ export async function backupNow(reason = "manual", opts: { force?: boolean } = {
     g.__cdLastSeen = changeSignature();
     g.__cdBackupWanted = null;
     g.__cdKnownStamp = await st.stamp(KEY).catch(() => null);
-    console.log(`[backup] uploaded ${body.length} bytes (${reason})`);
+    console.log(`[backup] uploaded ${body.length} bytes compressed, ${plain.length} plain (${reason})`);
   } catch (e) {
     status.lastError = `Upload failed: ${e instanceof Error ? e.message : String(e)}`;
     console.error("[backup]", status.lastError);
@@ -369,7 +408,9 @@ async function reconcileWithRemote(st: Store): Promise<boolean> {
   if (known === undefined || known === null) return false; // nothing to compare with (fresh store)
   const now = await st.stamp(KEY).catch(() => null);
   if (!now || now === known) return false;
-  const untouched = g.__cdRestoreSig !== undefined && changeSignature() === g.__cdRestoreSig && status.uploads === 0;
+  // nothing done here yet: no upload of our own and no audit entry by a person since the restore (the
+  // start-up housekeeping writes to the file, so the file's signature alone would say "touched")
+  const untouched = status.uploads === 0 && ((g.__cdRestoreAudit !== undefined && g.__cdRestoreAudit >= 0 && auditMark() === g.__cdRestoreAudit) || (g.__cdRestoreSig !== undefined && changeSignature() === g.__cdRestoreSig));
   if (untouched) {
     const ok = await adoptRemote(st, KEY);
     if (ok) {
@@ -398,8 +439,9 @@ async function reconcileWithRemote(st: Store): Promise<boolean> {
 async function adoptRemote(st: Store, key: string): Promise<boolean> {
   const status = backupStatus();
   try {
-    const bytes = await st.get(key);
-    if (!bytes || bytes.length < 100 || bytes.subarray(0, 15).toString("latin1") !== "SQLite format 3") throw new Error(`${key} is not a SQLite database`);
+    const stored = await st.get(key);
+    const bytes = stored ? unpack(stored) : null;
+    if (!bytes || !isSqlite(bytes)) throw new Error(`${key} is not a SQLite database`);
     const file = dbPath();
     fs.writeFileSync(`${file}.incoming`, bytes);
     closeDb();
@@ -408,6 +450,7 @@ async function adoptRemote(st: Store, key: string): Promise<boolean> {
     getDb();
     g.__cdKnownStamp = await st.stamp(KEY).catch(() => null);
     g.__cdRestoreSig = changeSignature();
+    g.__cdRestoreAudit = auditMark();
     g.__cdLastSeen = g.__cdRestoreSig;
     status.restoredFrom = "cloud";
     status.restoredAt = new Date().toISOString();
@@ -444,7 +487,8 @@ export async function listCopies(): Promise<StoredCopy[]> {
 /** A copy from the store, for downloading. */
 export async function getCopy(key: string): Promise<Buffer | null> {
   if (!isConfigured()) return null;
-  return store().get(key);
+  const stored = await store().get(key);
+  return stored ? unpack(stored) : null;
 }
 
 /**
@@ -457,7 +501,7 @@ export async function restoreCopy(key: string): Promise<{ keptAs: string }> {
   const keptAs = `conflict/before-restore-${new Date().toISOString().replace(/[:.]/g, "-")}.db`;
   const tmp = await snapshotAsync();
   try {
-    await st.put(keptAs, fs.readFileSync(tmp));
+    await st.put(keptAs, pack(fs.readFileSync(tmp)));
   } finally {
     fs.rm(tmp, { force: true }, () => {});
   }
@@ -496,10 +540,12 @@ export function startBackupLoop(): void {
   }, INTERVAL_MS);
   g.__cdBackupTimer.unref();
   const onExit = (signal: string) => {
-    console.log(`[backup] ${signal} received – final upload`);
+    console.log(`[backup] ${signal} received – final upload${process.env.NEXT_MANUAL_SIG_HANDLE ? "" : " (NEXT_MANUAL_SIG_HANDLE is not set: the framework may stop the process before the upload is through)"}`);
     const running = currentImportTrace();
     if (running && running.status === "running") putTraceSync({ ...running, ended: `${signal} received by the process while the import was running (the host stopped the instance – a restart, a deploy, or a failed health check)` });
-    const done = backupNow("shutdown").finally(() => process.exit(0));
+    const done = backupNow("shutdown")
+      .then(() => console.log("[backup] final upload done"))
+      .finally(() => process.exit(0));
     setTimeout(() => process.exit(0), 25_000).unref();
     void done;
   };

@@ -4,6 +4,7 @@ import { importWorkbook, type ImportRequest } from "@/lib/workbook/import";
 import { startImportJob, getImportJob, traceFor } from "@/lib/workbook/jobs";
 import { AuthError } from "@/lib/auth";
 import { withHeavyLock } from "@/lib/workbook/heavy";
+import { backupNow, requestBackup } from "@/lib/cloud-backup";
 
 /**
  * POST /api/workbook/import – starts the import as a background job and answers at once with { jobId };
@@ -16,6 +17,9 @@ export async function POST(req: Request, ctx: unknown) {
     const body = (await readJson(req)) as unknown as ImportRequest;
     if (new URL(req.url).searchParams.get("sync")) {
       const result = await withHeavyLock(() => importWorkbook(body, user));
+      // the result goes to the cloud copy at once
+      requestBackup("import");
+      await backupNow("import").catch(() => {});
       return NextResponse.json(result);
     }
     const job = startImportJob(body, user);

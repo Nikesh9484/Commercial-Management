@@ -5,7 +5,7 @@ import { ValidationError } from "../registers/engine";
 import fs from "node:fs";
 import path from "node:path";
 import { getDb, getSetting } from "../db";
-import { putTrace, getTrace, requestBackup } from "../cloud-backup";
+import { putTrace, getTrace, requestBackup, backupNow } from "../cloud-backup";
 
 /** The last step an import reached, kept in the database so it survives a restart of the server. */
 export interface ImportTrace {
@@ -99,12 +99,15 @@ export function startImportJob(req: ImportRequest, user: UserInfo): ImportJob {
     trace("running");
   };
   withHeavyLock(() => importWorkbook(req, user, progress))
-    .then((result) => {
+    .then(async (result) => {
       job.status = "done";
       job.result = result;
       job.phase = "Done";
       trace("done");
+      // the result goes to the cloud copy at once – not at the next tick, which a restart or a deploy
+      // in the following seconds would have pre-empted
       requestBackup("import");
+      await backupNow("import").catch(() => {});
     })
     .catch((e: unknown) => {
       job.status = "failed";

@@ -5,6 +5,9 @@
    Exit codes: 0 restored · 3 no backup in the store (start fresh) · 1 failed (do not start empty). */
 const fs = require("node:fs");
 const path = require("node:path");
+const zlib = require("node:zlib");
+/* a copy in the store is gzip-compressed (older copies are plain) */
+const unpack = (b) => (b.length > 2 && b[0] === 0x1f && b[1] === 0x8b ? zlib.gunzipSync(b) : b);
 
 const KEY = process.env.BACKUP_S3_OBJECT || "commercial.db";
 const dest = process.argv[2];
@@ -50,7 +53,8 @@ if (!provider) process.exit(3);
   let lastError = null;
   for (let attempt = 1; attempt <= 4; attempt++) {
     try {
-      const bytes = provider === "github" ? await fromGithub() : await fromS3();
+      const stored = provider === "github" ? await fromGithub() : await fromS3();
+      const bytes = stored ? unpack(stored) : null;
       if (!bytes) {
         console.log("[restore] no backup in the store yet – starting with a fresh database");
         process.exit(3);
