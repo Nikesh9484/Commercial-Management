@@ -339,3 +339,55 @@ html[data-ink="colour"] .text-slate-900, html[data-ink="colour"] .text-slate-800
 html[data-ink="black"] .text-slate-700, html[data-ink="black"] .text-slate-600, html[data-ink="black"] .text-gray-700, html[data-ink="black"] .text-gray-600,
 html[data-ink="soft"] .text-slate-700, html[data-ink="soft"] .text-slate-600, html[data-ink="soft"] .text-gray-700, html[data-ink="soft"] .text-gray-600,
 html[data-ink="colour"] .text-slate-700, html[data-ink="colour"] .text-slate-600, html[data-ink="colour"] .text-gray-700, html[data-ink="colour"] .text-gray-600 { color: var(--muted); }
+
+/* Wide tables: the side scroll bar is always drawn (macOS hides it until the pointer moves), and the
+   floating rail at the bottom of the window shows a thick thumb that can be dragged. */
+.overflow-x-auto::-webkit-scrollbar,
+.overflow-auto::-webkit-scrollbar {
+  height: 10px;
+  width: 10px;
+}
+.overflow-x-auto::-webkit-scrollbar-thumb,
+.overflow-auto::-webkit-scrollbar-thumb {
+  background: #b6c0cf;
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.overflow-x-auto::-webkit-scrollbar-track,
+.overflow-auto::-webkit-scrollbar-track {
+  background: #f1f4f8;
+}
+.overflow-x-auto,
+.overflow-auto {
+  scrollbar-width: thin;
+  scrollbar-color: #b6c0cf #f1f4f8;
+}
+.scroll-rail {
+  scrollbar-width: auto;
+  scrollbar-color: #0f2b4c #e5e9f0;
+}
+.scroll-rail::-webkit-scrollbar {
+  height: 14px;
+}
+.scroll-rail::-webkit-scrollbar-thumb {
+  background: #0f2b4c;
+  border-radius: 7px;
+  border: 3px solid #e5e9f0;
+  background-clip: padding-box;
+}
+.scroll-rail::-webkit-scrollbar-track {
+  background: #e5e9f0;
+  border-radius: 7px;
+}
+@media print {
+  .scroll-rail-box {
+    display: none;
+  }
+}
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}

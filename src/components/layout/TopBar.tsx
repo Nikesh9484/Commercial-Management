@@ -37,7 +37,7 @@ export function TopBar({ context, user, onMenu }: { context: AppContext; user: U
         <Menu size={20} />
       </button>
 
-      <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto sm:gap-4">
+      <div className="no-scrollbar flex min-w-0 flex-1 items-center gap-2 overflow-x-auto sm:gap-4">
         <Selector label="Project / Asset">
           <select
             className={selectCls}
