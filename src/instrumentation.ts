@@ -9,6 +9,8 @@ export async function register() {
     repairPaymentCumulatives();
     const { repairFinalAccountBreakdown } = await import("./lib/repairs/final-account-breakdown");
     repairFinalAccountBreakdown();
+    const { repairCustomsVendorLinks } = await import("./lib/repairs/customs-vendors");
+    repairCustomsVendorLinks();
     backup.startBackupLoop();
     // the uploaded files beside the database: anything the disk lost comes back, anything never sent goes up
     const files = await import("./lib/file-store");

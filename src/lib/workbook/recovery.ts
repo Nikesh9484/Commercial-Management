@@ -75,7 +75,8 @@ function sameWord(a: string, b: string): boolean {
   const rb = b.slice(i + (b.length >= a.length ? 1 : 0));
   return ra === rb;
 }
-const has = (list: string[], w: string) => list.some((x) => sameWord(x, w));
+/** The word is in the list: the same bar a typo, or – for long words – the same stem ("Industries" / "Industrial"). */
+const has = (list: string[], w: string) => list.some((x) => sameWord(x, w) || (x.length >= 8 && w.length >= 8 && x.slice(0, 7) === w.slice(0, 7)));
 
 export interface KnownContractor {
   id: number;
@@ -105,9 +106,12 @@ export function matchContractor(name: string, contractors: KnownContractor[]): K
     const primary = hits.filter((c) => c.primary);
     if (primary.length === 1) return primary[0];
     const score = (c: { name: string }) => coreWords(c.name).filter((w) => has(words, w)).length;
-    const extra = (c: { name: string }) => coreWords(c.name).length - score(c);
-    const sorted = [...(primary.length ? primary : hits)].sort((x, y) => score(y) - score(x) || extra(x) - extra(y));
-    return score(sorted[0]) > score(sorted[1]) || extra(sorted[0]) < extra(sorted[1]) ? sorted[0] : null;
+    // words of the same stem ("Industries" / "Industrial") count a little: they tell "Nova Composites
+    // Industries" from "Nova Composites Manufacturing" when the first words are the same
+    const stem = (c: { name: string }) => coreWords(c.name).filter((w) => !has(words, w) && words.some((x) => x.length >= 6 && w.length >= 6 && x.slice(0, 6) === w.slice(0, 6))).length;
+    const extra = (c: { name: string }) => coreWords(c.name).length - score(c) - stem(c);
+    const sorted = [...(primary.length ? primary : hits)].sort((x, y) => score(y) - score(x) || stem(y) - stem(x) || extra(x) - extra(y));
+    return score(sorted[0]) > score(sorted[1]) || stem(sorted[0]) > stem(sorted[1]) || extra(sorted[0]) < extra(sorted[1]) ? sorted[0] : null;
   }
   return null;
 }

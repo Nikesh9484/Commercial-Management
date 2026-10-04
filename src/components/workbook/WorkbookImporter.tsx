@@ -66,7 +66,7 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo,
   const [progress, setProgress] = useState("");
   const router = useRouter();
 
-  // Several reports in one go (monthly import only)
+  // Several files in one go: the monthly reports, or a stand-alone tracker's files (Aconex exports one file per table)
   const [batchFiles, setBatchFiles] = useState<File[]>([]);
   const [batch, setBatch] = useState<BatchItem[]>([]);
   const [batchBusy, setBatchBusy] = useState(false);
@@ -253,6 +253,56 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo,
     router.refresh();
   }
 
+  /**
+   * A stand-alone tracker's files together (the Aconex control-account and change-event exports, or
+   * more): each file is read and imported in turn into this project's registers, nothing else touched.
+   */
+  async function runStandaloneBatch() {
+    if (!standalone || !batchFiles.length) return;
+    setBatchBusy(true);
+    const items: BatchItem[] = batchFiles.map((f) => ({ name: f.name, size: f.size, status: "queued", message: "" }));
+    setBatch(items);
+    const update = (i: number, patch: Partial<BatchItem>) => {
+      Object.assign(items[i], patch);
+      setBatch([...items]);
+    };
+    for (let i = 0; i < batchFiles.length; i++) {
+      update(i, { status: "reading", message: "Reading…" });
+      try {
+        if (i > 0) await pause(1500);
+        const a = await uploadAndAnalyze(batchFiles[i], (m) => update(i, { message: m }));
+        const sheets = a.sheets.map((sh) => ({ sheet: sh.name, headerRow: sh.headerRow, register: sh.register && standalone.only.includes(sh.register) ? sh.register : null, columns: Object.fromEntries(sh.columns.map((c) => [String(c.index), c.field])) }));
+        if (!sheets.some((sh) => sh.register)) {
+          update(i, { status: "skipped", message: `Not recognised as ${standalone.fileHint} – nothing imported from this file.${a.conversion?.notes?.length ? ` ${a.conversion.notes[0]}` : ""}` });
+          continue;
+        }
+        update(i, { status: "importing", message: `Importing ${sheets.filter((sh) => sh.register).map((sh) => registers.find((r) => r.key === sh.register)?.label ?? sh.register).join(", ")}…` });
+        const body = {
+          fileId: a.fileId,
+          period: standalone.project || standalone.shared ? {} : { id: standalone.period.id },
+          sheets,
+          lock: false,
+          createMissingLookups: createLookups,
+          allowedRegisters: standalone.only,
+          programmeId: standalone.project?.id,
+          fileName: a.fileName,
+          excelCheck: a.conversion?.level1 ?? null,
+          control: a.conversion?.control ?? null,
+        };
+        const j = await importViaJob(body, (m) => update(i, { message: m }));
+        const added = j.sheets.reduce((t, r) => t + r.created, 0);
+        const updated = j.sheets.reduce((t, r) => t + r.updated, 0);
+        const errors = j.sheets.reduce((t, r) => t + r.errors.length, 0);
+        update(i, { status: errors ? "warning" : "done", result: j, message: `${j.sheets.map((r) => r.register).filter(Boolean).join(", ")}: ${added} added, ${updated} updated${errors ? `, ${errors} row(s) could not be read` : ""}${a.conversion?.notes?.length ? ` · ${a.conversion.notes[0]}` : ""}` });
+      } catch (e) {
+        update(i, { status: "error", message: friendly(e) });
+      }
+    }
+    setBatchBusy(false);
+    toast(`${items.filter((x) => x.status === "done" || x.status === "warning").length} of ${items.length} file(s) imported.`);
+    router.refresh();
+  }
+
   const mappedSheets = analysis ? analysis.sheets.filter((s) => mapping[s.name]?.register) : [];
   // the month being imported vs the latest report that exists
   const targetNo = periodMode === "existing" ? (periods.find((p) => p.id === periodId)?.report_no ?? null) : Number(reportNo.replace(/\D/g, "")) || null;
@@ -330,10 +380,38 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo,
         </h2>
         <p className="mb-3 text-xs text-muted">{standalone ? standalone.intro : "Your monthly report workbook (.xlsx). The app reads every sheet it recognises: cost report lines, change tracker, claims, early warnings, risks, provisional sums, bonds, contracts, IPC log, budget transfers, project team."}</p>
         <div className="grid gap-4 lg:grid-cols-2">
-          <DropZone onFiles={(files) => setFile(files[0] ?? null)} label="Drop the file here">
+          <DropZone
+            onFiles={(files) => {
+              if (standalone && files.length > 1) {
+                setBatchFiles(files);
+                setBatch([]);
+                setFile(null);
+              } else {
+                setBatchFiles([]);
+                setFile(files[0] ?? null);
+              }
+            }}
+            label={standalone ? "Drop the files here" : "Drop the file here"}
+          >
             <label className="flex flex-col gap-1 text-xs text-muted">
-              Excel file{standalone ? ` – ${standalone.fileHint}` : ""} – choose it, or drop it here
-              <input type="file" accept=".xlsx,.xlsm,.csv" className="input" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+              Excel file{standalone ? `s – ${standalone.fileHint} – together or one at a time` : ""} – choose {standalone ? "them" : "it"}, or drop {standalone ? "them" : "it"} here
+              <input
+                type="file"
+                accept=".xlsx,.xlsm,.csv"
+                multiple={!!standalone}
+                className="input"
+                onChange={(e) => {
+                  const list = Array.from(e.target.files ?? []);
+                  if (standalone && list.length > 1) {
+                    setBatchFiles(list);
+                    setBatch([]);
+                    setFile(null);
+                  } else {
+                    setBatchFiles([]);
+                    setFile(list[0] ?? null);
+                  }
+                }}
+              />
             </label>
           </DropZone>
           {standalone?.project ? (
@@ -399,12 +477,55 @@ export function WorkbookImporter({ registers, periods, isAdmin, defaultReportNo,
             </div>
           </div>
         )}
-        <div className="mt-3 flex flex-wrap items-center gap-3">
-          <button className="btn btn-primary" onClick={analyze} disabled={!file || busy}>
-            <FileSpreadsheet size={16} /> {busy && !analysis ? progress || "Reading…" : "Read the workbook"}
-          </button>
-          <span className="text-xs text-muted">Nothing is saved at this step; you review the app&apos;s reading first.</span>
-        </div>
+        {standalone && batchFiles.length > 1 ? (
+          <>
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <button className="btn btn-primary" onClick={runStandaloneBatch} disabled={batchBusy}>
+                <Upload size={16} /> {batchBusy ? "Importing…" : `Read and import ${batchFiles.length} files`}
+              </button>
+              <span className="text-xs text-muted">
+                {batchFiles.map((f) => f.name).join(" · ")} – each file is read and imported in turn{standalone.project ? ` into ${standalone.project.name}` : ""}; rows already here are replaced by the new figures.
+              </span>
+            </div>
+            {batch.length > 0 && (
+              <table className="data mt-4 w-full text-sm">
+                <thead>
+                  <tr>
+                    <th>File</th>
+                    <th>Result</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {batch.map((b, i) => (
+                    <tr key={i}>
+                      <td className="font-medium">{b.name}</td>
+                      <td>
+                        <Chip tone={b.status === "done" ? "green" : b.status === "error" ? "red" : b.status === "skipped" || b.status === "warning" ? "amber" : "blue"}>
+                          {b.status === "done" ? "Imported" : b.status === "warning" ? "Imported with errors" : b.status === "error" ? "Failed" : b.status === "skipped" ? "Skipped" : b.status === "importing" ? "Importing…" : b.status === "reading" ? "Reading…" : "Queued"}
+                        </Chip>
+                        <div className="mt-1 text-xs text-muted">{b.message}</div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            {batch.length > 0 && !batchBusy && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Link href={standalone.doneHref} className="btn btn-primary btn-sm">
+                  <CheckCircle2 size={14} /> {standalone.doneLabel} <ArrowRight size={14} />
+                </Link>
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <button className="btn btn-primary" onClick={analyze} disabled={!file || busy}>
+              <FileSpreadsheet size={16} /> {busy && !analysis ? progress || "Reading…" : "Read the workbook"}
+            </button>
+            <span className="text-xs text-muted">Nothing is saved at this step; you review the app&apos;s reading first.</span>
+          </div>
+        )}
       </div>
 
       {/* Step 2 */}
