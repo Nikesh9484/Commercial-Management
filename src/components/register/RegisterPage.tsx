@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useScopeKey } from "@/components/layout/ScopeContext";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Plus, Search, Download, Upload, Pencil, Trash2, History, RotateCcw, EyeOff, ChevronUp, ChevronDown, ChevronsUpDown, ChevronRight, RefreshCw, Lock, Unlock, Filter, X, ExternalLink, Columns3, Copy, ClipboardPaste } from "lucide-react";
+import { Plus, Search, Download, Upload, Pencil, Trash2, History, RotateCcw, EyeOff, ChevronUp, ChevronDown, ChevronsUpDown, ChevronRight, RefreshCw, Lock, Unlock, Filter, X, ExternalLink, Columns3, Copy, ClipboardPaste, Paperclip, FolderUp, Loader2 } from "lucide-react";
 import { tableClipboard, writeClipboard } from "@/lib/copy-rows";
 import { PasteDialog } from "./PasteDialog";
 import type { FieldDef, LookupOption, RecordRow, RegisterDef } from "@/lib/registers/types";
@@ -17,6 +17,8 @@ import { RecordHistory } from "./HistoryPanel";
 import { ImportDialog } from "./ImportDialog";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { ChangePackButtons } from "@/components/changes/ChangePackButtons";
+import { uploadBondDocuments } from "@/lib/bonds/upload-client";
+import { filesFromDataTransfer, hasFiles } from "@/lib/dnd-client";
 
 const PAGE_SIZE = 50;
 
@@ -94,6 +96,12 @@ export function RegisterPage({
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [historyFor, setHistoryFor] = useState<RecordRow | null>(null);
+  // documents dropped on (or picked for) one bond / insurance row: kept with that entry
+  const [dropRow, setDropRow] = useState<number | null>(null);
+  const [uploadingRow, setUploadingRow] = useState<number | null>(null);
+  const pickFor = useRef<number | null>(null);
+  const rowFilesRef = useRef<HTMLInputElement>(null);
+  const rowFolderRef = useRef<HTMLInputElement>(null);
   const [deleting, setDeleting] = useState<RecordRow | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   // which columns the person keeps on this register's table (remembered in this browser); none set = the register's own choice
@@ -187,6 +195,36 @@ export function RegisterPage({
     } catch {
       /* a browser without storage keeps the register's own columns */
     }
+  };
+
+  const attachToRow = useCallback(
+    async (bondId: number, files: File[]) => {
+      if (!files.length) return;
+      setUploadingRow(bondId);
+      try {
+        if (files.length > 1) toast(`Uploading ${files.length} files…`);
+        const names = await uploadBondDocuments(bondId, files);
+        toast(`${names.length} document${names.length === 1 ? "" : "s"} kept with the entry – open ${names.length === 1 ? "it" : "them"} from the Documents column.`);
+        const loaded = await fetchRegister(registerKey);
+        setData(loaded);
+        onRows?.(loaded.rows);
+      } catch (e) {
+        toast(e instanceof Error ? e.message : "Something went wrong.", "error");
+      } finally {
+        setUploadingRow(null);
+      }
+    },
+    [registerKey, onRows, toast],
+  );
+  const rowIdAt = (t: EventTarget | null) => {
+    const tr = (t as Element | null)?.closest?.("tr[data-row-id]");
+    return tr ? Number(tr.getAttribute("data-row-id")) : null;
+  };
+  const pickedForRow = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const id = pickFor.current;
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = "";
+    if (id && files.length) void attachToRow(id, files);
   };
 
   const load = useCallback(() => {
@@ -480,6 +518,7 @@ ${lines.join("\n")}`)) return;
   };
 
   if (loadError) return <div className="card p-6 text-sm text-red-700">{loadError}</div>;
+  const rowUploads = registerKey === "bonds" && !!data?.canEdit;
   if (!data || !def) return <div className="card p-6 text-sm text-muted">Loading…</div>;
 
   /** Copies rows as cells (tab-separated text + an HTML table) in the columns shown on the table. */
@@ -697,6 +736,12 @@ ${lines.join("\n")}`)) return;
       {/* Table */}
       <div className="card overflow-hidden">
         <div className="max-h-[70vh] overflow-auto">
+          {rowUploads && (
+            <>
+              <input ref={rowFilesRef} type="file" multiple className="hidden" onChange={pickedForRow} />
+              <input ref={rowFolderRef} type="file" multiple className="hidden" onChange={pickedForRow} {...({ webkitdirectory: "", directory: "" } as Record<string, string>)} />
+            </>
+          )}
           <table className="data w-full">
             <thead>
               <tr>
@@ -762,7 +807,41 @@ ${lines.join("\n")}`)) return;
                 <th className="text-right" data-nocopy>Actions</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody
+              data-dropzone={rowUploads ? "" : undefined}
+              {...(rowUploads
+                ? {
+                    onDragEnter: (e: React.DragEvent) => {
+                      if (!hasFiles(e.dataTransfer)) return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setDropRow(rowIdAt(e.target));
+                    },
+                    onDragOver: (e: React.DragEvent) => {
+                      if (!hasFiles(e.dataTransfer)) return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      e.dataTransfer.dropEffect = "copy";
+                      const id = rowIdAt(e.target);
+                      if (id !== dropRow) setDropRow(id);
+                    },
+                    onDragLeave: (e: React.DragEvent) => {
+                      if (!hasFiles(e.dataTransfer)) return;
+                      e.stopPropagation();
+                      if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node | null)) setDropRow(null);
+                    },
+                    onDrop: async (e: React.DragEvent) => {
+                      if (!hasFiles(e.dataTransfer)) return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      const id = rowIdAt(e.target);
+                      setDropRow(null);
+                      const files = await filesFromDataTransfer(e.dataTransfer);
+                      if (id && files.length) void attachToRow(id, files);
+                    },
+                  }
+                : {})}
+            >
               {pageRows.length === 0 && (
                 <tr>
                   <td colSpan={tableFields.length + 2 + (data.canEdit ? 1 : 0)} className="py-10 text-center text-muted">
@@ -773,10 +852,11 @@ ${lines.join("\n")}`)) return;
               {pageRows.map((r) => (
                 <tr
                   key={r.id}
+                  data-row-id={rowUploads ? r.id : undefined}
                   onClick={() => setFocusedId(Number(r.id))}
                   onContextMenu={rowMenu(r)}
                   onDoubleClick={() => data.canEdit && openEdit(r)}
-                  className={`${ROW_TONE[String(r.__row_tone ?? "")] ?? ""} ${selected.has(Number(r.id)) ? "bg-sky-50!" : ""} ${focusedId === Number(r.id) ? "outline outline-2 -outline-offset-2 outline-accent/60" : ""}`}
+                  className={`${ROW_TONE[String(r.__row_tone ?? "")] ?? ""} ${selected.has(Number(r.id)) ? "bg-sky-50!" : ""} ${focusedId === Number(r.id) ? "outline outline-2 -outline-offset-2 outline-accent/60" : ""} ${dropRow === Number(r.id) ? "outline outline-2 outline-dashed -outline-offset-2 outline-navy bg-navy/10!" : ""}`}
                 >
                   <td className="w-8 pr-0" data-nocopy>
                     <input type="checkbox" aria-label={`Select ${String(r[def.displayField ?? "id"] ?? r.id)}`} checked={selected.has(Number(r.id))} onChange={() => toggleSelected(Number(r.id))} />
@@ -818,6 +898,33 @@ ${lines.join("\n")}`)) return;
                       <button className="btn btn-ghost btn-sm" onClick={() => setHistoryFor(r)} title="Change history">
                         <History size={15} />
                       </button>
+                      {rowUploads && dropRow === Number(r.id) && <span className="mr-1 whitespace-nowrap text-xs font-semibold text-navy">Drop to attach</span>}
+                      {rowUploads && (
+                        <>
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            disabled={uploadingRow === Number(r.id)}
+                            onClick={() => {
+                              pickFor.current = Number(r.id);
+                              rowFilesRef.current?.click();
+                            }}
+                            title="Attach files to this entry – the certificate, the guarantee, an endorsement, the transmittal. Files and folders can also be dropped straight on the row."
+                          >
+                            {uploadingRow === Number(r.id) ? <Loader2 size={15} className="animate-spin" /> : <Paperclip size={15} />}
+                          </button>
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            disabled={uploadingRow === Number(r.id)}
+                            onClick={() => {
+                              pickFor.current = Number(r.id);
+                              rowFolderRef.current?.click();
+                            }}
+                            title="Attach a whole folder to this entry"
+                          >
+                            <FolderUp size={15} />
+                          </button>
+                        </>
+                      )}
                       {data.canEdit && ["payment_applications", "contracts", "bonds"].includes(registerKey) && (
                         <button className="btn btn-ghost btn-sm" onClick={() => resetRow(r)} title="Reset to the previous report – the entry goes back to how it stood in the last issued report; one added since is removed">
                           <RotateCcw size={15} />

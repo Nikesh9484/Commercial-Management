@@ -25,6 +25,7 @@ export const IMPORTABLE: { key: string; label: string }[] = [
   { key: "customs_declarations", label: "Customs Declarations (customs tracker – Breakdown sheet)" },
   { key: "customs_recovery", label: "Customs Duty Recovery (customs tracker)" },
   { key: "aconex_control_accounts", label: "Aconex Control Accounts (control-account export)" },
+  { key: "aconex_change_events", label: "Aconex Change Events (change-event export)" },
 ];
 
 /** Extra words your workbook may use for a field (normalised: lowercase, letters and digits only). */

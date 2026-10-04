@@ -7,6 +7,7 @@ import { XWorkbook, type XSheet } from "./xlsx";
 import { readReportTemplate } from "./templates";
 import { getReportData } from "../data";
 import { addLevel02R1Sheet } from "./level02r1";
+import { extractSheets } from "./extract";
 
 /**
  * The month's report written back into the project's own report workbook: the same tabs, the same
@@ -131,19 +132,12 @@ function numericKey(wb: XWorkbook, s: XSheet, col: number) {
   };
 }
 
-export async function renderOwnLayout(programmeId: number, periodId: number | null): Promise<OwnLayoutResult> {
-  const tpl = readReportTemplate(programmeId);
-  if (!tpl) throw new ValidationError("No report workbook is kept for this project yet. Upload your last report workbook as the template (Reports & downloads → Your report workbook), or import a month: the workbook imported is kept automatically.");
-  const period = (periodId ? getPeriod(periodId) : null) ?? latestPeriod(getDb(), programmeId);
-  if (!period) throw new ValidationError("This project has no reporting period yet.");
-  const src = new Source(programmeId, period);
-  const wb = await XWorkbook.load(tpl.bytes);
-  const notes: string[] = [];
+/** Data Input / Report Data: the report number and the month of the period. */
+function writeReportHeader(wb: XWorkbook, period: PeriodRow, notes: string[]) {
   const end = new Date(`${String(period.period_end).slice(0, 10)}T00:00:00Z`);
   const monthName = MONTHS[end.getUTCMonth()];
   const year = end.getUTCFullYear();
   const reportNo = Number(period.report_no);
-
   // ---- Data Input / Report Data: the report number and the month
   for (const s of [wb.sheet("Data Input"), wb.sheet("Report Data")]) {
     if (!s) continue;
@@ -161,6 +155,99 @@ export async function renderOwnLayout(programmeId: number, periodId: number | nu
     }
     notes.push(`${s.name}: Report No ${reportNo}, ${monthName} ${year}.`);
   }
+
+}
+
+/** The Bonds & insurance tab (Schedule G / SCHD G): every bond and policy of the register in its row, new ones inserted in the table. */
+function writeBondsSheet(wb: XWorkbook, src: Source, marina: boolean, notes: string[]): XSheet | null {
+  // ---- Bonds & insurance
+  const G = wb.sheet("Schedule G", "SCHD G");
+  if (G) {
+    const hdr = wb.headerRow(G, marina ? ["ref", "type of bond"] : ["pkg code", "type of bond"]) ?? 12;
+    const keyCol = marina ? 2 : 1;
+    const t = marina
+      ? new Table(wb, G, hdr, keyCol, numericKey(wb, G, 2))
+      : new Table(wb, G, hdr, keyCol, (r) => {
+          const k = wb.text(G, r, 1).match(/^\s*(\d{3}[A-Z]\d{2})\s*$/i)?.[1]?.toUpperCase();
+          const n = wb.number(G, r, 3);
+          return k && n !== null && !wb.hasFormula(G, r, 3) ? `${k}:${Math.trunc(n)}` : null;
+        });
+    const inserted = { n: 0 };
+    let written = 0;
+    for (const b of src.rows("bonds")) {
+      const typeName = src.name("bond_types", b.type_id);
+      const vb = String(b.ref ?? "").match(/^G-(\d{3}[A-Z]\d{2})-(\d+)([a-z])?$/i);
+      const key = marina ? String(lastNo(b.ref) ?? "") : vb && !vb[3] ? `${vb[1].toUpperCase()}:${Number(vb[2])}` : "";
+      if (!key) continue;
+      let r: number | null;
+      if (marina) r = t.rowFor(key, inserted);
+      else {
+        r = t.rows.get(key)?.[0] ?? null;
+        if (!r) {
+          const frag = vb![1].toUpperCase();
+          const groupLast = [...t.rows.entries()].filter(([k]) => k.startsWith(`${frag}:`)).flatMap(([, rows]) => rows).sort((x, y) => y - x)[0] ?? null;
+          const keys = src.rows("bonds").map((x) => String(x.ref ?? "").match(/^G-(\d{3}[A-Z]\d{2})-(\d+)$/i)).filter((x): x is RegExpMatchArray => !!x && x[1].toUpperCase() === frag).map((x) => `${frag}:${Number(x[2])}`);
+          t.reserve(keys, groupLast, inserted);
+          for (const k of keys) {
+            const nr = t.rows.get(k)?.[0];
+            if (nr && !wb.text(G, nr, 1)) {
+              wb.set(G, nr, 1, frag);
+              wb.set(G, nr, 3, Number(k.split(":")[1]));
+            }
+          }
+          r = t.rows.get(key)?.[0] ?? null;
+        }
+      }
+      if (!r) continue;
+      const set = (c: number, v: unknown, date = false) => {
+        if (v === null || v === undefined || v === "") return;
+        wb.set(G, r, c, typeof v === "number" ? v : String(v), { date });
+      };
+      if (marina) {
+        set(2, lastNo(b.ref));
+        set(3, src.name("contractors", b.contractor_id));
+        set(4, src.name("packages", b.package_id));
+        set(5, n0(b.original_contract_sum));
+        set(7, typeName);
+        set(8, b.policy_no);
+        set(9, n0(b.requirement_value));
+        set(10, n0(b.amount_provided));
+        set(12, b.expiry_date, true);
+        set(14, yesNo(b.approved));
+        set(15, yesNo(b.bank_verification));
+        set(16, b.comments);
+      } else {
+        if (!wb.text(G, r, 2)) set(2, src.name("packages", b.package_id));
+        if (!wb.hasFormula(G, r, 4) && !wb.text(G, r, 4)) set(4, src.name("contractors", b.contractor_id));
+        set(7, typeName);
+        set(8, b.policy_no);
+        set(9, n0(b.requirement_value));
+        set(10, n0(b.amount_provided));
+        set(11, b.expiry_date, true);
+        set(13, b.comments);
+      }
+      written++;
+    }
+    notes.push(`${G.name}: ${written} bonds / policies written${inserted.n ? `, ${inserted.n} new row${inserted.n === 1 ? "" : "s"} added` : ""}.`);
+  }
+
+  return G ?? null;
+}
+
+export async function renderOwnLayout(programmeId: number, periodId: number | null): Promise<OwnLayoutResult> {
+  const tpl = readReportTemplate(programmeId);
+  if (!tpl) throw new ValidationError("No report workbook is kept for this project yet. Upload your last report workbook as the template (Reports & downloads → Your report workbook), or import a month: the workbook imported is kept automatically.");
+  const period = (periodId ? getPeriod(periodId) : null) ?? latestPeriod(getDb(), programmeId);
+  if (!period) throw new ValidationError("This project has no reporting period yet.");
+  const src = new Source(programmeId, period);
+  const wb = await XWorkbook.load(tpl.bytes);
+  const notes: string[] = [];
+  const end = new Date(`${String(period.period_end).slice(0, 10)}T00:00:00Z`);
+  const monthName = MONTHS[end.getUTCMonth()];
+  const year = end.getUTCFullYear();
+  const reportNo = Number(period.report_no);
+
+  writeReportHeader(wb, period, notes);
 
   const marina = !!wb.sheet("Schedule C");
   const C = wb.sheet("Schedule C", "SCHD C");
@@ -318,76 +405,7 @@ export async function renderOwnLayout(programmeId: number, periodId: number | nu
     notes.push(`${C.name}: ${written} changes written${inserted.n ? `, ${inserted.n} new row${inserted.n === 1 ? "" : "s"} added` : ""}.`);
   }
 
-  // ---- Bonds & insurance
-  const G = wb.sheet("Schedule G", "SCHD G");
-  if (G) {
-    const hdr = wb.headerRow(G, marina ? ["ref", "type of bond"] : ["pkg code", "type of bond"]) ?? 12;
-    const keyCol = marina ? 2 : 1;
-    const t = marina
-      ? new Table(wb, G, hdr, keyCol, numericKey(wb, G, 2))
-      : new Table(wb, G, hdr, keyCol, (r) => {
-          const k = wb.text(G, r, 1).match(/^\s*(\d{3}[A-Z]\d{2})\s*$/i)?.[1]?.toUpperCase();
-          const n = wb.number(G, r, 3);
-          return k && n !== null && !wb.hasFormula(G, r, 3) ? `${k}:${Math.trunc(n)}` : null;
-        });
-    const inserted = { n: 0 };
-    let written = 0;
-    for (const b of src.rows("bonds")) {
-      const typeName = src.name("bond_types", b.type_id);
-      const vb = String(b.ref ?? "").match(/^G-(\d{3}[A-Z]\d{2})-(\d+)([a-z])?$/i);
-      const key = marina ? String(lastNo(b.ref) ?? "") : vb && !vb[3] ? `${vb[1].toUpperCase()}:${Number(vb[2])}` : "";
-      if (!key) continue;
-      let r: number | null;
-      if (marina) r = t.rowFor(key, inserted);
-      else {
-        r = t.rows.get(key)?.[0] ?? null;
-        if (!r) {
-          const frag = vb![1].toUpperCase();
-          const groupLast = [...t.rows.entries()].filter(([k]) => k.startsWith(`${frag}:`)).flatMap(([, rows]) => rows).sort((x, y) => y - x)[0] ?? null;
-          const keys = src.rows("bonds").map((x) => String(x.ref ?? "").match(/^G-(\d{3}[A-Z]\d{2})-(\d+)$/i)).filter((x): x is RegExpMatchArray => !!x && x[1].toUpperCase() === frag).map((x) => `${frag}:${Number(x[2])}`);
-          t.reserve(keys, groupLast, inserted);
-          for (const k of keys) {
-            const nr = t.rows.get(k)?.[0];
-            if (nr && !wb.text(G, nr, 1)) {
-              wb.set(G, nr, 1, frag);
-              wb.set(G, nr, 3, Number(k.split(":")[1]));
-            }
-          }
-          r = t.rows.get(key)?.[0] ?? null;
-        }
-      }
-      if (!r) continue;
-      const set = (c: number, v: unknown, date = false) => {
-        if (v === null || v === undefined || v === "") return;
-        wb.set(G, r, c, typeof v === "number" ? v : String(v), { date });
-      };
-      if (marina) {
-        set(2, lastNo(b.ref));
-        set(3, src.name("contractors", b.contractor_id));
-        set(4, src.name("packages", b.package_id));
-        set(5, n0(b.original_contract_sum));
-        set(7, typeName);
-        set(8, b.policy_no);
-        set(9, n0(b.requirement_value));
-        set(10, n0(b.amount_provided));
-        set(12, b.expiry_date, true);
-        set(14, yesNo(b.approved));
-        set(15, yesNo(b.bank_verification));
-        set(16, b.comments);
-      } else {
-        if (!wb.text(G, r, 2)) set(2, src.name("packages", b.package_id));
-        if (!wb.hasFormula(G, r, 4) && !wb.text(G, r, 4)) set(4, src.name("contractors", b.contractor_id));
-        set(7, typeName);
-        set(8, b.policy_no);
-        set(9, n0(b.requirement_value));
-        set(10, n0(b.amount_provided));
-        set(11, b.expiry_date, true);
-        set(13, b.comments);
-      }
-      written++;
-    }
-    notes.push(`${G.name}: ${written} bonds / policies written${inserted.n ? `, ${inserted.n} new row${inserted.n === 1 ? "" : "s"} added` : ""}.`);
-  }
+  writeBondsSheet(wb, src, marina, notes);
 
   // ---- Contracts (Schedule H) and the IPC logs behind them
   const contracts = src.rows("contracts");
@@ -715,5 +733,29 @@ export async function renderOwnLayout(programmeId: number, periodId: number | nu
   const ext = tpl.name.match(/\.(xlsm)$/i) ? "xlsm" : "xlsx";
   const fileName = `${stem === base ? `${base} - Report No ${reportNo} ${monthName.slice(0, 3)}-${String(year).slice(-2)}` : stem}.${ext}`;
   notes.push(`Written into ${tpl.name} (${formatDate(String(period.period_end).slice(0, 10))}); every total recalculates when the workbook opens.`);
+  return { bytes, fileName, notes };
+}
+
+/**
+ * The Insurance tracker: the Bonds & insurance tab of the project's own report workbook, filled from the
+ * register, as a workbook of its own – the tab's formulas, colours, fonts and layout exactly as in the
+ * template, with the sheets its formulas look at kept hidden beside it.
+ */
+export async function renderBondsTracker(programmeId: number, periodId: number | null): Promise<OwnLayoutResult> {
+  const tpl = readReportTemplate(programmeId);
+  if (!tpl) throw new ValidationError("No report workbook is kept for this project yet. Upload your last report workbook as the template (Reports & downloads → Your report workbook), or import a month: the workbook imported is kept automatically.");
+  const period = (periodId ? getPeriod(periodId) : null) ?? latestPeriod(getDb(), programmeId);
+  if (!period) throw new ValidationError("This project has no reporting period yet.");
+  const src = new Source(programmeId, period);
+  const wb = await XWorkbook.load(tpl.bytes);
+  const notes: string[] = [];
+  writeReportHeader(wb, period, notes);
+  const marina = !!wb.sheet("Schedule C");
+  const G = writeBondsSheet(wb, src, marina, notes);
+  if (!G) throw new ValidationError(`The report workbook kept for this project has no Bonds & insurance tab (Schedule G / SCHD G) – the tracker follows that tab.`);
+  const bytes = await extractSheets(wb, [G.name]);
+  const programme = getDb().prepare("SELECT name, code FROM programmes WHERE id = ?").get(programmeId) as { name: string; code: string } | undefined;
+  const end = new Date(`${String(period.period_end).slice(0, 10)}T00:00:00Z`);
+  const fileName = `Insurance Tracker - ${programme?.name ?? programme?.code ?? "project"} - Report No ${Number(period.report_no)} ${MONTHS[end.getUTCMonth()].slice(0, 3)}-${String(end.getUTCFullYear()).slice(-2)} - ${formatDate(new Date().toISOString().slice(0, 10))}.xlsx`;
   return { bytes, fileName, notes };
 }

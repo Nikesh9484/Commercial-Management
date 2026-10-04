@@ -169,6 +169,10 @@ export const REPORTER_PATHS = [
   "/packs",
   "/api/packs",
   "/api/export",
+  // the Insurance tracker in the report workbook's own layout, downloaded by the user account as well
+  "/api/bonds/tracker",
+  // the documents kept with a bond or insurance entry, opened from the register by everyone who can see it
+  "/api/bonds/documents",
   "/api/report",
   "/api/email-report",
   "/api/custom-report",
@@ -200,6 +204,8 @@ const REPORTER_WRITES: { method: string; path: string }[] = [
   ...["POST", "PUT", "PATCH", "DELETE"].flatMap((method) => [{ method, path: "/api/kpi" }, { method, path: "/api/packs" }]),
   // bonds and insurance documents are uploaded by the user account as well: the register is updated from them
   { method: "POST", path: "/api/bonds/from-documents" },
+  // and files a document against one entry of the register (the Documents column)
+  { method: "POST", path: "/api/bonds/documents" },
   // and corrects the entries by hand (adding and editing; deleting stays with the admin and editors)
   { method: "PUT", path: "/api/registers/bonds" },
   { method: "POST", path: "/api/registers/bonds" },

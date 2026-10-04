@@ -22,6 +22,7 @@ import { buildCashflowForecast, monthLabel, type CashMonth } from "../cashflow/f
 import { buildBudgetEac, level02Table, LEVEL02_MONEY, EAC_COLUMNS, type Level02Row } from "./budget-eac";
 import { buildUncommittedTable } from "./uncommitted-ew";
 import { buildAconexReconciliation, ACONEX_MEASURES } from "../recovery/aconex";
+import { buildAconexChangeCheck } from "../recovery/aconex-changes";
 
 type Doc = PDFKit.PDFDocument;
 
@@ -1379,8 +1380,11 @@ function aconexReport(ctx: Ctx) {
   const width = PAGE.width - PAGE.margin * 2;
   const rec = buildAconexReconciliation(data);
   const money = (v: unknown) => (v === null || v === undefined ? "–" : formatMoney(v as number));
+  subheading(ctx, "1. Control accounts – budget, commitments and estimate at completion per contract");
   if (!rec.counts.aconex) {
     doc.fillColor(MUTED).font("Helvetica-Oblique").fontSize(9).text("No Aconex control account export has been uploaded for this project yet.", { width });
+    doc.moveDown(0.6);
+    aconexChangeEventsReport(ctx);
     return;
   }
   doc.fillColor(MUTED).font("Helvetica").fontSize(8.5).text(`${rec.counts.matched} contract and budget-hold lines compared (${rec.counts.aconex} Aconex rows${rec.asOf ? `, export uploaded ${formatDate(rec.asOf)}` : ""}, ${rec.counts.dashboard} cost report lines in ${data.period.label}). A contract differs when its commitments, estimate at completion or incurred to date disagree; a budget hold when its budget or estimate at completion does. Approved budget, DVOs and PVOs on a contract are shown for information, because the two systems hold them on different bases. Differences under SAR ${rec.counts.tolerance} are rounding.`, { width });
@@ -1432,6 +1436,88 @@ function aconexReport(ctx: Ctx) {
         return row;
       }),
       { zebra: true },
+    );
+  }
+  doc.moveDown(0.6);
+  aconexChangeEventsReport(ctx);
+}
+
+/** The Aconex change events against the change register: the variance per contractor, then each contractor's breakdown. */
+function aconexChangeEventsReport(ctx: Ctx) {
+  const { doc, data } = ctx;
+  const width = PAGE.width - PAGE.margin * 2;
+  const check = buildAconexChangeCheck(data);
+  const money = (v: unknown) => (v === null || v === undefined ? "–" : formatMoney(v as number));
+  subheading(ctx, "2. Change events – PVOs, RFCs and budget transfers against the change register, contractor by contractor");
+  if (!check.counts.events) {
+    doc.fillColor(MUTED).font("Helvetica-Oblique").fontSize(9).text("No Aconex change-event export has been uploaded for this project yet.", { width });
+    return;
+  }
+  doc.fillColor(MUTED).font("Helvetica").fontSize(8.5).text(`${check.counts.matched} of ${check.counts.events} Aconex events matched to a change register entry by contract and PVO / RFC number (${check.counts.changes} register entries carry such a number${check.asOf ? `; export uploaded ${formatDate(check.asOf)}` : ""}). Approved: the approved cost impact of events marked approved in Aconex, against the register's Approved / Closed changes (DVO value once there is one, else the PVO value). Pending: events in planning or potential against the register's Pending, Review Complete and Revised entries. Transfers in: approved BTR events under the contractor's contracts against the register's approved transfers into its packages – for information. Differences under SAR ${check.counts.tolerance} are rounding.`, { width });
+  doc.moveDown(0.4);
+  kpiCards(
+    ctx,
+    [
+      ["Events with a difference", String(check.counts.differing), check.counts.differing ? "value or status differs" : "every matched event agrees"],
+      ["Approved changes – variance", formatMoney(check.totals.variance.approved), `Aconex ${formatMoney(check.totals.aconex.approved)} vs register ${formatMoney(check.totals.dashboard.approved)}`],
+      ["Pending changes – variance", formatMoney(check.totals.variance.pending), `Aconex ${formatMoney(check.totals.aconex.pending)} vs register ${formatMoney(check.totals.dashboard.pending)}`],
+      ["Only on one side", String(check.counts.aconexOnly + check.counts.dashboardOnly), `${check.counts.aconexOnly} only in Aconex, ${check.counts.dashboardOnly} only on the register`],
+    ],
+    (k) => (k[0].startsWith("Events with") && check.counts.differing ? "#b91c1c" : null),
+  );
+  subheading(ctx, "Contractor-wise variance", "Largest variance first; the breakdown of each contractor follows.");
+  table(
+    ctx,
+    [
+      { key: "contractor", label: "Contractor (contracts)", width: 2.2 },
+      { key: "aa", label: "Approved – Aconex", width: 0.95, align: "right", format: money },
+      { key: "ad", label: "Approved – register", width: 0.95, align: "right", format: money },
+      { key: "av", label: "Variance", width: 0.9, align: "right", format: money },
+      { key: "pa", label: "Pending – Aconex", width: 0.95, align: "right", format: money },
+      { key: "pd", label: "Pending – register", width: 0.95, align: "right", format: money },
+      { key: "pv", label: "Variance", width: 0.9, align: "right", format: money },
+      { key: "ta", label: "Transfers in – Aconex", width: 0.95, align: "right", format: money },
+      { key: "td", label: "Transfers in – register", width: 0.95, align: "right", format: money },
+      { key: "tv", label: "Variance", width: 0.9, align: "right", format: money },
+      { key: "items", label: "Items A / R", width: 0.6, align: "right" },
+    ],
+    [
+      ...check.contractors.map((b) => ({ contractor: `${b.contractor}${b.contracts.length ? ` (${b.contracts.join(", ")})` : ""}`, aa: b.aconex.approved, ad: b.dashboard.approved, av: b.variance.approved, pa: b.aconex.pending, pd: b.dashboard.pending, pv: b.variance.pending, ta: b.aconex.transfers, td: b.dashboard.transfers, tv: b.variance.transfers, items: `${b.aconex.items} / ${b.dashboard.items}`, _flag: Math.abs(b.variance.approved) >= check.counts.tolerance || Math.abs(b.variance.pending) >= check.counts.tolerance })),
+      { contractor: "Total", aa: check.totals.aconex.approved, ad: check.totals.dashboard.approved, av: check.totals.variance.approved, pa: check.totals.aconex.pending, pd: check.totals.dashboard.pending, pv: check.totals.variance.pending, ta: check.totals.aconex.transfers, td: check.totals.dashboard.transfers, tv: check.totals.variance.transfers, items: `${check.totals.aconex.items} / ${check.totals.dashboard.items}`, _total: true },
+    ],
+    { zebra: true, rowStyle: (r) => (r._total ? { bold: true } : r._flag ? { color: "#b91c1c" } : undefined) },
+  );
+  for (const b of check.contractors) {
+    subheading(ctx, `${b.contractor}${b.contracts.length ? ` – contracts ${b.contracts.join(", ")}` : ""}`, `${b.differing} differ · ${b.onlyAconex} only in Aconex · ${b.onlyDashboard} only on the register · approved variance ${formatMoney(b.variance.approved)}, pending variance ${formatMoney(b.variance.pending)}`);
+    table(
+      ctx,
+      [
+        { key: "event", label: "Aconex event", width: 1.2 },
+        { key: "name", label: "Name", width: 2.4 },
+        { key: "as", label: "Aconex status", width: 0.8 },
+        { key: "av", label: "Aconex value", width: 0.95, align: "right", format: money },
+        { key: "item", label: "Register entry", width: 0.9 },
+        { key: "ds", label: "Register status", width: 0.8 },
+        { key: "pvo", label: "PVO value", width: 0.9, align: "right", format: money },
+        { key: "dvo", label: "DVO value", width: 0.9, align: "right", format: money },
+        { key: "diff", label: "Difference", width: 0.9, align: "right", format: money },
+        { key: "finding", label: "Finding", width: 2.2 },
+      ],
+      b.lines.map((l) => ({
+        event: l.eventNo || "–",
+        name: l.name,
+        as: l.aconexStatus || "–",
+        av: l.aconexValue,
+        item: l.changeItems.join(" + ") || "–",
+        ds: l.changeStatus || "–",
+        pvo: l.dashboardPvo,
+        dvo: l.dashboardDvo,
+        diff: l.diff,
+        finding: `${l.status === "aconex_only" ? (l.kind === "BTR" ? "transfer" : "only in Aconex") : l.status === "dashboard_only" ? "only on register" : l.differs ? "differs" : "agrees"}${l.note ? ` – ${l.note}` : ""}`,
+        _flag: l.differs,
+        _amber: l.status !== "matched" && l.kind !== "BTR",
+      })),
+      { zebra: true, rowStyle: (r) => (r._flag ? { color: "#b91c1c" } : r._amber ? { color: "#b45309" } : undefined) },
     );
   }
 }

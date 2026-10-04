@@ -5,6 +5,8 @@ import { getAppContext } from "@/lib/context";
 import { getModule } from "@/lib/modules";
 import { getReportData } from "@/lib/report/data";
 import { buildAconexReconciliation, ACONEX_MEASURES, measureDecides, type AconexLine } from "@/lib/recovery/aconex";
+import { buildAconexChangeCheck } from "@/lib/recovery/aconex-changes";
+import { ChangeEventsCheck } from "@/components/aconex/ChangeEventsCheck";
 import { formatDate, formatMoney } from "@/lib/format";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { RegisterPage } from "@/components/register/RegisterPage";
@@ -31,7 +33,9 @@ export default async function AconexCheckPage({ searchParams }: { searchParams: 
       </div>
     );
   }
-  const rec = buildAconexReconciliation(getReportData(ctx.programme.id, ctx.period.id));
+  const reportData = getReportData(ctx.programme.id, ctx.period.id);
+  const rec = buildAconexReconciliation(reportData);
+  const events = buildAconexChangeCheck(reportData);
   const money = (v: number | null) => (v === null ? "–" : formatMoney(v));
   const showAll = tab === "all";
   const listed = showAll ? rec.lines : [...rec.discrepancies, ...rec.aconexOnly, ...rec.dashboardOnly];
@@ -51,6 +55,7 @@ export default async function AconexCheckPage({ searchParams }: { searchParams: 
           ) : undefined
         }
       />
+      <h2 className="text-base font-semibold text-ink">1. Control accounts – budget, commitments and estimate at completion per contract</h2>
       {rec.counts.aconex === 0 ? (
         <div className="card flex flex-wrap items-center justify-between gap-3 p-5 text-sm text-muted">
           <span>No Aconex control account export has been uploaded for this project yet. Upload the export (one file per project) and the check appears here.</span>
@@ -158,6 +163,23 @@ export default async function AconexCheckPage({ searchParams }: { searchParams: 
           </div>
 
           <RegisterPage registerKey="aconex_control_accounts" isAdmin={user.role === "admin"} />
+        </>
+      )}
+
+      <h2 className="pt-2 text-base font-semibold text-ink">2. Change events – PVOs, RFCs and budget transfers against the change register, contractor by contractor</h2>
+      {events.counts.events === 0 ? (
+        <div className="card flex flex-wrap items-center justify-between gap-3 p-5 text-sm text-muted">
+          <span>No Aconex change-event export has been uploaded for this project yet. Upload it on the same import page and the contractor-wise variance appears here.</span>
+          {canImport && (
+            <Link href="/imports/aconex" className="btn btn-sm btn-primary">
+              <Upload size={14} /> Upload
+            </Link>
+          )}
+        </div>
+      ) : (
+        <>
+          <ChangeEventsCheck check={events} />
+          <RegisterPage registerKey="aconex_change_events" isAdmin={user.role === "admin"} />
         </>
       )}
     </div>

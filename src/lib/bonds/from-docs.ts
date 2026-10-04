@@ -13,6 +13,8 @@ import type { Decisions, Duplicate, FromDocsResult, Outcome, ReadValue } from ".
 import { decide } from "../from-docs-shared";
 import { attachBondDocuments } from "./documents";
 import { contractorKey } from "./name-key";
+import { extractText } from "../ear/extract";
+import { readBondWithAi } from "./ai-read";
 
 /**
  * A bond or an insurance policy read from its own document – the policy schedule, the certificate of
@@ -59,7 +61,7 @@ const TYPES: [RegExp, string][] = [
   [/performance (bond|guarantee|security)/i, "Performance Bond"],
   [/retention (bond|guarantee)/i, "Retention Bond"],
   [/public[\s/-]*(and|&)?[\s/-]*products? liability|product liability/i, "Public-Product Liability"],
-  [/public liability|third party liability|\/PL\//i, "Public/Third Party Liability"],
+  [/comprehensive general liability|general liability|public liability|third party liability|\/PL\/|legal liabilit(?:y|ies)[^\n]{0,140}third part(?:y|ies)|third part(?:y|ies)[^\n]{0,80}liabilit/i, "Public/Third Party Liability"],
   [/employer'?s liability|\bGOSI\b/i, "Employer’s Liability & Supplementary GOSI Insurance"],
   [/protection (and|&) indemnity|\bP&I\b/i, "Protection & Indemnity"],
   [/marine (hull|cargo)|\bhull\b/i, "Marine & Hull"],
@@ -69,6 +71,43 @@ const TYPES: [RegExp, string][] = [
 ];
 const INSURERS = /(Gulf Insurance Group|\bGIG\b|MEDGULF|Buruj Cooperative Insurance|Buruj|Tawuniya|The Company for Cooperative Insurance|Walaa Cooperative|Walaa|Al ?Rajhi Takaful|Al ?Rajhi Bank|Malath|Salama|Allianz|AXA|Chubb|Wataniya|Arabian Shield|Saudi Re|Gulf General|United Cooperative Assurance|\bUCA\b|Saudi National Bank|\bSNB\b|Riyad Bank|\bSABB\b|Saudi Awwal Bank|Banque Saudi Fransi|Arab National Bank|Alinma Bank|Bank Al ?Jazira|Gulf International Bank|Emirates NBD|First Abu Dhabi Bank|Mashreq|HSBC|Standard Chartered|Citibank|Qatar National Bank|Bank Al ?Bilad|Saudi Investment Bank)/i;
 const INSURER_NAME: Record<string, string> = { gig: "Gulf Insurance Group", buruj: "Buruj Cooperative Insurance Company", "the company for cooperative insurance": "Tawuniya", snb: "Saudi National Bank", sabb: "Saudi Awwal Bank (SABB)", uca: "United Cooperative Assurance" };
+
+/** a type named in an exclusion ("Excluding … workmen's compensation and employer liability") is not the policy's type */
+const EXCLUDED_NEAR = /(?:\bexcluding\b|\bexcluded\b|\bexclusions?\b|other than|not (?:covered|including|insured)|does not cover|no cover for)[^\n]{0,90}$/i;
+/** the type the text names: the one named first, exclusion lines left out (the list's order breaks ties) */
+function typeIn(text: string): string {
+  let best: { name: string; at: number } | null = null;
+  for (const [re, name] of TYPES) {
+    const g = new RegExp(re.source, re.flags.includes("g") ? re.flags : `${re.flags}g`);
+    for (const m of text.matchAll(g)) {
+      const at = m.index ?? 0;
+      if (EXCLUDED_NEAR.test(text.slice(Math.max(0, at - 100), at))) continue;
+      if (!best || at < best.at) best = { name, at };
+      break;
+    }
+  }
+  return best?.name ?? "";
+}
+
+/** "E ndorsement" – a first letter the positioned reader set apart from its word */
+const unsplit = (s: string) => s.replace(/\b([A-Za-z]) (?=[a-z]{3,}\b)/g, "$1");
+/** the type a labelled line gives ("Type of Insurance : …", "Class of Business : …", a schedule heading "… Liability Insurance Policy") */
+function labelledType(text: string): string {
+  for (const m of text.matchAll(/(?:TYPE|CLASS|LINE|NATURE) OF (?:INSURANCE|BUSINESS|POLICY|COVER|BOND|GUARANTEE)|POLICY TYPE|TYPE OF (?:THE )?(?:BOND|GUARANTEE|SECURITY)|\bCOVER(?:AGE)?\s*:/gi)) {
+    const after = text.slice((m.index ?? 0) + m[0].length, (m.index ?? 0) + m[0].length + 260).replace(/^\s*[:\-]?\s*/, "");
+    const t = typeIn(after.split("\n").slice(0, 2).join(" "));
+    if (t) return t;
+  }
+  // a heading: the policy's own title on its first lines
+  for (const line of text.split("\n")) {
+    const l = line.trim();
+    if (l.length > 8 && l.length < 120 && /(?:INSURANCE|POLICY|GUARANTEE|BOND|CERTIFICATE)/i.test(l) && !/excluding|exclusion/i.test(l)) {
+      const t = typeIn(l);
+      if (t) return t;
+    }
+  }
+  return "";
+}
 
 const textOf = (pages: PosPage[]) => pages.map((p) => p.rows.map((r) => r.cells.map((c) => c.s).join(" ")).join("\n")).join("\n");
 const num = (s: string) => Number(String(s).replace(/[^\d.]/g, ""));
@@ -128,6 +167,17 @@ async function readOne(f: DocFile): Promise<DocRead | null> {
       ocr = true;
     }
   }
+  // a second reading of the same pages (the text stream, not positions): where one reader splits a word
+  // or scrambles a table the other usually has it whole – the labels are looked for in both
+  let plain = "";
+  if (isPdf) {
+    try {
+      plain = (await extractText(f.name, pdf)).text;
+    } catch {
+      plain = "";
+    }
+  }
+  const scan = `${unsplit(text)}\n${plain}`;
   const head = text.slice(0, 6000);
   const isTransmittal = ((/MAIL TYPE/i.test(head.slice(0, 1500)) && /\bTransmittal\b/i.test(head.slice(0, 1500))) || /TRANSMIT-\d{6}/i.test(f.name)) && !/POLICY\s*(NUMBER|NO)|CERTIFICATE OF INSURANCE|GUARANTEE/i.test(head.slice(0, 1500));
   const aconex = [...new Set([...`${f.name}\n${text}`.matchAll(/\b([A-Z]{2,4}\d{5}-[A-Z]{3,8}-\d{6}|1TB\d{5}-\d{3}[A-Z]\d{2}-[A-Z]{2,4}-(?:INS|BND|BOND|INSC)-[A-Z]{2}-\d{4}(?:\[?C\d\]?)?)\b/g)].map((m) => m[1]))];
@@ -139,13 +189,14 @@ async function readOne(f: DocFile): Promise<DocRead | null> {
   if (isTransmittal) return { name: f.name, kind: "transmittal", text, programmeCode, acc, typeName: TYPES.find(([re]) => re.test(subject))?.[1] ?? "", policyNo: "", issuer: "", start: "", expiry: "", amount: null, premium: null, aconex, subject, contractLine, fromCompany, ocr, amendment: false, note: `Aconex transmittal${subject ? ` – ${subject}` : ""}` };
 
   // the type: the schedule heading first, then anything in the document
-  const typeName = TYPES.find(([re]) => re.test(head.slice(0, 2500)))?.[1] ?? TYPES.find(([re]) => re.test(text))?.[1] ?? TYPES.find(([re]) => re.test(f.name))?.[1] ?? "";
+  // the type: what the schedule labels it, its own heading, the first page, anything in the document, the file name
+  let typeName = labelledType(scan) || typeIn(unsplit(head.slice(0, 2500))) || typeIn(scan) || typeIn(f.name);
   // the policy / bond number: the token nearest after its label, else the first policy-like token
-  const token = /\b(?:\d{1,3}\/[A-Z]{1,4}\/\d{3,}(?:\/[A-Z0-9]+){0,4}|[A-Z]{1,3}\/\d{2,3}\/\d{4}\/\d{4,}(?:\/[A-Z0-9]+)*|\d{2,3}\/\d{3,4}\/\d{2,3}\/\d{2}\/\d{4,}|\d{2}\/[A-Z]{2,4}\/\d{4}\/\d{6}|[A-Z]{2,4}\d{7,}|[A-Z]\d{6,}(?:-\d{2,4})?|\d{2,4}(?:-\d{2,6}){2,}|[A-Z]{1,3}\d{2}\/\d{5,}|P\/\d{2}\/\d{4}\/\d{4}\/\d+(?:\/\d+)?)\b/g;
+  const token = /\b(?:[A-Z]{1,3}-[A-Z]\d{1,3}(?:-[A-Z0-9]{2,8}){2,}|\d{1,3}\/[A-Z]{1,4}\/\d{3,}(?:\/[A-Z0-9]+){0,4}|[A-Z]{1,3}\/\d{2,3}\/\d{4}\/\d{4,}(?:\/[A-Z0-9]+)*|\d{2,3}\/\d{3,4}\/\d{2,3}\/\d{2}\/\d{4,}|\d{2}\/[A-Z]{2,4}\/\d{4}\/\d{6}|[A-Z]{2,4}\d{7,}|[A-Z]\d{6,}(?:-\d{2,4})?|\d{2,4}(?:-\d{2,6}){2,}|[A-Z]{1,3}\d{2}\/\d{5,}|P\/\d{2}\/\d{4}\/\d{4}\/\d+(?:\/\d+)?)\b/g;
   let policyNo = "";
   // an amendment letter names the guarantee it changes ("L/G Reference J094812") and extends it ("extended until 31/05/2027")
-  const amendment = /AMENDMENT (?:LETTER )?(?:OF|TO) (?:THE )?(?:LETTER OF )?GUARANTEE|WE HAVE AMENDED|AMENDMENT (?:NO|LETTER)\b|ENDORSEMENT NO/i.test(head);
-  for (const m of text.matchAll(/(?:L\/G\s*(?:REFERENCE|REF\.?|NO\.?|NUMBER)|GUARANTEE\s*REF\.?\s*(?:NO\.?)?|(?:POLICY|BOND|GUARANTEE|CERTIFICATE)\s*(?:NUMBER|NO\.?|#|REF\.?)?)\s*[:\-.]?/gi)) {
+  let amendment = /AMENDMENT (?:LETTER )?(?:OF|TO) (?:THE )?(?:LETTER OF )?GUARANTEE|WE HAVE AMENDED|AMENDMENT (?:NO|LETTER)\b|ENDORSEMENT (?:NO|SCHEDULE|PERIOD)|POLICY PERIOD EXTENSION|HEREBY EXTENDED|EXTENDED FOR A FURTHER PERIOD/i.test(unsplit(head) + plain.slice(0, 6000));
+  for (const m of scan.matchAll(/(?:L\/G\s*(?:REFERENCE|REF\.?|NO\.?|NUMBER)|GUARANTEE\s*REF\.?\s*(?:NO\.?)?|(?:POLICY|BOND|GUARANTEE|CERTIFICATE)\s*(?:NUMBER|NO\.?|#|REF\.?)?)\s*[:\-.]?/gi)) {
     const after = text.slice((m.index ?? 0) + m[0].length, (m.index ?? 0) + m[0].length + 160);
     const t = after.match(token)?.[0];
     if (t && !/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(t)) {
@@ -153,12 +204,12 @@ async function readOne(f: DocFile): Promise<DocRead | null> {
       break;
     }
   }
-  if (!policyNo) policyNo = [...text.matchAll(token)].map((m) => m[0]).find((t) => /\//.test(t) && !/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(t)) ?? "";
+  if (!policyNo) policyNo = [...scan.matchAll(token)].map((m) => m[0]).find((t) => /\//.test(t) && !/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(t)) ?? "";
   policyNo = policyNo.replace(/\/P1S\//, "/PIS/").replace(/O/g, (c, i) => (/\d/.test(policyNo[i - 1] ?? "") && /\d/.test(policyNo[i + 1] ?? "") ? "0" : c));
   // the insurer or bank
   const named = text.match(/Insurer'?s? Name\s*[:\-]?\s*([^\n]{3,80})/i)?.[1]?.trim() ?? text.match(/issued by\s*[:\-]?\s*([^\n]{3,80})/i)?.[1]?.trim() ?? "";
   const known = (named.match(INSURERS) ?? text.match(INSURERS))?.[1] ?? "";
-  const issuer = (INSURER_NAME[known.toLowerCase()] ?? known ?? named).trim();
+  const issuer1 = (INSURER_NAME[known.toLowerCase()] ?? known ?? named).trim();
   // the period: a FROM–TO line, a dated pair on one line (effective – expiry), or a labelled expiry;
   // a pack holding several certificates (renewals) keeps the latest expiry
   let start = "";
@@ -177,8 +228,12 @@ async function readOne(f: DocFile): Promise<DocRead | null> {
     const d = datesIn(m[0])[0]?.iso;
     if (d) spans.push({ start: "", expiry: d });
   }
-  const extended = text.match(/(?:EXTENDED|VALID)\s+(?:UNTIL|TO|UP\s*TO|TILL)\s*:?\s*([^\n]{6,30})/i);
-  const extendedTo = extended ? (datesIn(extended[1])[0]?.iso ?? "") : "";
+  // an extension: "extended until 31/05/2027", "extended for a further period … from 06/05/2026 to 31/08/2026",
+  // "Endorsement Period : From … To …" – a pack of several endorsements keeps the latest date
+  const extensions: string[] = [];
+  for (const m of scan.matchAll(/(?:EXTENDED|VALID|RENEWED)\s+(?:UNTIL|TO|UP\s*TO|TILL)\s*:?\s*([^\n]{6,30})/gi)) extensions.push(datesIn(m[1])[0]?.iso ?? "");
+  for (const m of scan.matchAll(/(?:EXTENDED FOR A FURTHER PERIOD|PERIOD OF EXTENSION|(?:ENDORSEMENT|EXTENSION|EXTENDED) PERIOD)[^\n]{0,60}?FROM\s*:?\s*([^\n]{6,30}?)\s*(?:TO|UNTIL|-)\s*:?\s*([^\n]{6,30})/gi)) extensions.push(datesIn(m[2])[0]?.iso ?? "");
+  const extendedTo = extensions.filter(Boolean).sort().pop() ?? "";
   if (amendment && extendedTo) {
     spans.length = 0;
     spans.push({ start: "", expiry: extendedTo });
@@ -199,6 +254,12 @@ async function readOne(f: DocFile): Promise<DocRead | null> {
     const year = all.filter((d) => d.iso >= `${Number(expiry.slice(0, 4)) - 2}` && d.iso < expiry).sort((a, b) => (a.iso < b.iso ? -1 : 1));
     start = year[0]?.iso ?? "";
   }
+  if (amendment) {
+    // the entry's start stays the day the policy was first put in place: the original period, when the endorsement gives it
+    const orig = scan.match(/(?:ORIGINAL POLICY PERIOD|INCEPTION DATE|ORIGINAL PERIOD|POLICY PERIOD)\s*:?\s*(?:FROM\s*:?\s*)?([^\n]{6,30})/i);
+    const d = orig ? (datesIn(orig[1])[0]?.iso ?? "") : "";
+    if (d) start = d;
+  }
   if (start && expiry && start >= expiry) start = "";
   // the amount and the premium
   // a bank's own capital in its footer ("Capital of SAR 25,000,000,000") is never the bond
@@ -212,8 +273,37 @@ async function readOne(f: DocFile): Promise<DocRead | null> {
         return sums.length ? Math.max(...sums) : null;
       })());
   // no bond on these projects runs to billions: such a figure is a misread
-  const amount = amountRead !== null && amountRead > 2_000_000_000 ? null : amountRead;
+  const amount1 = amountRead !== null && amountRead > 2_000_000_000 ? null : amountRead;
   const premium = moneyNear(text, /TOTAL PREMIUM|PREMIUM/gi, 120);
+  // the reading engine's view of the same document, where it is on: a value is taken over only when the
+  // document carries it (the number's digits, the date, the type name) – the rules keep the rest
+  let amount2 = amount1;
+  let expiry2 = expiry;
+  let start2 = start;
+  let issuer2 = issuer1;
+  try {
+    const ai = await readBondWithAi(f.name, scan.slice(0, 60_000));
+    if (ai) {
+      const digitsOf = (v: string) => v.replace(/\D/g, "");
+      const tn = typeIn(ai.type_of_cover);
+      if (tn) typeName = tn;
+      const no = ai.policy_or_guarantee_no.trim();
+      if (no && digitsOf(no).length >= 5 && scan.replace(/\s+/g, "").toUpperCase().includes(no.replace(/\s+/g, "").toUpperCase())) policyNo = no;
+      const dates = new Set(datesIn(scan).map((d) => d.iso));
+      if (/^\d{4}-\d{2}-\d{2}$/.test(ai.expiry_date) && dates.has(ai.expiry_date) && (!expiry2 || ai.is_amendment || ai.document_kind.startsWith("endorsement") || ai.expiry_date >= expiry2)) expiry2 = ai.expiry_date;
+      if (/^\d{4}-\d{2}-\d{2}$/.test(ai.inception_date) && dates.has(ai.inception_date) && (!start2 || ai.inception_date < start2) && (!expiry2 || ai.inception_date < expiry2)) start2 = ai.inception_date;
+      if (ai.amount && ai.amount >= 1000 && ai.amount <= 2_000_000_000 && scan.replace(/[,\s]/g, "").includes(String(Math.round(ai.amount)))) amount2 = ai.amount;
+      if (!issuer2 && ai.insurer_or_bank.trim()) issuer2 = ai.insurer_or_bank.trim().slice(0, 80);
+      if (ai.is_amendment || /^(endorsement|amendment)/.test(ai.document_kind)) amendment = true;
+      else if (ai.document_kind === "insurance policy or certificate" || ai.document_kind === "bank guarantee or bond") amendment = amendment && !!extendedTo;
+    }
+  } catch (e) {
+    console.error("bond document – engine reading skipped:", f.name, e instanceof Error ? e.message : e);
+  }
+  const amount = amount2;
+  expiry = expiry2;
+  start = start2;
+  const issuer = issuer2;
   const note = `${amendment ? "amendment to " : ""}${typeName || "bond / insurance"}${policyNo ? ` No ${policyNo}` : ""}${issuer ? ` – ${issuer}` : ""}${expiry ? `, ${amendment ? "validity extended to" : "expires"} ${formatDate(expiry)}` : ""}${ocr ? " (scanned pages read by OCR)" : ""}`;
   const kind = typeName || policyNo ? "policy" : "unknown";
   return { name: f.name, kind, text, programmeCode, acc, typeName, policyNo, issuer, start, expiry, amount, premium, aconex, subject, contractLine, fromCompany, ocr, amendment, note: kind === "unknown" ? "not recognised as a bond or an insurance policy – kept out" : note };
@@ -230,6 +320,8 @@ interface Plan {
   label: string;
   differences: { label: string; old: string; new: string }[];
   amendment: boolean;
+  /** the document carries the number of a policy or bond already on the register: a renewal or extension of it */
+  sameNumber: boolean;
 }
 
 export async function addBondsFromDocuments(files: DocFile[], user: UserInfo, decisions: Decisions = {}): Promise<FromDocsResult> {
@@ -306,6 +398,8 @@ export async function addBondsFromDocuments(files: DocFile[], user: UserInfo, de
       mine.find((r) => p.policyNo && squashed(r.policy_no) === squashed(p.policyNo)) ??
       mine.find((r) => base.length > 6 && squashed(r.policy_no).startsWith(squashed(base))) ??
       mine.find((r) => digits(r.policy_no).length > 6 && digits(p.policyNo).startsWith(digits(r.policy_no))) ??
+      // the same number under a prefix the document left out ("P-C01-25-50010-392776" held, "25-50010-392776" read)
+      mine.find((r) => digits(p.policyNo).length >= 8 && digits(r.policy_no).endsWith(digits(p.policyNo))) ??
       // a distinctive number is the bond whatever contractor record it sits under
       (p.policyNo.replace(/\s+/g, "").length >= 6 ? rows.find((r) => squashed(r.policy_no) === squashed(p.policyNo)) ?? null : null);
     // the same number; else the bond of this type on the same contract line; else the contractor's only
@@ -326,7 +420,9 @@ export async function addBondsFromDocuments(files: DocFile[], user: UserInfo, de
     const push = (label: string, value: string | number | null | undefined, from = p.name) => {
       if (value !== null && value !== undefined && value !== "") read.push({ label, value: String(value), from });
     };
+    const sameNumber = !!byNumber && !p.amendment;
     if (p.amendment) push("Document", `Amendment to bond ${p.policyNo || existing?.policy_no || ""} – the entry keeps its details, the validity${p.amount ? " and the amount" : ""} follow the amendment`);
+    else if (sameNumber) push("Document", `Policy ${existing?.policy_no ?? p.policyNo} is already on the register (Ref ${existing?.ref ?? ""}) – its validity${p.amount ? " and amount" : ""} follow this document; anything the entry lacks is filled in`);
     push("Type", typeLabel);
     push("Policy / bond no", p.policyNo);
     push("Issued by", p.issuer);
@@ -392,12 +488,12 @@ export async function addBondsFromDocuments(files: DocFile[], user: UserInfo, de
           .filter(([label, o, n]) => show(o) !== show(n) && !(label === "Start date" && o))
           .map(([label, o, n]) => ({ label, old: show(o), new: show(n) }))
       : [];
-    plans.push({ key: `bond:${programme.id}:${contractorId ?? "x"}:${existing ? `id${existing.id}` : normType(typeLabel) || p.policyNo}`, docs, programme, record, existing, read, missing: p.amendment ? [] : missing, label: `${p.amendment ? "Amendment – " : ""}${typeLabel || "Bond / insurance"} – ${contractorName || "contractor not matched"}`, differences: p.amendment ? differences.filter((d) => d.label === "Expiry date" || (p.amount && d.label === "Amount provided")) : differences, amendment: p.amendment });
+    plans.push({ key: `bond:${programme.id}:${contractorId ?? "x"}:${existing ? `id${existing.id}` : normType(typeLabel) || p.policyNo}`, docs, programme, record, existing, read, missing: p.amendment ? [] : missing, label: `${p.amendment ? "Amendment – " : ""}${typeLabel || "Bond / insurance"} – ${contractorName || "contractor not matched"}`, differences: p.amendment ? differences.filter((d) => d.label === "Expiry date" || (p.amount && d.label === "Amount provided")) : differences, amendment: p.amendment, sameNumber });
   }
   for (const t of transmittals) if (!plans.some((pl) => pl.docs.includes(t))) result.warnings.push(`${t.name}: a transmittal on its own – upload the policy or certificate it sent with it.`);
 
   // a duplicate waits for a decision; nothing is written until every one has it
-  const undecided = plans.filter((pl) => pl.existing && !pl.amendment && !decide(decisions, pl.key));
+  const undecided = plans.filter((pl) => pl.existing && !pl.amendment && !pl.sameNumber && !decide(decisions, pl.key));
   if (undecided.length) {
     result.needsDecision = true;
     result.duplicates = undecided.map<Duplicate>((pl) => ({
@@ -426,16 +522,23 @@ export async function addBondsFromDocuments(files: DocFile[], user: UserInfo, de
         // only what the amendment changes: the validity, and the amount when it states a new one
         if (pl.record.expiry_date) patch.expiry_date = pl.record.expiry_date;
         if (pl.record.amount_provided) patch.amount_provided = pl.record.amount_provided;
+        if (!pl.existing.start_date && pl.record.start_date) patch.start_date = pl.record.start_date;
+        if (!pl.existing.issuer && pl.record.issuer) patch.issuer = pl.record.issuer;
+        // the full number when the register holds it without its prefix ("25-50032-392774" for "P-C01-25-50032-392774")
+        const dg = (v: unknown) => String(v ?? "").replace(/\D/g, "");
+        if (pl.record.policy_no && dg(pl.existing.policy_no).length >= 6 && dg(pl.record.policy_no).endsWith(dg(pl.existing.policy_no)) && String(pl.record.policy_no).length > String(pl.existing.policy_no ?? "").length) patch.policy_no = pl.record.policy_no;
         const refs = [...new Set(pl.docs.flatMap((d) => d.aconex))];
         patch.comments = [String(pl.existing.comments ?? "").trim(), `Amendment added from documents on ${formatDate(todayIso())} (${pl.docs.map((d) => d.name).join("; ")})${refs.length ? ` – ${refs.join(" ")}` : ""}: ${pl.record.expiry_date ? `validity extended to ${formatDate(String(pl.record.expiry_date))}` : "no new expiry read"}${pl.record.amount_provided ? `, amount ${formatMoney(Number(pl.record.amount_provided))} SAR` : ""}.`].filter(Boolean).join("\n");
       } else {
         // a renewal or extension of the bond already held: the start date stays the date the bond was
         // first put in place (filled only when the entry has none); the number, bank, amount and expiry follow the new document
         for (const k of ["policy_no", "issuer", "amount_provided", "expiry_date"]) if (pl.record[k] !== null && pl.record[k] !== "" && pl.record[k] !== undefined) patch[k] = pl.record[k];
+        // the same policy uploaded again (an older certificate of it, say) never takes the validity backwards
+        if (pl.sameNumber && pl.existing.expiry_date && pl.record.expiry_date && String(pl.record.expiry_date) < String(pl.existing.expiry_date)) delete patch.expiry_date;
         if (!pl.existing.start_date && pl.record.start_date) patch.start_date = pl.record.start_date;
         if (!pl.existing.cost_line_id && pl.record.cost_line_id) patch.cost_line_id = pl.record.cost_line_id;
         if (!pl.existing.package_id && pl.record.package_id) patch.package_id = pl.record.package_id;
-        patch.comments = [String(pl.existing.comments ?? "").trim(), `Replaced ${String(pl.record.comments)}`].filter(Boolean).join("\n");
+        patch.comments = [String(pl.existing.comments ?? "").trim(), `${pl.sameNumber ? "Updated from the policy's own document – " : "Replaced "}${String(pl.record.comments)}`].filter(Boolean).join("\n");
       }
       const row = updateRecord(def, Number(pl.existing.id), patch, user, "import", { bypassRoles: true });
       attach(Number(row.id), pl.amendment ? "amendment" : "replacement document");

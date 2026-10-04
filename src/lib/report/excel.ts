@@ -21,6 +21,7 @@ import { getAccommodationSummary, getCustomsSummary } from "../recovery/summary"
 import { buildCashflowForecast, monthLabel } from "../cashflow/forecast";
 import { buildUncommittedTable } from "./uncommitted-ew";
 import { buildAconexReconciliation, ACONEX_MEASURES, measureDecides } from "../recovery/aconex";
+import { buildAconexChangeCheck } from "../recovery/aconex-changes";
 import { kpiRegisterSheet } from "./kpi-excel";
 import { level02R1Sheet } from "./budget-eac-excel";
 
@@ -1007,6 +1008,51 @@ export function aconexSheet(wb: ExcelJS.Workbook, d: ReportData) {
   for (const l of [...rec.discrepancies, ...rec.aconexOnly, ...rec.dashboardOnly]) put(l);
   sectionRow(ws, "Every line", cols.length);
   for (const l of rec.lines) put(l);
+  aconexChangeEventsSheet(wb, d);
+}
+
+/** The Aconex change events against the change register: the variance per contractor, then every event under its contractor. */
+export function aconexChangeEventsSheet(wb: ExcelJS.Workbook, d: ReportData) {
+  const check = buildAconexChangeCheck(d);
+  const ws = wb.addWorksheet("Aconex Change Events");
+  const cols = ["Contractor", "Contracts", "Approved – Aconex", "Approved – register", "Variance", "Pending – Aconex", "Pending – register", "Variance", "Transfers in – Aconex", "Transfers in – register", "Variance", "Items Aconex / register"];
+  [34, 18, 18, 18, 16, 18, 18, 16, 18, 18, 16, 14].forEach((w, i) => (ws.getColumn(i + 1).width = w));
+  titleBlock(ws, `Aconex Change Events – contractor-wise variance – ${d.programme.name} (${d.programme.code})`, `${sub(d)}${check.asOf ? ` · export uploaded ${formatDate(check.asOf)}` : ""} · differences under SAR ${check.counts.tolerance} are rounding`, cols.length);
+  if (!check.counts.events) {
+    ws.addRow(["No Aconex change-event export has been uploaded for this project yet."]);
+    return;
+  }
+  ws.addRow([`${check.counts.matched} of ${check.counts.events} events matched to a change register entry by contract and PVO / RFC number · ${check.counts.differing} differ · ${check.counts.aconexOnly} only in Aconex · ${check.counts.dashboardOnly} only on the register. Approved: approved cost impact of Aconex events marked approved vs the register's Approved / Closed changes (DVO value once there is one, else PVO). Pending: events in planning / potential vs the register's Pending, Review Complete and Revised entries. Transfers in: approved BTR events under the contractor's contracts vs the register's approved transfers into its packages (for information).`]).font = { italic: true, color: { argb: XL.muted } };
+  ws.addRow([]);
+  header(ws.addRow(cols));
+  const moneyCols = [3, 4, 5, 6, 7, 8, 9, 10, 11];
+  for (const b of check.contractors) {
+    const row = ws.addRow([b.contractor, b.contracts.join(", "), b.aconex.approved, b.dashboard.approved, b.variance.approved, b.aconex.pending, b.dashboard.pending, b.variance.pending, b.aconex.transfers, b.dashboard.transfers, b.variance.transfers, `${b.aconex.items} / ${b.dashboard.items}`]);
+    for (const i of moneyCols) row.getCell(i).numFmt = MONEY_FMT;
+    for (const [i, v] of [
+      [5, b.variance.approved],
+      [8, b.variance.pending],
+    ] as const) if (Math.abs(v) >= check.counts.tolerance) row.getCell(i).font = { bold: true, color: { argb: "FFB91C1C" } };
+    if (Math.abs(b.variance.transfers) >= check.counts.tolerance) row.getCell(11).font = { color: { argb: "FFB45309" } };
+  }
+  const tr = ws.addRow(["Total", "", check.totals.aconex.approved, check.totals.dashboard.approved, check.totals.variance.approved, check.totals.aconex.pending, check.totals.dashboard.pending, check.totals.variance.pending, check.totals.aconex.transfers, check.totals.dashboard.transfers, check.totals.variance.transfers, `${check.totals.aconex.items} / ${check.totals.dashboard.items}`]);
+  for (const i of moneyCols) tr.getCell(i).numFmt = MONEY_FMT;
+  totalRow(tr);
+  ws.addRow([]);
+  const bcols = ["Contractor", "Aconex event", "Kind", "Name", "Event date", "Aconex status", "Aconex total impact", "Aconex approved impact", "Aconex value compared", "Register entry", "Register status", "PVO value", "DVO value", "Register value compared", "Difference", "Finding"];
+  sectionRow(ws, "Breakdown – every event under its contractor (differences first, then what only one side has)", bcols.length);
+  header(ws.addRow(bcols));
+  ws.getRow(ws.rowCount).height = 32;
+  [34, 20, 7, 48, 12, 14, 18, 18, 18, 16, 16, 16, 16, 18, 16, 60].forEach((w, i) => (ws.getColumn(i + 1).width = Math.max(ws.getColumn(i + 1).width ?? 0, w)));
+  for (const b of check.contractors) {
+    for (const l of b.lines) {
+      const finding = `${l.status === "aconex_only" ? (l.kind === "BTR" ? "transfer" : "only in Aconex") : l.status === "dashboard_only" ? "only on register" : l.differs ? "differs" : "agrees"}${l.note ? ` – ${l.note}` : ""}`;
+      const row = ws.addRow([b.contractor, l.eventNo, l.kind, l.name, l.eventDate, l.aconexStatus, l.aconexTotal, l.aconexApproved, l.aconexValue, l.changeItems.join(" + "), l.changeStatus, l.dashboardPvo, l.dashboardDvo, l.dashboardValue, l.diff, finding]);
+      for (const i of [7, 8, 9, 12, 13, 14, 15]) row.getCell(i).numFmt = MONEY_FMT;
+      if (l.differs) row.getCell(15).font = { bold: true, color: { argb: "FFB91C1C" } };
+      if (l.status !== "matched" && l.kind !== "BTR") row.getCell(16).font = { color: { argb: "FFB45309" } };
+    }
+  }
 }
 
 /** The consolidated "Uncommitted Costs and Early Warnings" table for the report in the programme-wide Level 5 layout, ready to paste, with the early warnings behind it on a second sheet. */

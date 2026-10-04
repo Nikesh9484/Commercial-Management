@@ -39,7 +39,7 @@ export interface ReportData {
   /** Which sources came from the locked snapshot vs live data. */
   sources: Record<string, "snapshot" | "live">;
   /** The cost-recovery trackers (accommodation invoices, customs duties): stand-alone, as last uploaded, never part of a stored report. */
-  recovery: { accommodation: RecordRow[]; accommodationInvoices: RecordRow[]; customs: RecordRow[]; customsDeclarations: RecordRow[]; aconex: RecordRow[] };
+  recovery: { accommodation: RecordRow[]; accommodationInvoices: RecordRow[]; customs: RecordRow[]; customsDeclarations: RecordRow[]; aconex: RecordRow[]; aconexEvents: RecordRow[]; /** the contractor each package belongs to (from the cost lines), for the budget transfers */ packageContractors: Record<number, string> };
 }
 
 function snapshotRows(periodId: number, key: string): RecordRow[] | null {
@@ -144,6 +144,8 @@ export function getReportData(programmeId: number, periodId: number): ReportData
       customs: listRecords(getRegisterDef("customs_recovery")!, { allScopes: true }).filter((r) => Number(r.programme_id) === programmeId),
       customsDeclarations: listRecords(getRegisterDef("customs_declarations")!, { allScopes: true }).filter((r) => Number(r.programme_id) === programmeId),
       aconex: listRecords(getRegisterDef("aconex_control_accounts")!, { allScopes: true }).filter((r) => Number(r.programme_id) === programmeId),
+      aconexEvents: listRecords(getRegisterDef("aconex_change_events")!, { allScopes: true }).filter((r) => Number(r.programme_id) === programmeId),
+      packageContractors: Object.fromEntries((db.prepare("SELECT DISTINCT l.package_id AS p, c.name AS n FROM cost_lines l JOIN contractors c ON c.id = l.contractor_id WHERE l.programme_id = ? AND l.package_id IS NOT NULL").all(programmeId) as { p: number; n: string }[]).map((r) => [r.p, r.n])),
     },
   };
 }

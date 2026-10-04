@@ -179,3 +179,132 @@ export function convertAconexExport(sheets: SheetValues[], ctx: AconexContext): 
     kept,
   };
 }
+
+/* ------------------------------------------------------------------ */
+/* The change-event export                                             */
+/* ------------------------------------------------------------------ */
+
+export function looksLikeAconexChangeEvents(sheets: SheetValues[]): boolean {
+  const s = sheets[0];
+  return !!s && findHeaderRow(s, "event no", "budget status", "total cost impact") !== null;
+}
+
+/** "031C02-PVO-0013", "031D04-PVO 0001", "031C02-PVO-0010-Cancelled", "1TB01031.01.CN.98-BTR-0001" */
+export function parseEventNo(no: string): { frag: string | null; kind: string; number: number | null } {
+  const t = no.trim().toUpperCase();
+  const m = t.match(/^(?:(\d{3}[A-Z]\d{2,3})|(?:[A-Z0-9.]+))[-\s]+([A-Z]{2,4})[-\s]*(\d+)?/);
+  const kind = m?.[2] ?? "";
+  return { frag: m?.[1] ?? null, kind: ["PVO", "BTR", "RFC", "ADJ"].includes(kind) ? kind : "Other", number: m?.[3] !== undefined ? Number(m[3]) : null };
+}
+
+const EVENT_COLS = ["Total Budget Impact", "Approved Total Budget Impact", "Total Cost Impact", "Approved Total Cost Impact", "Potential Total Cost Impact", "Budget Transfer From", "Budget Transfer To", "Net Budget Transfer", "Approved Downstream Contract Changes", "Pending Downstream Contract Changes", "Approved Downstream Contract Change Events", "Potential Downstream Contract Change Events"] as const;
+
+export function convertAconexChangeEvents(sheets: SheetValues[], ctx: AconexContext): AconexResult {
+  const s: Sheet = sheets[0];
+  const notes: string[] = [];
+  const hdr = findHeaderRow(s, "event no", "budget status", "total cost impact") ?? 1;
+  const head = (s.rows.get(hdr) ?? []).map((v) => cellText(v).trim().toLowerCase());
+  const col = (label: string) => head.findIndex((h) => h === label.toLowerCase() || h.replace(/\s*\*$/, "") === label.toLowerCase());
+  const ix = { no: col("Event No."), internal: col("Internal Event No."), name: col("Name"), desc: col("Description"), date: col("Event Date"), budget: col("Budget Status"), cost: col("Cost Status"), type: col("Change Event Type") };
+  const money = new Map<string, number>();
+  for (const c of EVENT_COLS) money.set(c, col(c));
+  const num = (v: unknown[], c: string) => {
+    const i = money.get(c) ?? -1;
+    const x = i >= 0 ? v[i] : null;
+    if (typeof x === "number") return Math.round(x * 100) / 100;
+    const n = Number(String(x ?? "").replace(/[,\s]/g, ""));
+    return x !== null && x !== "" && Number.isFinite(n) ? Math.round(n * 100) / 100 : null;
+  };
+  const out: unknown[][] = [];
+  let total = 0;
+  let kept = 0;
+  let linked = 0;
+  let other = 0;
+  for (const [r, v] of rows(s)) {
+    if (r <= hdr) continue;
+    const no = txt(v, ix.no);
+    if (!no || no.startsWith("[")) continue;
+    total++;
+    // a code naming another project's programme belongs to that project's export
+    const prog = programmeCodeOf(no);
+    if (prog && prog !== ctx.programmeCode.toUpperCase()) {
+      other++;
+      continue;
+    }
+    const { frag, kind } = parseEventNo(no);
+    const line = frag ? ctx.linesByFrag.get(frag) : undefined;
+    if (line?.code) linked++;
+    kept++;
+    const date = txt(v, ix.date).match(/^(\d{4}-\d{2}-\d{2})/)?.[1] ?? null;
+    out.push([
+      no,
+      no,
+      kind,
+      frag,
+      txt(v, ix.name),
+      txt(v, ix.desc),
+      txt(v, ix.internal),
+      date,
+      txt(v, ix.budget),
+      txt(v, ix.cost),
+      txt(v, ix.type),
+      line?.code || null,
+      line?.contractor || null,
+      ctx.today,
+      num(v, "Total Cost Impact"),
+      num(v, "Approved Total Cost Impact"),
+      num(v, "Potential Total Cost Impact"),
+      num(v, "Total Budget Impact"),
+      num(v, "Approved Total Budget Impact"),
+      num(v, "Budget Transfer From"),
+      num(v, "Budget Transfer To"),
+      num(v, "Net Budget Transfer"),
+      num(v, "Approved Downstream Contract Changes"),
+      num(v, "Pending Downstream Contract Changes"),
+      num(v, "Approved Downstream Contract Change Events"),
+      num(v, "Potential Downstream Contract Change Events"),
+    ]);
+  }
+  notes.push(`Aconex change-event export: ${kept} events of ${ctx.programmeName} (${ctx.programmeCode}) out of ${total} rows in the file; ${linked} tied to a cost report line (and its contractor) by the contract code in the event number.${other ? ` ${other} row(s) naming another project were left out.` : ""}`);
+  if (kept && linked < kept) notes.push(`${kept - linked} event(s) carry no contract code the cost report knows (budget-hold transfers, say) – they are listed under "no contractor" in the check.`);
+  return {
+    sheets: [
+      {
+        name: "Aconex Change Events",
+        register: "aconex_change_events",
+        columns: cols([
+          ["Tracker key", "tracker_key"],
+          ["Event no", "event_no"],
+          ["Kind", "kind"],
+          ["Contract", "contract_frag"],
+          ["Name", "name"],
+          ["Description", "description"],
+          ["Internal event no", "internal_no"],
+          ["Event date", "event_date"],
+          ["Budget status", "budget_status"],
+          ["Cost status", "cost_status"],
+          ["Change event type", "event_type"],
+          ["Cost report line", "cost_line_id"],
+          ["Contractor", "contractor_id"],
+          ["Export uploaded", "tracker_date"],
+          ["Total cost impact", "total_cost_impact"],
+          ["Approved cost impact", "approved_cost_impact"],
+          ["Potential cost impact", "potential_cost_impact"],
+          ["Total budget impact", "total_budget_impact"],
+          ["Approved budget impact", "approved_budget_impact"],
+          ["Budget transfer from", "budget_transfer_from"],
+          ["Budget transfer to", "budget_transfer_to"],
+          ["Net budget transfer", "net_budget_transfer"],
+          ["Approved contract changes", "approved_contract_changes"],
+          ["Pending contract changes", "pending_contract_changes"],
+          ["Approved change events", "approved_change_events"],
+          ["Potential change events", "potential_change_events"],
+        ]),
+        rows: out,
+      },
+    ],
+    notes,
+    total,
+    kept,
+  };
+}

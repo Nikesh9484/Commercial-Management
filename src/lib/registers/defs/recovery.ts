@@ -165,6 +165,58 @@ export const aconexControlAccounts: RegisterDef = {
   ],
 };
 
+const EVENT = "Change event";
+const IMPACT = "Aconex impact (SAR)";
+
+/**
+ * The project's change events as Aconex Cost holds them – PVOs, budget transfers (BTR), RFCs and
+ * adjustments – uploaded on their own, per project, from the change-event export. The Aconex Cost Check
+ * sets each one against the change register, contractor by contractor.
+ */
+export const aconexChangeEvents: RegisterDef = {
+  key: "aconex_change_events",
+  table: "aconex_change_events",
+  title: "Aconex Change Events",
+  singular: "Aconex change event",
+  description: "Every change event of the project as exported from Aconex Cost – its status and its budget and cost impact – for reconciliation against the change register.",
+  group: "Recovery",
+  scope: "programme",
+  snapshot: false,
+  displayField: "event_no",
+  displayFields: ["event_no", "name"],
+  defaultSort: { field: "event_no", dir: "asc" },
+  totals: ["total_cost_impact", "approved_cost_impact", "total_budget_impact"],
+  fields: [
+    { key: "programme_id", label: "Programme", type: "lookup", lookup: { register: "programmes" }, required: true, hideInTable: true, hideInForm: true },
+    { key: "tracker_key", label: "Tracker key", type: "text", required: true, unique: true, hideInTable: true, hideInForm: true },
+    { key: "event_no", label: "Event no", type: "text", required: true, section: EVENT, width: "11rem" },
+    { key: "kind", label: "Kind", type: "select", options: ["PVO", "BTR", "RFC", "ADJ", "Other"], section: EVENT, chip: true, filter: true },
+    { key: "contract_frag", label: "Contract", type: "text", section: EVENT, width: "6rem", filter: true },
+    { key: "name", label: "Name", type: "text", section: EVENT, width: "22rem" },
+    { key: "description", label: "Description", type: "textarea", section: EVENT, hideInTable: true },
+    { key: "internal_no", label: "Internal event no", type: "text", section: EVENT, hideInTable: true },
+    { key: "event_date", label: "Event date", type: "date", section: EVENT },
+    { key: "budget_status", label: "Budget status", type: "text", section: EVENT, chip: true, filter: true },
+    { key: "cost_status", label: "Cost status", type: "text", section: EVENT, hideInTable: true },
+    { key: "event_type", label: "Change event type", type: "text", section: EVENT, hideInTable: true },
+    { key: "cost_line_id", label: "Cost report line", type: "lookup", lookup: { register: "cost_lines" }, section: EVENT, hideInTable: true, help: "Matched by the contract code in the event number (031C15-PVO-0003 ↔ CN.031C15)." },
+    { key: "contractor_id", label: "Contractor", type: "lookup", lookup: { register: "contractors" }, section: EVENT, filter: true },
+    { key: "tracker_date", label: "Export uploaded", type: "date", section: EVENT, hideInTable: true },
+    { key: "total_cost_impact", label: "Total cost impact", type: "money", section: IMPACT },
+    { key: "approved_cost_impact", label: "Approved cost impact", type: "money", section: IMPACT },
+    { key: "potential_cost_impact", label: "Potential cost impact", type: "money", section: IMPACT, hideInTable: true },
+    { key: "total_budget_impact", label: "Total budget impact", type: "money", section: IMPACT },
+    { key: "approved_budget_impact", label: "Approved budget impact", type: "money", section: IMPACT, hideInTable: true },
+    { key: "budget_transfer_from", label: "Budget transfer from", type: "money", section: IMPACT, hideInTable: true },
+    { key: "budget_transfer_to", label: "Budget transfer to", type: "money", section: IMPACT, hideInTable: true },
+    { key: "net_budget_transfer", label: "Net budget transfer", type: "money", section: IMPACT, hideInTable: true },
+    { key: "approved_contract_changes", label: "Approved contract changes", type: "money", section: IMPACT, hideInTable: true },
+    { key: "pending_contract_changes", label: "Pending contract changes", type: "money", section: IMPACT, hideInTable: true },
+    { key: "approved_change_events", label: "Approved change events", type: "money", section: IMPACT, hideInTable: true },
+    { key: "potential_change_events", label: "Potential change events", type: "money", section: IMPACT, hideInTable: true },
+  ],
+};
+
 const INVOICE = "Invoice";
 const SETTLEMENT = "Settlement";
 
@@ -347,4 +399,4 @@ export const leaseAmendments: RegisterDef = {
   ],
 };
 
-export const recoveryRegisters = [accommodationRecovery, accommodationInvoices, customsRecovery, customsDeclarations, aconexControlAccounts, leaseAgreements, leaseAmendments];
+export const recoveryRegisters = [accommodationRecovery, accommodationInvoices, customsRecovery, customsDeclarations, aconexControlAccounts, aconexChangeEvents, leaseAgreements, leaseAmendments];

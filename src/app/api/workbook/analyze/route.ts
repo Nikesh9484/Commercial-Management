@@ -9,7 +9,7 @@ import { looksLikeMarinaReport, convertMarinaReport, toSheetValues } from "@/lib
 import { looksLikeVbhReport, convertVbhReport } from "@/lib/workbook/vbh";
 import { looksLikeClaimsTracker, convertClaimsTracker, codeFrag, type KnownLine } from "@/lib/workbook/claims-tracker";
 import { looksLikeAccommodationTracker, looksLikeCustomsTracker, convertRecoveryTrackers, trackerReadPlan, type RecoveryContext } from "@/lib/workbook/recovery";
-import { csvToSheets, looksLikeAconexExport, convertAconexExport } from "@/lib/workbook/aconex";
+import { csvToSheets, looksLikeAconexExport, convertAconexExport, looksLikeAconexChangeEvents, convertAconexChangeEvents } from "@/lib/workbook/aconex";
 import { todayIso } from "@/lib/format";
 import { getAppContext } from "@/lib/context";
 import { getDb } from "@/lib/db";
@@ -78,8 +78,10 @@ export async function POST(req: Request, ctx: unknown) {
       const picked = chosenProgramme ? app.programmes.find((p) => p.id === chosenProgramme) : undefined;
       return picked ?? app.programme;
     };
-    if (looksLikeAconexExport(worksheets)) {
+    if (looksLikeAconexExport(worksheets) || looksLikeAconexChangeEvents(worksheets)) {
       // The Aconex control account export: our project's contracts and budget holds, tied to the cost lines by contract code.
+      // The Aconex change-event export: the project's PVOs, budget transfers, RFCs and adjustments, tied the same way.
+      const changeEvents = !looksLikeAconexExport(worksheets);
       const programme = programmeFor();
       if (!programme) return NextResponse.json({ error: "Select a programme in the top bar first." }, { status: 400 });
       const app = { programme };
@@ -99,7 +101,8 @@ export async function POST(req: Request, ctx: unknown) {
         const frag = codeFrag(l.code);
         if (frag && !linesByFrag.has(frag)) linesByFrag.set(frag, { code: l.code, contractor: l.contractor ?? "" });
       }
-      const conv = convertAconexExport(worksheets, { programmeCode: app.programme.code, programmeName: app.programme.name, linesByFrag, holdLinesByKey, fileName: name, today: todayIso() });
+      const actx = { programmeCode: app.programme.code, programmeName: app.programme.name, linesByFrag, holdLinesByKey, fileName: name, today: todayIso() };
+      const conv = changeEvents ? convertAconexChangeEvents(worksheets, actx) : convertAconexExport(worksheets, actx);
       worksheets = toSheetValues(conv);
       saveConverted(fileId, worksheets);
       conversion = { notes: conv.notes, reportNo: null, periodEnd: null };

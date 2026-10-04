@@ -491,8 +491,13 @@ export class XWorkbook {
   }
 
   /** The workbook recalculates when it opens, so every total reflects the values written. */
-  async save(): Promise<Buffer> {
+  /** every sheet changed is written back into the zip (the file is not generated yet) */
+  flush(): void {
     for (const s of this.sheets) if (s.dirty && !s.untouched) this.zip.file(s.path, s.serialize());
+  }
+
+  async save(): Promise<Buffer> {
+    this.flush();
     // the calculation flag is patched in the bytes: only the tag itself is decoded
     const wbBytes = this.workbookBytes;
     const at = wbBytes.indexOf("<calcPr");

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { FileText, Filter, X } from "lucide-react";
+import { FileSpreadsheet, FileText, Filter, X } from "lucide-react";
 import type { RecordRow } from "@/lib/registers/types";
 import { getBondsSummary } from "@/lib/bonds/summary";
 import { CATEGORY_OPTIONS, EXPIRY_OPTIONS, NO_BONDS_FILTER, bondsFilterLabel, bondsFilterQuery, filterBonds, isFiltered, matchesBondsFilter, type BondsCategory, type BondsExpiry, type BondsFilter } from "@/lib/bonds/filter";
@@ -79,6 +79,11 @@ export function BondsWorkspace({ rows, isAdmin, hasPeriod, canUpload = false, du
               <button className="btn btn-ghost btn-sm" onClick={() => setFilter(NO_BONDS_FILTER)}>
                 <X size={14} /> Clear
               </button>
+            )}
+            {hasPeriod && (
+              <a href="/api/bonds/tracker" className="btn btn-excel btn-sm" title="The register written into the Bonds & Insurance tab of your own cost report workbook – the tab's formulas, colours, fonts and layout exactly as in the report">
+                <FileSpreadsheet size={14} /> Insurance tracker (report layout)
+              </a>
             )}
             {hasPeriod && (
               <span className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-2 py-1 shadow-sm">
