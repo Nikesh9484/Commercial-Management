@@ -10,6 +10,9 @@ import { formatDate, formatMoney, formatMonthYear } from "@/lib/format";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { RegisterPage } from "@/components/register/RegisterPage";
 import { MarkRecoveredButton } from "@/components/recovery/MarkRecoveredButton";
+import { LinkChangeButton } from "@/components/recovery/LinkChangeButton";
+import { isCustomsChange } from "@/lib/recovery/summary";
+import { contractorKey } from "@/lib/bonds/name-key";
 import { canEditRegister } from "@/lib/registers/types";
 import { ExportButtons } from "@/components/ui/ExportButtons";
 
@@ -40,7 +43,17 @@ export default async function CostRecoveryPage({ searchParams }: { searchParams:
     );
   }
   const acc = getAccommodationSummary(listRecords(getRegisterDef("accommodation_recovery")!), listRecords(getRegisterDef("accommodation_invoices")!));
-  const cus = getCustomsSummary(listRecords(getRegisterDef("customs_recovery")!), listRecords(getRegisterDef("changes")!), listRecords(getRegisterDef("customs_declarations")!));
+  const changeRows = listRecords(getRegisterDef("changes")!);
+  const cus = getCustomsSummary(listRecords(getRegisterDef("customs_recovery")!), changeRows, listRecords(getRegisterDef("customs_declarations")!));
+  // the change items a contractor's recovery can be tied to: its own first, then every customs-worded one, then the rest
+  const changeOptions = (contractor: string) => {
+    const ck = contractorKey(contractor);
+    const label = (c: (typeof changeRows)[number]) => `${String(c.item_no ?? c.id)} – ${String(c.description ?? "").slice(0, 70)}${c.contractor_id__label ? ` (${String(c.contractor_id__label)})` : ""}`;
+    const own = changeRows.filter((c) => ck && contractorKey(c.contractor_id__label) === ck);
+    const customs = changeRows.filter((c) => !own.includes(c) && isCustomsChange(c));
+    const rest = changeRows.filter((c) => !own.includes(c) && !customs.includes(c));
+    return [...own, ...customs, ...rest].slice(0, 400).map((c) => ({ id: Number(c.id), label: label(c) }));
+  };
   const leaseRows = listRecords(getRegisterDef("lease_agreements")!);
   // the lease agreement(s) behind each accommodation tracker contractor, by our contractor record or by name
   const leaseOf = (contractor: string) => {
@@ -251,6 +264,19 @@ export default async function CostRecoveryPage({ searchParams }: { searchParams:
             <Empty what="customs recovery tracker" href="/imports/customs" canImport={canImport} />
           ) : (
             <>
+              <div className="card flex flex-wrap items-center justify-between gap-2 px-4 py-2">
+                <div className="text-sm text-muted">
+                  <span className="font-semibold text-ink">For management:</span> one email with the recovery position per contractor, the Change Management entry behind each recovery (RFC / EI → PVO → VO → DVO) and the next action, with the cost recovery report attached.
+                </div>
+                <div className="inline-flex flex-wrap items-center gap-1.5">
+                  {ctx.period && (
+                    <a className="btn btn-sm btn-primary" href={`/api/email-report?format=eml&kind=customs_management&period=${ctx.period.id}`} title="Download a ready-to-send email draft (.eml) for management with the cost recovery report attached">
+                      <Mail size={14} /> Email + report for management
+                    </a>
+                  )}
+                  <ExportButtons section="recovery_report" name="Report" />
+                </div>
+              </div>
               <div className="card overflow-x-auto p-0">
                 <div className="border-b border-line bg-slate-50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-muted">Customs duty by contractor</div>
                 <table className="w-full text-sm">
@@ -264,7 +290,8 @@ export default async function CostRecoveryPage({ searchParams }: { searchParams:
                       <th className="px-3 py-2 text-right">Still to recover</th>
                       <th className="px-3 py-2 text-right">EWN</th>
                       <th className="px-3 py-2 text-right" title="From the customs tracker: the balance of the contract value RSG still has to pay the contractor – the room left to recover the duty through its coming payment certificates. Not a customs figure.">Remaining to pay (contract)</th>
-                      <th className="px-3 py-2">DVO</th>
+                      <th className="px-3 py-2" title="The Change Management entry that recovers the duty: RFC / EI → PVO → VO → DVO, with its references and where it stands">Change item (RFC / PVO / VO / DVO)</th>
+                      <th className="px-3 py-2">Next action</th>
                       <th className="px-3 py-2">Recovery</th>
                       <th className="px-3 py-2">Email</th>
                     </tr>
@@ -280,7 +307,26 @@ export default async function CostRecoveryPage({ searchParams }: { searchParams:
                         <td className={`px-3 py-1.5 text-right tnum ${c.totals.stillToRecover > 0.5 ? "font-semibold text-red-700" : ""}`}>{money(c.totals.stillToRecover)}</td>
                         <td className="px-3 py-1.5 text-right tnum">{money(c.totals.ewn)}</td>
                         <td className="px-3 py-1.5 text-right tnum">{money(c.totals.remainingToPay)}</td>
-                        <td className="max-w-[16rem] truncate px-3 py-1.5 text-xs text-muted" title={c.dvoNote}>{c.dvoNote}</td>
+                        <td className="max-w-[24rem] px-3 py-1.5 text-xs">
+                          {c.change ? (
+                            <div className="space-y-0.5">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <Link href={`/modules/change-management?q=${encodeURIComponent(c.change.item_no)}`} className="font-semibold text-navy underline-offset-2 hover:underline" title={c.change.description}>
+                                  {c.change.item_no}
+                                </Link>
+                                <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${c.change.rank >= 7 ? "bg-emerald-50 text-emerald-700" : c.change.rank >= 4 ? "bg-sky-50 text-sky-700" : "bg-amber-50 text-amber-700"}`}>{c.change.stage}</span>
+                                {!c.change.explicit && <span className="text-[10px] text-muted" title="Found by its wording – use Link change item to pin a different one">auto</span>}
+                              </div>
+                              <div className="text-muted">
+                                {[c.change.rfc_ref ? `RFC ${c.change.rfc_ref}` : "", c.change.ei_ref ? `EI ${c.change.ei_ref}` : "", c.change.pvo_ref || c.change.pvo_value ? `PVO ${c.change.pvo_ref}${c.change.pvo_value ? ` ${money(c.change.pvo_value)}` : ""}${c.change.pvo_status ? ` (${c.change.pvo_status})` : ""}` : "", c.change.vo_ref ? `VO ${c.change.vo_ref}` : "", c.change.dvo_ref || c.change.dvo_value ? `DVO ${c.change.dvo_ref}${c.change.dvo_value ? ` ${money(c.change.dvo_value)}` : ""}${c.change.dvo_status ? ` (${c.change.dvo_status})` : ""}` : ""].filter(Boolean).join(" · ")}
+                              </div>
+                            </div>
+                          ) : (
+                            <span className="text-muted">No change item yet{c.dvoNote ? ` · ${c.dvoNote}` : ""}</span>
+                          )}
+                          {canMark && <div className="mt-0.5"><LinkChangeButton contractor={c.contractor} currentId={c.change?.explicit ? c.change.id : null} options={changeOptions(c.contractor)} /></div>}
+                        </td>
+                        <td className={`max-w-[12rem] px-3 py-1.5 text-xs ${c.totals.stillToRecover > 0.5 ? "text-ink" : "text-muted"}`}>{c.nextAction}</td>
                         <td className="px-3 py-1.5 whitespace-nowrap">
                           {canMark ? <MarkRecoveredButton register="customs_recovery" contractor={c.contractor} recovered={c.rows.length > 0 && c.rows.every((r) => r.status === "Recovered")} what="customs duty" /> : c.rows.every((r) => r.status === "Recovered") ? <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">Recovered</span> : null}
                         </td>
@@ -304,6 +350,7 @@ export default async function CostRecoveryPage({ searchParams }: { searchParams:
                       <td className="px-3 py-1.5 text-right tnum">{money(cus.totals.stillToRecover)}</td>
                       <td className="px-3 py-1.5 text-right tnum">{money(cus.totals.ewn)}</td>
                       <td className="px-3 py-1.5 text-right tnum">{money(cus.totals.remainingToPay)}</td>
+                      <td />
                       <td />
                       <td className="px-3 py-1.5">
                         {cus.totals.stillToRecover > 0.5 && ctx.period && (

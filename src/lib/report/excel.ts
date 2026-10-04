@@ -954,9 +954,9 @@ export function recoveryReportSheet(wb: ExcelJS.Workbook, d: ReportData) {
   if (!acc.totals.rows) ws.addRow(["No accommodation invoice tracker has been uploaded for this project yet."]);
 
   section(`Customs duty recovery${cus.asOf ? ` – tracker as of ${formatDate(cus.asOf)}` : ""}`);
-  header(ws.addRow(["Contractor", "Who pays per contract", "Paid by RSG", "To recover", "Recovered by DVO", "Still to recover", "EWN value", "Remaining to pay", "DVO recorded"]));
-  for (const c of cus.byContractor) moneyCells(ws.addRow([c.contractor, c.payer, c.totals.rsgPaid, c.totals.toRecover, c.totals.recoveredByDvo, c.totals.stillToRecover, c.totals.ewn, c.totals.remainingToPay, c.dvoNote]), 3, 8);
-  moneyCells(totalRow(ws.addRow(["Total", "", cus.totals.rsgPaid, cus.totals.toRecover, cus.totals.recoveredByDvo, cus.totals.stillToRecover, cus.totals.ewn, cus.totals.remainingToPay, ""])), 3, 8);
+  header(ws.addRow(["Contractor", "Who pays per contract", "Paid by RSG", "To recover", "Recovered by DVO", "Still to recover", "EWN value", "Remaining to pay", "Change item (RFC / PVO / VO / DVO)", "Next action"]));
+  for (const c of cus.byContractor) moneyCells(ws.addRow([c.contractor, c.payer, c.totals.rsgPaid, c.totals.toRecover, c.totals.recoveredByDvo, c.totals.stillToRecover, c.totals.ewn, c.totals.remainingToPay, c.change ? c.change.summary : c.dvoNote || "none yet", c.nextAction]), 3, 8);
+  moneyCells(totalRow(ws.addRow(["Total", "", cus.totals.rsgPaid, cus.totals.toRecover, cus.totals.recoveredByDvo, cus.totals.stillToRecover, cus.totals.ewn, cus.totals.remainingToPay, "", ""])), 3, 8);
   if (!cus.totals.rows) ws.addRow(["No customs recovery tracker has been uploaded for this project yet."]);
 
   // the tracker rows themselves, one sheet each

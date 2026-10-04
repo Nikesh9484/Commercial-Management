@@ -267,4 +267,54 @@ export function buildCustomsEmail(data: ReportData, sender: { name: string; emai
   return { subject, to: [], html: `<div style="font-family:Calibri,Arial,sans-serif;font-size:13px;color:#172033;line-height:1.45">${html.join("\n")}</div>`, text: text.join("\r\n"), fileBase: `Customs_Duties_${one ? fileTag(one.contractor) : "All"}_${data.programme.code}` };
 }
 
+/**
+ * The management summary of the customs duty recovery: the position per contractor, the Change
+ * Management entry behind each recovery (RFC / EI → PVO → VO → DVO) with its references and values,
+ * what is still to recover and the next action. Sent with the cost recovery report attached.
+ */
+export function buildCustomsManagementEmail(data: ReportData, sender: { name: string; email?: string }): EmailSummary {
+  const cus = getCustomsSummary(data.recovery.customs, data.registers.changes?.rows ?? [], data.recovery.customsDeclarations);
+  const asOfIso = cus.asOf ?? data.period.period_end;
+  const asOf = formatDate(asOfIso);
+  const subject = `${data.programme.name} (${data.programme.code}) – Customs duty recovery – management summary as at ${asOf}: SAR ${formatMoney(cus.totals.stillToRecover)} still to recover`;
+  const html: string[] = [];
+  const text: string[] = [];
+  const both = (h: string, t: string | string[]) => {
+    html.push(h);
+    text.push(...(Array.isArray(t) ? t : [t]));
+  };
+  both(`<p>Dear all,</p>`, ["Dear all,", "", `Subject: ${subject}`, ""]);
+  html.push(`<p><b>Subject: ${esc(subject)}</b></p>`);
+  const t = cus.totals;
+  both(
+    `<p>Position of the customs duties RSG / AMAALA paid on contractors' imports under ${esc(data.programme.name)}, from the customs recovery tracker as at <b>${esc(asOf)}</b>:</p><ul><li>Customs paid by RSG: <b>SAR ${formatMoney(t.rsgPaid)}</b> (${t.rows} contract / vendor row(s))</li><li>To recover from contractors: <b>SAR ${formatMoney(t.toRecover)}</b>${t.contractorPaid > 0.5 ? ` – SAR ${formatMoney(t.contractorPaid)} was paid by the contractors themselves` : ""}</li><li>Recovered through determined variation orders: <b>SAR ${formatMoney(t.recoveredByDvo)}</b></li><li>Still to recover: <b style="color:#b91c1c">SAR ${formatMoney(t.stillToRecover)}</b>${t.unrecoverable > 0.5 ? ` (SAR ${formatMoney(t.unrecoverable)} treated as unrecoverable)` : ""}</li></ul>`,
+    [`Position of the customs duties RSG / AMAALA paid on contractors' imports under ${data.programme.name}, from the customs recovery tracker as at ${asOf}:`, `  - Customs paid by RSG: SAR ${formatMoney(t.rsgPaid)} (${t.rows} contract / vendor row(s))`, `  - To recover from contractors: SAR ${formatMoney(t.toRecover)}`, `  - Recovered through determined variation orders: SAR ${formatMoney(t.recoveredByDvo)}`, `  - Still to recover: SAR ${formatMoney(t.stillToRecover)}`, ""],
+  );
+  const groups = [...cus.byContractor].sort((a, b) => b.totals.stillToRecover - a.totals.stillToRecover);
+  both(`<p>Per contractor – the recovery is processed in Change Management as RFC / EI → PVO → VO → DVO; the entry behind each recovery and where it stands:</p>`, "Per contractor (the recovery is processed in Change Management as RFC / EI → PVO → VO → DVO):");
+  html.push(`<table cellspacing="0" cellpadding="0" style="border-collapse:collapse;min-width:900px"><tr><th ${th}>Contractor</th><th ${th}>Contract(s)</th><th ${th}>Paid by RSG</th><th ${th}>To recover</th><th ${th}>Change item · stage</th><th ${th}>RFC / EI</th><th ${th}>PVO</th><th ${th}>VO</th><th ${th}>DVO</th><th ${th}>Recovered by DVO</th><th ${th}>Still to recover</th><th ${th}>Remaining to pay (contract)</th><th ${th}>Next action</th></tr>`);
+  text.push("  Contractor | Contract(s) | Paid by RSG | To recover | Change item · stage | RFC / EI | PVO | VO | DVO | Recovered by DVO | Still to recover | Remaining to pay | Next action");
+  for (const g of groups) {
+    const contracts = [...new Set(g.rows.map((r) => String(r.contract_code ?? "")).filter(Boolean))].join(", ") || "–";
+    const ch = g.change;
+    const item = ch ? `${ch.item_no} · ${ch.stage}${ch.explicit ? "" : " (by wording)"}` : "none yet";
+    const rfc = ch ? [ch.rfc_ref ? `RFC ${ch.rfc_ref}` : "", ch.ei_ref ? `EI ${ch.ei_ref}` : ""].filter(Boolean).join(" / ") || "–" : "–";
+    const pvo = ch && (ch.pvo_ref || ch.pvo_value) ? `${ch.pvo_ref}${ch.pvo_value ? ` SAR ${formatMoney(ch.pvo_value)}` : ""}${ch.pvo_status ? ` (${ch.pvo_status})` : ""}${ch.pvo_date ? ` ${formatDate(ch.pvo_date)}` : ""}`.trim() : "–";
+    const vo = ch && ch.vo_ref ? `${ch.vo_ref}${ch.vo_date ? ` ${formatDate(ch.vo_date)}` : ""}` : "–";
+    const dvo = ch && (ch.dvo_ref || ch.dvo_value) ? `${ch.dvo_ref}${ch.dvo_value ? ` SAR ${formatMoney(ch.dvo_value)}` : ""}${ch.dvo_status ? ` (${ch.dvo_status})` : ""}${ch.dvo_date ? ` ${formatDate(ch.dvo_date)}` : ""}`.trim() : "–";
+    const still = g.totals.stillToRecover;
+    html.push(`<tr${still > 0.5 ? "" : ' style="color:#6b7280"'}><td ${td}><b>${esc(g.contractor)}</b>${g.payer ? `<br><span style="font-size:11px;color:#6b7280">customs per contract: ${esc(g.payer)}</span>` : ""}</td><td ${td}>${esc(contracts)}</td><td ${tdr}>${formatMoney(g.totals.rsgPaid)}</td><td ${tdr}>${formatMoney(g.totals.toRecover)}</td><td ${td}>${esc(item)}</td><td ${td}>${esc(rfc)}</td><td ${td}>${esc(pvo)}</td><td ${td}>${esc(vo)}</td><td ${td}>${esc(dvo)}</td><td ${tdr}>${formatMoney(g.totals.recoveredByDvo)}</td><td ${tdr}${still > 0.5 ? ' style="padding:4px 10px;border:1px solid #dfe5ee;font-size:12px;text-align:right;font-family:Consolas,monospace;color:#b91c1c;font-weight:bold"' : ""}>${formatMoney(still)}</td><td ${tdr}>${formatMoney(g.totals.remainingToPay)}</td><td ${td}>${esc(g.nextAction)}</td></tr>`);
+    text.push(`  ${g.contractor} | ${contracts} | ${formatMoney(g.totals.rsgPaid)} | ${formatMoney(g.totals.toRecover)} | ${item} | ${rfc} | ${pvo} | ${vo} | ${dvo} | ${formatMoney(g.totals.recoveredByDvo)} | ${formatMoney(still)} | ${formatMoney(g.totals.remainingToPay)} | ${g.nextAction}`);
+  }
+  html.push(`<tr><td ${td} colspan="2"><b>Total</b></td><td ${tdr}><b>${formatMoney(t.rsgPaid)}</b></td><td ${tdr}><b>${formatMoney(t.toRecover)}</b></td><td ${td} colspan="5"></td><td ${tdr}><b>${formatMoney(t.recoveredByDvo)}</b></td><td ${tdr}><b>${formatMoney(t.stillToRecover)}</b></td><td ${tdr}><b>${formatMoney(t.remainingToPay)}</b></td><td ${td}></td></tr></table>`);
+  text.push(`  Total | | ${formatMoney(t.rsgPaid)} | ${formatMoney(t.toRecover)} | | | | | | ${formatMoney(t.recoveredByDvo)} | ${formatMoney(t.stillToRecover)} | ${formatMoney(t.remainingToPay)} |`, "");
+  const noLink = groups.filter((g) => !g.change && g.totals.stillToRecover > 0.5);
+  if (noLink.length) both(`<p><b>Without a Change Management entry yet:</b> ${esc(noLink.map((g) => `${g.contractor} (SAR ${formatMoney(g.totals.stillToRecover)})`).join("; "))} – the RFC / EI for the recovery is to be raised and linked on the Cost Recovery page.</p>`, `Without a Change Management entry yet: ${noLink.map((g) => `${g.contractor} (SAR ${formatMoney(g.totals.stillToRecover)})`).join("; ")} – the RFC / EI for the recovery is to be raised and linked on the Cost Recovery page.`);
+  if (cus.noFigures.length) both(`<p style="font-size:12px;color:#555">${cus.noFigures.length} contract(s) are annotated on the tracker without customs figures yet: ${esc(cus.noFigures.map((r) => String(r.contract_code ?? r.vendor ?? "")).join(", "))}.</p>`, `(${cus.noFigures.length} contract(s) are annotated on the tracker without customs figures yet.)`);
+  both(`<p>The attached cost recovery report carries the contractor tables and the declaration-by-declaration lists (Bayan number, port, broker, supplier, invoice, duty paid) behind these figures.</p>`, ["", "The attached cost recovery report carries the contractor tables and the declaration-by-declaration lists behind these figures."]);
+  both(`<p>Kind regards,</p><p><b>${esc(sender.name)}</b><br>Commercial Management – ${esc(data.programme.name)} (${esc(data.programme.code)})</p>`, ["", "Kind regards,", sender.name, `Commercial Management – ${data.programme.name} (${data.programme.code})`]);
+  html.push(`<p style="font-size:11px;color:#6b7280">Prepared with ${esc(APP_NAME)} from the customs recovery tracker as at ${esc(asOf)} and the Change Management Tracker.</p>`);
+  return { subject, to: [], html: `<div style="font-family:Calibri,Arial,sans-serif;font-size:13px;color:#172033;line-height:1.45">${html.join("\n")}</div>`, text: text.join("\r\n"), fileBase: `Customs_Recovery_Management_Summary_${data.programme.code}` };
+}
+
 export type { RecordRow };

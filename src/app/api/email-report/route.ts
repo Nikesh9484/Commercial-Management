@@ -7,7 +7,7 @@ import { renderSectionsPdf } from "@/lib/report/pdf";
 import { buildEmailSummary, buildEml } from "@/lib/report/email";
 import { buildClaimsEmail, buildFaEmail } from "@/lib/report/email-sections";
 import { buildPeriodSummaryEmail } from "@/lib/report/period-summary-email";
-import { buildAccommodationEmail, buildCustomsEmail } from "@/lib/report/recovery-email";
+import { buildAccommodationEmail, buildCustomsEmail, buildCustomsManagementEmail } from "@/lib/report/recovery-email";
 import { todayIso } from "@/lib/format";
 
 /**
@@ -37,7 +37,9 @@ async function heavyGET(req: Request, ctx: unknown) {
               ? buildAccommodationEmail(data, user, url.searchParams.get("contractor"))
               : kind === "customs"
                 ? buildCustomsEmail(data, user, url.searchParams.get("contractor"))
-                : buildEmailSummary(data, { name: user.name, email: user.email });
+                : kind === "customs_management"
+                  ? buildCustomsManagementEmail(data, user)
+                  : buildEmailSummary(data, { name: user.name, email: user.email });
     if (url.searchParams.get("format") !== "eml") return NextResponse.json(summary);
 
     const suffix = `${app.programme.code}_No${data.period.report_no}_${todayIso()}${data.locked ? "" : "_DRAFT"}`;
@@ -49,8 +51,10 @@ async function heavyGET(req: Request, ctx: unknown) {
           ? [await pdf("fa_report", "Final_Account_Status_Report")]
           : kind === "period_summary"
             ? [await pdf("period_summary", "Period_Summary_Key_Movements"), await pdf("exec", "Executive_Summary"), await pdf("level1", "Cost_Report_Level_1"), await pdf("level2", "Cost_Report_Level_2")]
-            : kind === "accommodation" || kind === "customs"
-              ? []
+            : kind === "customs_management"
+              ? [await pdf("recovery_report", "Cost_Recovery_Report")]
+              : kind === "accommodation" || kind === "customs"
+                ? []
               : [await pdf("exec", "Executive_Summary"), await pdf("level1", "Cost_Report_Level_1"), await pdf("level2", "Cost_Report_Level_2")];
     const eml = buildEml({ from: user.email ? `${user.name} <${user.email}>` : undefined, to: summary.to, subject: summary.subject, html: summary.html, text: summary.text, attachments });
     return new Response(eml, {

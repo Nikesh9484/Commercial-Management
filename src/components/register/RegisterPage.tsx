@@ -73,6 +73,18 @@ export function RegisterPage({
   const [data, setData] = useState<Loaded | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  // a link into the register can name what to search for (…/modules/change-management?q=CH-006C58-7)
+  useEffect(() => {
+    let q: string | null = null;
+    try {
+      q = new URLSearchParams(window.location.search).get("q");
+    } catch {
+      q = null;
+    }
+    if (!q) return;
+    const t = setTimeout(() => setSearch(q!), 0);
+    return () => clearTimeout(t);
+  }, []);
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [showFilters, setShowFilters] = useState(false);
   const [sort, setSort] = useState<{ field: string; dir: "asc" | "desc" } | null>(null);

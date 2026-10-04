@@ -1334,10 +1334,11 @@ function recoveryReport(ctx: Ctx) {
         { key: "stillToRecover", label: "Still to recover", width: 1, align: "right", format: money },
         { key: "ewn", label: "EWN", width: 0.9, align: "right", format: money },
         { key: "remainingToPay", label: "Remaining to pay", width: 1.1, align: "right", format: money },
-        { key: "dvoNote", label: "DVO", width: 1.4 },
+        { key: "change", label: "Change item (RFC / PVO / VO / DVO)", width: 2.2 },
+        { key: "next", label: "Next action", width: 1.3 },
       ],
-      cus.byContractor.map((c) => ({ contractor: c.contractor, payer: c.payer, ...c.totals, dvoNote: c.dvoNote })),
-      { zebra: true, totalRow: { contractor: "Total", payer: "", ...cus.totals, dvoNote: "" }, rowStyle: (r) => (Number(r.stillToRecover) > 0.5 ? { color: "#b91c1c" } : undefined) },
+      cus.byContractor.map((c) => ({ contractor: c.contractor, payer: c.payer, ...c.totals, change: c.change ? c.change.summary : c.dvoNote || "none yet", next: c.nextAction })),
+      { zebra: true, totalRow: { contractor: "Total", payer: "", ...cus.totals, change: "", next: "" }, rowStyle: (r) => (Number(r.stillToRecover) > 0.5 ? { color: "#b91c1c" } : undefined) },
     );
     if (cus.noFigures.length) {
       doc.moveDown(0.3);

@@ -120,7 +120,7 @@ export interface CustomsTotals {
 export interface CustomsSummary {
   asOf: string | null;
   totals: CustomsTotals;
-  byContractor: { contractor: string; rows: RecordRow[]; totals: CustomsTotals; payer: string; dvoNote: string; declarations: RecordRow[]; rsgPaidList: RecordRow[]; rsgPaidListed: number }[];
+  byContractor: { contractor: string; rows: RecordRow[]; totals: CustomsTotals; payer: string; dvoNote: string; declarations: RecordRow[]; rsgPaidList: RecordRow[]; rsgPaidListed: number; change: LinkedChange | null; nextAction: string; recovered: boolean }[];
   /** rows with customs paid by RSG still to recover, largest first */
   toRecover: RecordRow[];
   /** contracts the tracker annotates but with no customs figures yet */
@@ -129,7 +129,134 @@ export interface CustomsSummary {
 
 /** A change in the tracker that records the customs recovery: a DVO (column H) whose wording says so. */
 export function isCustomsChange(c: RecordRow): boolean {
-  return /custom/i.test(`${c.description ?? ""} ${c.title ?? ""} ${c.notes ?? ""}`);
+  // "Recovery of Customs Duty …", "customs clearance" – not "Custom Finishes to Lift"
+  return /\bcustoms\b|\bcustom\s+dut/i.test(`${c.description ?? ""} ${c.title ?? ""} ${c.notes ?? ""}`);
+}
+
+/** The Change Management entry that recovers a contractor's customs duty: RFC / EI → PVO → VO → DVO, with where it stands. */
+export interface LinkedChange {
+  id: number;
+  item_no: string;
+  description: string;
+  /** "DVO approved", "DVO pending", "VO issued", "EI issued", "PVO approved", "PVO pending", "RFC raised", "Early warning" */
+  stage: string;
+  /** 0 = nothing yet … 7 = DVO approved */
+  rank: number;
+  rfc_ref: string;
+  ei_ref: string;
+  pvo_ref: string;
+  pvo_value: number;
+  pvo_status: string;
+  pvo_date: string;
+  vo_ref: string;
+  vo_date: string;
+  dvo_ref: string;
+  dvo_value: number;
+  dvo_status: string;
+  dvo_date: string;
+  overall: string;
+  /** set by hand on the tracker row (change_id) rather than found by its wording */
+  explicit: boolean;
+  /** one line for tables and emails: "CH-006C58-7 · DVO approved · PVO 180,248.06 (Approved) · VO VO-010 · DVO DVO-011 315,459.52" */
+  summary: string;
+}
+
+const CHANGE_APPROVED = ["Approved", "Review Complete", "Closed"];
+const stageStatus = (c: RecordRow, p: string) => String(c[`${p}_status_id__label`] ?? "").trim();
+const approved = (c: RecordRow, p: string) => CHANGE_APPROVED.includes(stageStatus(c, p));
+// a stage is reached once it has a reference, a date or an amount – or a decision; a bare "Pending" is the tracker's default
+const hasStage = (c: RecordRow, p: string) => !!(c[`${p}_ref`] || c[`${p}_date`] || c[`${p}_tracker_amount`] || approved(c, p));
+
+/** Where a change stands on the RFC → PVO → VO → DVO road, as a label and a rank. */
+export function changeStage(c: RecordRow): { stage: string; rank: number } {
+  if (hasStage(c, "dvo") && (approved(c, "dvo") || c.dvo_closed)) return { stage: "DVO approved", rank: 7 };
+  if (hasStage(c, "dvo")) return { stage: "DVO pending", rank: 6 };
+  if (hasStage(c, "vo")) return { stage: "VO issued", rank: 5 };
+  if (hasStage(c, "ei")) return { stage: "EI issued", rank: 4 };
+  if (hasStage(c, "pvo") && approved(c, "pvo")) return { stage: "PVO approved", rank: 3 };
+  if (hasStage(c, "pvo")) return { stage: "PVO pending", rank: 2 };
+  if (hasStage(c, "rfc")) return { stage: "RFC raised", rank: 1 };
+  if (hasStage(c, "ew")) return { stage: "Early warning", rank: 0.5 };
+  return { stage: "Logged", rank: 0 };
+}
+
+function describeChange(c: RecordRow, explicit: boolean): LinkedChange {
+  const { stage, rank } = changeStage(c);
+  const fmt = (v: number) => v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const pvoValue = n(c.pvo_tracker_amount) || n(c.pvo_cr_amount);
+  const dvoValue = n(c.dvo_actual_value) || n(c.dvo_tracker_amount) || n(c.dvo_cr_amount);
+  const out: LinkedChange = {
+    id: Number(c.id),
+    item_no: String(c.item_no ?? c.id),
+    description: String(c.description ?? ""),
+    stage,
+    rank,
+    rfc_ref: String(c.rfc_ref ?? ""),
+    ei_ref: String(c.ei_ref ?? ""),
+    pvo_ref: String(c.pvo_ref ?? ""),
+    pvo_value: r2(pvoValue),
+    pvo_status: stageStatus(c, "pvo"),
+    pvo_date: String(c.pvo_date ?? ""),
+    vo_ref: String(c.vo_ref ?? ""),
+    vo_date: String(c.vo_date ?? ""),
+    dvo_ref: String(c.dvo_avi_ref ?? c.dvo_ref ?? ""),
+    dvo_value: r2(dvoValue),
+    dvo_status: stageStatus(c, "dvo"),
+    dvo_date: String(c.dvo_date ?? ""),
+    overall: String(c.overall_status_id__label ?? ""),
+    explicit,
+    summary: "",
+  };
+  const parts = [out.item_no, stage];
+  if (out.rfc_ref) parts.push(`RFC ${out.rfc_ref}`);
+  if (out.ei_ref) parts.push(`EI ${out.ei_ref}`);
+  if (out.pvo_ref || out.pvo_value) parts.push(`PVO ${out.pvo_ref}${out.pvo_value ? ` ${fmt(out.pvo_value)}` : ""}${out.pvo_status ? ` (${out.pvo_status})` : ""}`.replace(/\s+/g, " "));
+  if (out.vo_ref) parts.push(`VO ${out.vo_ref}`);
+  if (out.dvo_ref || out.dvo_value) parts.push(`DVO ${out.dvo_ref}${out.dvo_value ? ` ${fmt(out.dvo_value)}` : ""}${out.dvo_status ? ` (${out.dvo_status})` : ""}`.replace(/\s+/g, " "));
+  out.summary = parts.join(" · ");
+  return out;
+}
+
+/**
+ * The change item behind a customs tracker row: the one set on the row (change_id), else the
+ * customs-worded change of the same contract or contractor that has gone furthest.
+ */
+export function linkedChangeFor(row: RecordRow, changes: RecordRow[]): LinkedChange | null {
+  const explicitId = Number(row.change_id ?? 0);
+  if (explicitId) {
+    const c = changes.find((x) => Number(x.id) === explicitId);
+    if (c) return describeChange(c, true);
+  }
+  const lineId = Number(row.cost_line_id ?? 0);
+  const ck = contractorKey(row.contractor_id__label || row.vendor);
+  const cands = changes.filter((c) => isCustomsChange(c) && ((lineId && Number(c.cost_line_id) === lineId) || (ck && contractorKey(c.contractor_id__label) === ck)));
+  if (!cands.length) return null;
+  const best = cands.map((c) => ({ c, ...changeStage(c) })).sort((a, b) => b.rank - a.rank || String(b.c.date_raised ?? "").localeCompare(String(a.c.date_raised ?? "")))[0];
+  return describeChange(best.c, false);
+}
+
+/** What has to happen next for the customs duty of a contractor to come back. */
+export function customsNextAction(change: LinkedChange | null, stillToRecover: number, recovered: boolean, toRecover = stillToRecover): string {
+  if (recovered) return "Closed – fully recovered";
+  if (stillToRecover < 0.5) return toRecover > 0.5 ? "Closed – recovered through the DVO" : "Nothing to recover yet";
+  if (!change) return "Raise the RFC / EI for the recovery and link it here";
+  switch (change.stage) {
+    case "DVO approved":
+      return "Deduct through the next IPC and close";
+    case "DVO pending":
+      return "Determine the DVO";
+    case "VO issued":
+    case "EI issued":
+      return "Issue the DVO";
+    case "PVO approved":
+      return "Issue the VO / EI";
+    case "PVO pending":
+      return "Approve the PVO";
+    case "RFC raised":
+      return "Raise and approve the PVO";
+    default:
+      return "Raise the RFC / EI";
+  }
 }
 
 /**
@@ -164,6 +291,7 @@ export function customsWithDvo(rows: RecordRow[], changes: RecordRow[]): (Record
   }
   const usedLine = new Set<number>();
   const usedContractor = new Set<string>();
+  const usedChange = new Set<number>();
   const out = [...rows]
     .sort((a, b) => n(b.to_recover) - n(a.to_recover))
     .map((r) => {
@@ -171,7 +299,17 @@ export function customsWithDvo(rows: RecordRow[], changes: RecordRow[]): (Record
       let source = "";
       const lineId = Number(r.cost_line_id);
       const ck = contractorKey(r.contractor_id__label || r.vendor);
-      if (lineId && dvoByLine.has(lineId) && !usedLine.has(lineId)) {
+      // the change item set on the row by hand: its determined DVO is the recovery, whatever its wording
+      const explicitId = Number(r.change_id ?? 0);
+      const explicit = explicitId ? changes.find((c) => Number(c.id) === explicitId) : undefined;
+      const explicitDvo = explicit ? changeContribution(explicit) : null;
+      if (explicit && explicitDvo && explicitDvo.col === "H" && explicitDvo.amount && !usedChange.has(explicitId)) {
+        recovered = Math.abs(explicitDvo.amount);
+        source = `DVO ${String(explicit.item_no ?? explicit.id)} (linked change item)`;
+        usedChange.add(explicitId);
+        usedContractor.add(ck);
+        if (lineId) usedLine.add(lineId);
+      } else if (lineId && dvoByLine.has(lineId) && !usedLine.has(lineId)) {
         const d = dvoByLine.get(lineId)!;
         recovered = d.amount;
         source = `DVO ${d.refs.join(", ")} (change tracker)`;
@@ -234,10 +372,17 @@ export function getCustomsSummary(rawRows: RecordRow[], changes: RecordRow[] = [
     .map(([contractor, list]) => {
       const decl = [...(declOf.get(contractor) ?? [])].sort(byDate);
       const rsgPaidList = decl.filter((d) => d.paid_by === "RSG" || n(d.rsg_paid) > 0);
+      const links = list.map((r) => linkedChangeFor(r, changes)).filter((x): x is LinkedChange => !!x);
+      const change = links.find((l) => l.explicit) ?? links.sort((a, b) => b.rank - a.rank)[0] ?? null;
+      const totals = custTotals(list);
+      const recovered = list.length > 0 && list.every((r) => r.status === "Recovered");
       return {
         contractor,
         rows: list as RecordRow[],
-        totals: custTotals(list),
+        totals,
+        change,
+        nextAction: customsNextAction(change, totals.stillToRecover, recovered, totals.toRecover),
+        recovered,
         payer: [...new Set(list.map((r) => String(r.customs_payer ?? "").trim()).filter(Boolean))].join(" · "),
         dvoNote: [...new Set(list.map((r) => r.dvo_source).filter(Boolean))].join("; "),
         declarations: decl,

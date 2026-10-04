@@ -105,6 +105,7 @@ export const customsRecovery: RegisterDef = {
     { key: "unrecoverable", label: "Unrecoverable", type: "money", section: RECOVERY, hideInTable: true },
     { key: "recoverable_via_contractor", label: "Recoverable through contractor", type: "money", section: RECOVERY },
     { key: "ps_exceeds", label: "Customs PS exceeded", type: "money", section: RECOVERY, hideInTable: true },
+    { key: "change_id", label: "Change item (cost recovery)", type: "lookup", lookup: { register: "changes" }, section: RECOVERY, hideInTable: true, help: "The RFC / EI → PVO → VO → DVO entry in Change Management that recovers this customs duty. Found by itself when its wording mentions customs for the same contractor; set it here when it does not." },
     { key: "notice_ref", label: "Notice of customs recovery", type: "text", section: RECOVERY, hideInTable: true },
     { key: "pvo_ref", label: "PVO / Employer notice ref", type: "text", section: RECOVERY, hideInTable: true },
     { key: "pvo_date", label: "PVO approved date", type: "date", section: RECOVERY, hideInTable: true },
