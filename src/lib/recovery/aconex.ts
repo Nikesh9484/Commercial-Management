@@ -189,3 +189,44 @@ export function buildAconexReconciliation(data: ReportData): AconexReconciliatio
     counts: { aconex: rows.length, dashboard: data.costReport.lines.length, matched: matched.length, differing: discrepancies.length, tolerance: TOLERANCE },
   };
 }
+
+export interface VarianceSource {
+  code: string;
+  name: string;
+  contractor: string;
+  rowType: string;
+  aconex: number;
+  dashboard: number;
+  diff: number;
+  /** the Aconex rows behind the line, when several point at one cost report line */
+  aconexRows: string[];
+}
+
+/**
+ * Where a total's difference comes from: the matched lines that carry it, built the way the total is –
+ * each cost report line once, the Aconex rows pointing at it added together – so the listed differences
+ * add up exactly to the figure in the totals table. Largest first; lines that agree are left out.
+ */
+export function varianceSources(rec: AconexReconciliation, key: AconexMeasureKey): { lines: VarianceSource[]; total: number; agreeing: number } {
+  const counts = (rowType: string) => key === "budget" || key === "eac" || rowType !== "Budget hold";
+  const groups = new Map<string, VarianceSource>();
+  for (const l of rec.lines) {
+    if (l.status !== "matched" || !counts(l.rowType)) continue;
+    let g = groups.get(l.code);
+    if (!g) {
+      g = { code: l.code, name: l.name, contractor: l.contractor, rowType: l.rowType, aconex: 0, dashboard: l.dashboard[key] ?? 0, diff: 0, aconexRows: [] };
+      groups.set(l.code, g);
+    }
+    g.aconex = r2(g.aconex + (l.aconex[key] ?? 0));
+    g.aconexRows.push(l.aconexCode);
+  }
+  let agreeing = 0;
+  const lines: VarianceSource[] = [];
+  for (const g of groups.values()) {
+    g.diff = r2(g.aconex - g.dashboard);
+    if (Math.abs(g.diff) < TOLERANCE) agreeing++;
+    else lines.push(g);
+  }
+  lines.sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
+  return { lines, total: r2(lines.reduce((t, l) => t + l.diff, 0)), agreeing };
+}
