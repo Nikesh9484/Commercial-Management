@@ -426,8 +426,9 @@ export async function renderOwnLayout(programmeId: number, periodId: number | nu
     notes.push(`Schedule H: ${written} contracts updated (a contract without a row is listed on the dashboard only).`);
   }
   const apps = src.rows("payment_applications");
-  // the visible IPC logs are the live ones; a hidden copy is left as it is
-  const ipcSheets = wb.sheets.filter((s) => !s.hidden && /^schedule h\s*[-a-z0-9+]/i.test(s.name.trim()) && s.name.trim().toLowerCase() !== "schedule h");
+  // every IPC log, the visible ones first: a closed contract's log is usually hidden and still feeds Schedule H,
+  // and where a hidden copy doubles a visible sheet of the same contract it is left as it is
+  const ipcSheets = wb.sheets.filter((s) => /^schedule h\s*[-a-z0-9+]/i.test(s.name.trim()) && s.name.trim().toLowerCase() !== "schedule h").sort((a, b) => Number(Boolean(a.hidden)) - Number(Boolean(b.hidden)));
   const usedContracts = new Set<number>();
   for (const s of ipcSheets) {
     const hdr = wb.headerRow(s, ["sr nr", "payment applicat"]) ?? 11;
@@ -453,19 +454,32 @@ export async function renderOwnLayout(programmeId: number, periodId: number | nu
       return i === t.length;
     };
     const titleWords = words(title);
+    // the sheet's own figures: a contract whose cumulative amounts stand in the sheet is the one it logs –
+    // this tells apart several contracts of one contractor (Al Saad's main works, early works, jetty)
+    const figures = new Set<number>();
+    for (const r of [...s.rows.keys()].sort((x, y) => x - y).slice(0, 200))
+      for (const c of [...(s.rows.get(r)?.cells.keys() ?? [])]) {
+        const v = wb.number(s, r, c);
+        if (v !== null && Math.abs(v) >= 1000) figures.add(Math.round(v * 100) / 100);
+      }
+    const hits = (c: Row) => apps.filter((a) => Number(a.contract_id) === Number(c.id)).reduce((n, a) => n + [a.cumulative_claimed, a.cumulative_certified].filter((v) => v !== null && v !== undefined && figures.has(Math.round(Number(v) * 100) / 100)).length, 0);
     const score = (c: Row) => {
       const name = src.name("contractors", c.contractor_id).toLowerCase();
       const cw = words(name);
       const letters = name.replace(/[^a-z]/g, "");
       const initials = name.split(/[^a-z]+/).filter(Boolean).map((w) => w[0]).join("");
+      const tokens = name.split(/[^a-z]+/).filter(Boolean);
       let n = 0;
       if (po && String(c.reef_po_no) === po) n += 10;
       if (frag && upper(c.acc_ref).includes(frag)) n += 5;
       n += 3 * titleWords.filter((w) => cw.some((x) => sameWord(w, x))).length;
-      if (abbrevs.some((t) => initials.startsWith(t) || (t.length >= 3 && subseq(t, letters)))) n += 2;
+      if (abbrevs.some((t) => tokens.includes(t))) n += 5;
+      else if (abbrevs.some((t) => initials.startsWith(t) || (t.length >= 3 && subseq(t, letters)))) n += 2;
+      n += Math.min(10, hits(c));
       return n;
     };
     const ranked = contracts.map((c) => ({ c, n: score(c) })).filter((x) => x.n >= 3).sort((x, y) => y.n - x.n);
+    if (process.env.OWN_LAYOUT_DEBUG) console.log(`[own-layout] ${s.name.trim()}: tab "${tab}" head "${headRow ? wb.text(s, headRow, 1) : ""}" po ${po ?? "-"} frag ${frag ?? "-"} ->`, ranked.slice(0, 4).map((x) => `${x.c.acc_ref} ${x.c.reef_po_no} ${src.name("contractors", x.c.contractor_id)} =${x.n}`));
     const nameAgrees = (c: Row) => titleWords.length === 0 && abbrevs.length === 0 ? true : score(c) - (po && String(c.reef_po_no) === po ? 10 : 0) - (frag && upper(c.acc_ref).includes(frag) ? 5 : 0) > 0;
     let contract = ranked.length && (ranked.length === 1 || ranked[0].n > ranked[1].n) ? ranked[0].c : undefined;
     if (contract && !nameAgrees(contract) && (titleWords.length || abbrevs.length)) contract = undefined;
@@ -483,9 +497,9 @@ export async function renderOwnLayout(programmeId: number, periodId: number | nu
       month: wb.columnOf(s, hdr, "month"),
       ref: wb.columnOf(s, hdr, "aconex"),
       date: wb.columnOf(s, hdr, "date") || 5,
-      cum: wb.columnOf(s, hdr, "cumulative claimed"),
+      cum: wb.columnOf(s, hdr, "cumulative claimed") || wb.columnOf(s, hdr, "cummulative claimed") || wb.columnOf(s, hdr, "cum", "claimed amt"),
       ipcNo: wb.columnOf(s, hdr, "ipc nr") || wb.columnOf(s, hdr, "ipc no"),
-      cumCert: wb.columnOf(s, hdr, "cumulative certified"),
+      cumCert: wb.columnOf(s, hdr, "cumulative certified") || wb.columnOf(s, hdr, "cummulative certified") || wb.columnOf(s, hdr, "cum", "certified amt"),
       paid: wb.columnOf(s, hdr, "payment date") || wb.columnOf(s, hdr, "paid"),
     };
     const row = s.rows.get(hdr);
@@ -498,12 +512,8 @@ export async function renderOwnLayout(programmeId: number, periodId: number | nu
     const t = new Table(wb, s, hdr + 2, 1, numericKey(wb, s, 1), (r) => upper(wb.text(s, r, 1)).startsWith("TOTAL"));
     const inserted = { n: 0 };
     let written = 0;
-    for (const a of apps.filter((x) => Number(x.contract_id) === Number(contract.id)).sort((x, y) => Number(x.sr_no ?? 0) - Number(y.sr_no ?? 0))) {
-      const sr = n0(a.sr_no) ?? lastNo(a.application_no);
-      if (sr === null) continue;
-      const r = t.rowFor(String(sr), inserted);
-      if (!r) continue;
-      wb.set(s, r, 1, sr);
+    const mine = apps.filter((x) => Number(x.contract_id) === Number(contract.id)).sort((x, y) => Number(x.sr_no ?? 0) - Number(y.sr_no ?? 0));
+    const writeApp = (r: number, a: (typeof apps)[number]) => {
       if (col.appNo) wb.set(s, r, col.appNo, String(a.application_no ?? ""));
       if (col.month && a.month) {
         const m = String(a.month).match(/^([A-Za-z]{3})'(\d{2})$/);
@@ -521,6 +531,73 @@ export async function renderOwnLayout(programmeId: number, periodId: number | nu
       if (invDate && a.invoice_date) wb.set(s, r, invDate, String(a.invoice_date), { date: true });
       if (col.paid && a.paid_date) wb.set(s, r, col.paid, String(a.paid_date), { date: true });
       written++;
+    };
+    // the row every new or pencilled-in row computes like: a recent application row whose formulas carry no
+    // one-off figures (an adjustment typed into one row is that row's alone)
+    const formulaCells = (r: number) => [...(s.rows.get(r)?.cells.values() ?? [])].filter((c) => /<f\b/.test(c.inner));
+    const oneOffs = (r: number) => formulaCells(r).filter((c) => /(?<![A-Z$])\d{4,}(?:\.\d+)?/.test(c.inner.replace(/<[^>]+>/g, ""))).length;
+    const refRow = () => {
+      const keyed = [...t.rows.values()].flat().sort((a, b) => a - b);
+      const recent = keyed.slice(-12).filter((r) => formulaCells(r).length >= 4);
+      if (!recent.length) return keyed.length ? keyed[keyed.length - 1] : t.last;
+      const fewest = Math.min(...recent.map(oneOffs));
+      return recent.filter((r) => oneOffs(r) === fewest).pop()!;
+    };
+    // a new row goes after the last one, in sequence, and the total reaches it
+    let end = t.last;
+    const addRow = (): number | null => {
+      if (!end) return null;
+      const tpl = refRow();
+      let total: number | null = null;
+      for (let x = end + 1; x <= end + 40 && total === null; x++) if (upper(wb.text(s, x, 1)).startsWith("TOTAL")) total = x;
+      const at = end + 1;
+      wb.insertRows(s, at, 1, tpl);
+      inserted.n++;
+      if (total !== null) wb.growRanges(s, total + 1, end, at);
+      end = at;
+      t.scan();
+      return at;
+    };
+    for (const a of mine) {
+      if (a.fa_id) continue;
+      const sr = n0(a.sr_no) ?? lastNo(a.application_no);
+      if (sr === null) continue;
+      const pencilled = t.rows.get(String(sr))?.[0] ?? null;
+      const r = pencilled ?? addRow();
+      if (!r) continue;
+      const ref = refRow();
+      wb.set(s, r, 1, sr);
+      writeApp(r, a);
+      if (ref !== r && formulaCells(r).length === 0) wb.fillFormulas(s, ref, r);
+      if (r > end) end = r;
+    }
+    // the balance settled outside the IPC series (final account settlement, Head Office payment): the log's
+    // own row for it when the workbook has one – a row without a number naming the final account or Head
+    // Office between the last application and the total – else a new last row, so the net, VAT and
+    // cumulative paid follow the sheet's own formulas and the total reaches it
+    for (const a of mine.filter((x) => x.fa_id)) {
+      if (!end) break;
+      const headOffice = /head\s*office/i.test(String(a.application_no ?? ""));
+      let total: number | null = null;
+      for (let x = end + 1; x <= end + 40 && total === null; x++) if (upper(wb.text(s, x, 1)).startsWith("TOTAL")) total = x;
+      let r: number | null = null;
+      for (let x = end + 1; x < (total ?? end + 1); x++) {
+        const label = `${wb.text(s, x, 1)} ${col.appNo ? wb.text(s, x, col.appNo) : ""}`;
+        if (/final\s*account|settlement|head\s*office/i.test(label)) {
+          r = x;
+          break;
+        }
+      }
+      const own = r !== null;
+      if (r === null) r = addRow();
+      if (r === null) break;
+      if (!own) wb.set(s, r, 1, headOffice ? "Head Office" : "Final Account");
+      writeApp(r, a);
+      if (!own) {
+        const ref = refRow();
+        if (ref !== r) wb.fillFormulas(s, ref, r);
+      }
+      end = Math.max(end, r);
     }
     notes.push(`${s.name.trim()}: ${written} applications written for ${src.name("contractors", contract.contractor_id) || contract.title}${inserted.n ? `, ${inserted.n} new row${inserted.n === 1 ? "" : "s"} added` : ""}.`);
   }

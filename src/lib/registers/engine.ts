@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 import { CLOSED_STATUSES, impliedOverallStatus } from "./defs/changes";
 import { CONTRACT_CLOSED_STATUS, syncContractClosedChanges } from "../changes/auto-close";
+import { syncFinalAccounts, syncFinalAccountSettlements } from "../final-accounts/adjustment";
 import { getDb, columnFor, getSetting } from "../db";
 import { getRegisterDef, allRegisters } from "./index";
 import { isEditorRole } from "./types";
@@ -404,7 +405,7 @@ export function createRecord(def: RegisterDef, input: Record<string, unknown>, u
     summary: `${source === "import" ? "Imported" : "Added"} ${def.singular} "${describe(def, prepared.display)}"`,
     changes,
   });
-  afterWrite(def, prepared.values.programme_id);
+  afterWrite(def, prepared.values.programme_id, user);
   return getRecord(def, id)!;
 }
 
@@ -412,10 +413,21 @@ export function createRecord(def: RegisterDef, input: Record<string, unknown>, u
 const CLOSURE_SOURCES = ["final_accounts", "contracts", "changes"];
 
 /** Keeps the changes of a finished contract closed (and reopens them when it reopens) after a write to the registers that decide it. */
-function afterWrite(def: RegisterDef, programmeId: unknown) {
+function afterWrite(def: RegisterDef, programmeId: unknown, user: UserInfo | null = null) {
+  const pid = programmeId === null || programmeId === undefined || programmeId === "" ? undefined : Number(programmeId);
+  if (def.key === "final_accounts" || def.key === "payment_applications") {
+    // the statement's omissions and negotiation adjustment (one Final Account change per row) and the
+    // settlement of a final price the certificates do not reach (one payment row), kept in step
+    try {
+      if (def.key === "final_accounts") syncFinalAccounts(getDb(), pid, user);
+      else syncFinalAccountSettlements(getDb(), pid, user);
+    } catch (e) {
+      console.warn("[final accounts] sync skipped:", e);
+    }
+  }
   if (!CLOSURE_SOURCES.includes(def.key)) return;
   try {
-    syncContractClosedChanges(getDb(), programmeId === null || programmeId === undefined || programmeId === "" ? undefined : Number(programmeId));
+    syncContractClosedChanges(getDb(), pid);
   } catch (e) {
     console.warn("[changes] contract-closure sync skipped:", e);
   }
@@ -470,7 +482,7 @@ export function updateRecord(
       .join(", ")}`,
     changes,
   });
-  afterWrite(def, existing.programme_id);
+  afterWrite(def, existing.programme_id, user);
   return getRecord(def, id)!;
 }
 

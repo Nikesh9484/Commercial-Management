@@ -94,6 +94,7 @@ export const changes: RegisterDef = {
     { key: "contract_closed", label: "Contract closed (final account)", type: "boolean", virtual: true, readonly: true, hideInForm: true, hideInTable: true, filter: true, help: "Worked out from the Final Account Status: the final account for this contract is signed, not required or a direct payment. The standard pending reports leave these out." },
     { key: "closed_by_contract", label: "Closed by contract closure", type: "boolean", defaultValue: false, readonly: true, hideInForm: true, hideInTable: true, help: "Set when the change was closed automatically because its contract is closed in the Final Account Status; it reopens if the contract does." },
     { key: "status_before_close_id", label: "Status before contract closure", type: "number", readonly: true, hideInForm: true, hideInTable: true },
+    { key: "fa_id", label: "Final account row", type: "number", readonly: true, hideInForm: true, hideInTable: true, help: "Set on the Final Account adjustment the dashboard keeps in step with a contract's Final Account Status row (its omissions and negotiation adjustment)." },
     { key: "project_stage_id", label: "Project stage", type: "lookup", lookup: { register: "project_stages" }, section: HEADER, filter: true },
     { key: "change_category_id", label: "Change category", type: "lookup", lookup: { register: "change_categories" }, section: HEADER, filter: true },
     { key: "initiated_by_id", label: "Initiated by", type: "lookup", lookup: { register: "change_initiators" }, section: HEADER, filter: true },

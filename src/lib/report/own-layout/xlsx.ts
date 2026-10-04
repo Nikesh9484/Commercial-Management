@@ -137,6 +137,16 @@ export class XSheet {
   }
 }
 
+/**
+ * A formula filled down by `delta` rows: relative row references move, absolute rows ($12) and other sheets'
+ * cells stay. Null for a "formula" that is only arithmetic on constants – a typed value, not carried.
+ */
+function fillDown(raw: string, delta: number): string | null {
+  const hasRef = /(?<![A-Za-z0-9_!'.$])\$?[A-Z]{1,3}\$?\d+(?![\d(A-Za-z_])/.test(raw) || /!/.test(raw);
+  if (!hasRef) return null;
+  return raw.replace(/(?<![A-Za-z0-9_!'.$])(\$?[A-Z]{1,3})(\$?)(\d+)(?![\d(A-Za-z_])/g, (m, c: string, a: string, rr: string) => (a === "$" || Number(rr) + delta < 1 ? m : `${c}${Number(rr) + delta}`));
+}
+
 export class XWorkbook {
   zip!: JSZip;
   sheets: XSheet[] = [];
@@ -255,6 +265,45 @@ export class XWorkbook {
     return true;
   }
 
+  /**
+   * Gives row `to` the formulas of row `from` (filled down, relative references moved with the row) in every
+   * cell it has nothing in: a row the workbook only pencilled in (a number and a name) and a row added at
+   * the end both compute like the rows above them. Cells with a value or a formula are left alone.
+   */
+  fillFormulas(s: XSheet, from: number, to: number): void {
+    if (from === to) return;
+    this.expandSharedFormulas(s);
+    const src = s.rows.get(from);
+    if (!src) return;
+    let row = s.rows.get(to);
+    if (!row) {
+      row = { r: to, attrs: "", cells: new Map() };
+      s.rows.set(to, row);
+    }
+    for (const cell of src.cells.values()) {
+      const fm = cell.inner.match(/<f\b[^>]*>([\s\S]*?)<\/f>/);
+      if (!fm) continue;
+      const cur = row.cells.get(cell.c);
+      if (cur && cur.inner.trim()) continue;
+      const f = fillDown(unesc(fm[1]), to - from);
+      if (f === null) continue;
+      row.cells.set(cell.c, { c: cell.c, attrs: (cur ?? cell).attrs.replace(/\s*\bt="[^"]*"/, ""), inner: `<f>${esc(f)}</f>` });
+      s.dirty = true;
+    }
+  }
+
+  /** A total row whose ranges ended on `oldEnd` (the last application) now reaches `newEnd` (a row added after it). */
+  growRanges(s: XSheet, r: number, oldEnd: number, newEnd: number): void {
+    const row = s.rows.get(r);
+    if (!row) return;
+    for (const cell of row.cells.values()) {
+      if (!/<f\b/.test(cell.inner)) continue;
+      const before = cell.inner;
+      cell.inner = cell.inner.replace(/<f\b([^>]*)>([\s\S]*?)<\/f>/g, (_m, a: string, f: string) => `<f${a}>${f.replace(new RegExp(`(:\\$?[A-Z]{1,3}\\$?)${oldEnd}(?!\\d)`, "g"), `$1${newEnd}`)}</f>`);
+      if (cell.inner !== before) s.dirty = true;
+    }
+  }
+
   /** The first row (from `from`) whose cells carry every one of the words, else null. */
   headerRow(s: XSheet, words: string[], from = 1, to = 40): number | null {
     for (let r = from; r <= to; r++) {
@@ -320,10 +369,12 @@ export class XWorkbook {
         const fm = cell.inner.match(/<f\b([^>]*)>([\s\S]*?)<\/f>/);
         let inner = "";
         if (fm) {
-          // the template row's own row number becomes this row's
+          // filled down from the template row: every relative row reference moves with the row (F33-F32 on
+          // row 33 becomes F34-F31 on row 34), absolute rows ($12) and other sheets' cells stay; a "formula"
+          // that is only arithmetic on constants (=122763+306790.9) is a typed value, not carried
           const tplRow = template >= at ? template + n : template;
-          const f = unesc(fm[2]).replace(/(?<![A-Za-z0-9_!'.$])(\$?[A-Z]{1,3})(\d+)(?![\d(A-Za-z_])/g, (m, c: string, rr: string) => (Number(rr) === tplRow ? `${c}${r}` : m));
-          inner = `<f>${esc(f)}</f>`;
+          const f = fillDown(unesc(fm[2]), r - tplRow);
+          if (f !== null) inner = `<f>${esc(f)}</f>`;
         }
         cells.set(cell.c, { c: cell.c, attrs: cell.attrs.replace(/\s*\bt="[^"]*"/, ""), inner });
       }

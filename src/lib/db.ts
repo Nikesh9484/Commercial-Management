@@ -303,7 +303,7 @@ function seed(db: Database.Database) {
   seedList(db, "approval_statuses", ["Approved", "Rejected", "Pending", "Revised & Re-submit", "Superseded", "Cancelled", "Transferred", "Review Complete"], stamp);
   seedList(db, "change_initiators", ["Contract", "Consultant", "Contractor", "Employer", "Authority"], stamp);
   seedList(db, "project_stages", ["Pre-Contract Variation", "Post-Contract Variation", "Consultant Variation"], stamp);
-  seedList(db, "change_categories", ["Design Dev", "Client Change", "Authority", "Brief Change", "EOT Claim", "Value Engineering"], stamp);
+  seedList(db, "change_categories", ["Design Dev", "Client Change", "Authority", "Brief Change", "EOT Claim", "Value Engineering", "Final Account"], stamp);
   seedList(
     db,
     "bond_types",

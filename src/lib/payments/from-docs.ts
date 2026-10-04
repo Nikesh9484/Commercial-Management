@@ -44,6 +44,8 @@ interface DocRead {
   amountDue: number | null;
   workDoneToDate: number | null;
   recommendationDate: string;
+  /** the Aconex Cost "Payment Certificate" form: the Employer's certificate itself, so it fills the certified columns */
+  certifies: boolean;
   /** a final payment certificate / application (the last one under the final account) */
   isFinal: boolean;
   /** the final contract price the pack states, when it does – the cumulative of the final certificate */
@@ -156,7 +158,10 @@ async function readOne(f: DocFile): Promise<DocRead | null> {
   const sentDate = dateOf(head.match(/\bSent\s*\n?\s*([A-Za-z]+,?\s+[A-Za-z]+\s+\d{1,2},?\s+\d{4})/)?.[1] ?? "");
   const letterDate = dateOf(head.match(/\bDate:?\s*\n?\s*(\d{1,2}\s+[A-Za-z]+\s+\d{4})/)?.[1] ?? "") || dateOf(head.match(/\n(\d{1,2} [A-Za-z]{3,9} \d{4})\s*\n/)?.[1] ?? "");
   const isIpc = /Interim Payment Certificate|Proposes to pay the Contractor|Payment Certificate No\.?\s*\d/i.test(head) && /Proposes to pay|Employer hereby notifies/i.test(text);
-  const isCert = /PAYMENT CERTIFICATE NO\.|Recommendation No\.|CERTIFICATE SUMMARY|Amount due for this Recommendation/i.test(text) && !isIpc;
+  // the Aconex Cost "Payment Certificate" form (1TB01031-031C05-AMA-PAC-…): "Payment Certificate# 20", then
+  // Gross Certified to Date | Less Previously Certified | This Certificate, Budget Details, Total Spent to Date
+  const isPac = /Payment Certificate#\s*\d+/i.test(head) && /Gross Certified to\b/i.test(text) && /Less Previously Certified/i.test(text) && !isIpc;
+  const isCert = (isPac || /PAYMENT CERTIFICATE NO\.|Recommendation No\.|CERTIFICATE SUMMARY|Amount due for this Recommendation/i.test(text)) && !isIpc;
   // the contractor's Aconex mail carrying the application: a transmittal, a general correspondence or a letter
   const isMail = /MAIL TYPE/i.test(head.slice(0, 1500)) && /\b(?:Transmittal|General Correspondence|Letter|Correspondence)\b/i.test(head.slice(0, 1500));
   const isIpa = isMail && /Interim Payment Application|\bIPA\b|Payment Application|Payment Certificate Submission/i.test(subject);
@@ -165,16 +170,28 @@ async function readOne(f: DocFile): Promise<DocRead | null> {
     const m = s.match(/(?:Certificate|Application|IPA|IPC|Recommendation)\s*(?:No\.?|Number|#|-)?\s*\(?(?:No\.?\s*)?0*(\d{1,3})\b/i) ?? s.match(/\bIPA[\s-]*0*(\d{1,3})\b/i) ?? s.match(/\bIPC[\s-]*0*(\d{1,3})\b/i);
     return m ? Number(m[1]) : null;
   };
-  let no = noFrom(subject) ?? noFrom(f.name.replace(/[_]+/g, " "));
+  let no = isPac ? Number(head.match(/Payment Certificate#\s*(\d+)/i)![1]) : (noFrom(subject) ?? noFrom(f.name.replace(/[_]+/g, " ")));
   if (no === null && kind === "certificate") no = noFrom(text.match(/PAYMENT CERTIFICATE NO\.?\s*\d+/i)?.[0] ?? "") ?? (Number(text.match(/Recommendation No\.\s*\n?\s*(\d{1,3})\b/)?.[1] ?? NaN) || null) ?? noFrom(text.match(/\bIPA[\s_-]*0*\d{1,3}\b/i)?.[0] ?? "");
   if (no === null && kind === "ipc") no = noFrom(text.match(/Interim Payment Certificate\s*\(?No\.?\s*\d+/i)?.[0] ?? "");
   const upTo = text.match(/completed works up to\s*\n?\s*(\d{1,2} [A-Za-z]+ \d{4})/i)?.[1] ?? "";
   const month = monthLabel(subject.match(/(?:Month of|for month of|for the month of)\s*([A-Za-z]+\.?\s*\d{4})/i)?.[1] ?? "") || monthLabel(subject.match(/-\s*([A-Za-z]+ \d{4})\s*$/)?.[1] ?? "") || monthLabel(upTo) || monthLabel(text.match(/Valuation Month\s*\n?\s*(?:\d{1,2}[-\s])?([A-Za-z]{3,9}[-\s]\d{2,4})/i)?.[1] ?? "") || monthLabel(text.match(/Work Completed at:?\s*\n?\s*\d{1,2}[-\s]([A-Za-z]{3,9}[-\s]\d{2,4})/i)?.[1] ?? "");
+  const pacPeriodEnd = isPac ? dateOf(text.match(/Invoicing Period From\s*\d{1,2}\/\d{1,2}\/\d{4}\s*\n?\s*To\s*(\d{1,2}\/\d{1,2}\/\d{4})/i)?.[1] ?? "") : "";
+  const pacMonth = pacPeriodEnd ? monthLabel(pacPeriodEnd) : "";
   const submittedOn = dateOf(text.match(/submitted on\s*\n?\s*(\d{1,2} [A-Za-z]+(?: [A-Za-z]+)? \d{4})/i)?.[1] ?? "");
   const applicationRef = text.match(/(?:under Aconex mail reference|Your Ref:?|REFERENCE NUMBER)\s*\n?\s*([A-Z]{2,8}(?:\d{5})?-[A-Z]{2,10}-\s*\n?\s*\d{6})/i)?.[1]?.replace(/\s+/g, "") ?? "";
   const proposes = text.match(/Proposes to pay the Contractor\s*SAR\s*[\d,]+(?:\.\d{2})?(\s*Incl\.?\s*(?:WHT|VAT))?/i);
   // the pack's "Amount due for this Recommendation" line before tax (the one marked INCL. WHT/VAT is after it)
+  const pacTotals = (() => {
+    if (!isPac) return null;
+    for (const line of text.split("\n")) {
+      if (!/^\s*Total\b/i.test(line) || /Total Spent|Total SAR/i.test(line)) continue;
+      const nums = [...line.matchAll(/-?[\d,]+\.\d{2}/g)].map((m) => num(m[0]));
+      if (nums.length >= 3 && Math.abs(nums[1] + nums[2] - nums[0]) < 1) return { toDate: nums[0], previous: nums[1], current: nums[2] };
+    }
+    return null;
+  })();
   const amountDue = (() => {
+    if (pacTotals) return pacTotals.current;
     for (const line of text.split("\n")) {
       if (!/Amount due for this (?:Recommendation|Certificate|Application)/i.test(line) || /INCL/i.test(line)) continue;
       const m = line.match(/([\d,]+\.\d{2})\s*$/);
@@ -187,6 +204,7 @@ async function readOne(f: DocFile): Promise<DocRead | null> {
   // the certificate pack: its rows run Contract price | Previous | Current | To date; the "Total Work Done"
   // row is the largest one where previous + current = to date (the grand total after retention is smaller)
   const workDoneToDate = (() => {
+    if (pacTotals) return pacTotals.toDate;
     const money = (t: string) => [...t.matchAll(/\(?-?[\d,]{4,}\.\d{2}\)?/g)].map((m) => (m[0].startsWith("(") ? -1 : 1) * num(m[0]));
     // the "Total Work Done" row itself when the pack has one: contract price | previous | current | to date
     for (const line of text.split("\n")) {
@@ -206,8 +224,14 @@ async function readOne(f: DocFile): Promise<DocRead | null> {
     }
     return best;
   })();
-  const isFinal = /\bFinal (?:Payment|Account)\b|\bFINAL (?:PAYMENT|ACCOUNT)\b/.test(`${subject}\n${head}`) || /Final Payment (?:Certificate|Application)/i.test(text);
+  // the form's budget fully spent (Total Spent to Date 100%, Remaining Budget 0.00): the final certificate
+  const pacSpent = isPac && /Total Spent to Date\s*100\.00\s*%/i.test(text) && /Remaining Budget\s*0\.00\s*%\s*0\.00/i.test(text);
+  const isFinal = pacSpent || /\bFinal (?:Payment|Account)\b|\bFINAL (?:PAYMENT|ACCOUNT)\b/.test(`${subject}\n${head}`) || /Final Payment (?:Certificate|Application)/i.test(text);
   const finalPrice = (() => {
+    if (pacSpent) {
+      const m = text.match(/^\s*Total SAR\s*([\d,]+\.\d{2})\s*$/im);
+      if (m) return num(m[1]);
+    }
     for (const line of text.split("\n")) {
       if (!/Final (?:Contract|Account) (?:Price|Sum|Value|Amount)/i.test(line)) continue;
       const m = line.match(/([\d,]{7,}\.\d{2})\s*$/) ?? line.match(/([\d,]{7,}\.\d{2})/);
@@ -215,15 +239,15 @@ async function readOne(f: DocFile): Promise<DocRead | null> {
     }
     return null;
   })();
-  const recommendationDate = dateOf(text.match(/Recommendation Date\s*\n?\s*(\d{1,2}-[A-Za-z]{3}-\d{2,4})/i)?.[1] ?? "") || dateOf(text.match(/Payment Certificate Date:?\s*\n?\s*(\d{1,2}[-\/][A-Za-z0-9]{2,3}[-\/]\d{2,4})/i)?.[1] ?? "");
-  const label = kind === "ipa" ? "payment application (transmittal)" : kind === "ipc" ? "Interim Payment Certificate letter" : kind === "certificate" ? "payment certificate pack" : "";
+  const recommendationDate = (isPac ? dateOf(text.match(/Invoice Date\s*(\d{1,2}\/\d{1,2}\/\d{4})/i)?.[1] ?? "") : "") || dateOf(text.match(/Recommendation Date\s*\n?\s*(\d{1,2}-[A-Za-z]{3}-\d{2,4})/i)?.[1] ?? "") || dateOf(text.match(/Payment Certificate Date:?\s*\n?\s*(\d{1,2}[-\/][A-Za-z0-9]{2,3}[-\/]\d{2,4})/i)?.[1] ?? "");
+  const label = kind === "ipa" ? "payment application (transmittal)" : kind === "ipc" ? "Interim Payment Certificate letter" : isPac ? "payment certificate (Aconex Cost form)" : kind === "certificate" ? "payment certificate pack" : "";
   const note = kind === "unknown" ? "not recognised as a payment application, certificate letter or payment certificate – kept out" : `${label}${no ? ` No ${String(no).padStart(3, "0")}` : ""}${month ? ` – ${month}` : ""}${netCertified ? ` – SAR ${formatMoney(netCertified)}` : amountDue ? ` – SAR ${formatMoney(amountDue)}` : ""}`;
   const history = kind === "unknown" ? [] : readHistory(text);
   // the pack's own history ends with this certificate: its number is the one (a subject like "Final Payment
   // Application" carries none, and boilerplate can quote another certificate's number)
   const last = history[history.length - 1];
   if (last && (kind === "ipc" || kind === "certificate") && (no === null || no !== last.no) && [netCertified, amountDue].some((v) => v !== null && Math.abs(v - last.net) < 0.5)) no = last.no;
-  return { name: f.name, kind, text, programmeCode, acc, accCandidates, contractLine, mailNo, no, month, sentDate, letterDate, submittedOn, applicationRef, netCertified, amountDue, workDoneToDate, recommendationDate, isFinal, finalPrice, history, note: history.length ? `${note} – history of ${history.length} certificates` : note };
+  return { name: f.name, kind, text, programmeCode, acc, accCandidates, contractLine, mailNo, no, month: month || pacMonth, sentDate, letterDate, submittedOn, applicationRef, netCertified, amountDue, workDoneToDate, recommendationDate, certifies: isPac, isFinal, finalPrice, history, note: history.length ? `${note} – history of ${history.length} certificates` : note };
 }
 
 interface Plan {
@@ -380,6 +404,15 @@ export async function addPaymentsFromDocuments(files: DocFile[], user: UserInfo,
     }
     const adv = Number(g.contract.advance_recovery_pct ?? 0) / 100;
     const ret = Number(g.contract.retention_pct ?? 0) / 100;
+    if (!ipc && cert?.certifies && cert.workDoneToDate) {
+      // the Employer's own certificate form: what it certifies to date is the cumulative certified
+      if (no !== null) record.ipc_no = numbered(sample?.ipc_no, String(no));
+      if (cert.recommendationDate) record.ipc_date = cert.recommendationDate;
+      record.cumulative_certified = cert.workDoneToDate;
+      push("IPC date (certificate date)", cert.recommendationDate, cert.name);
+      push("Cumulative certified (gross certified to date)", cert.workDoneToDate, cert.name);
+      if (cert.amountDue) push("This certificate (SAR, before WHT)", cert.amountDue, cert.name);
+    }
     if (ipc) {
       record.ipc_aconex_ref = ipc.mailNo;
       record.ipc_date = ipc.sentDate || ipc.letterDate;

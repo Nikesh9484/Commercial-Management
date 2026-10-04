@@ -81,6 +81,7 @@ export const paymentApplications: RegisterDef = {
     { key: "programme_id", label: "Programme", type: "lookup", lookup: { register: "programmes" }, required: true, hideInTable: true, hideInForm: true },
     { key: "contract_id", label: "Contract", type: "lookup", lookup: { register: "contracts" }, required: true, filter: true, section: CLAIM },
     { key: "sr_no", label: "SR", type: "number", width: "4rem", section: CLAIM },
+    { key: "fa_id", label: "Final account row", type: "number", readonly: true, hideInForm: true, hideInTable: true, help: "Set on the final account settlement the dashboard keeps in step with a closed Final Account Status row whose final contract price the certificates do not reach." },
     { key: "application_no", label: "Payment application no", type: "text", required: true, section: CLAIM },
     { key: "month", label: "Month", type: "text", section: CLAIM, help: "e.g. Sep-26." },
     { key: "application_aconex_ref", label: "Application Aconex ref", type: "text", hideInTable: true, section: CLAIM },
