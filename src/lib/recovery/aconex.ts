@@ -23,7 +23,8 @@ export const ACONEX_MEASURES = [
   { key: "commitments", label: "Commitments", aconex: "current_commitments", dashboard: "I", decides: "contract", note: "Aconex current commitments vs column I (committed costs) – decides for contracts" },
   { key: "dvo", label: "Approved changes (DVO)", aconex: "approved_changes", dashboard: "H", decides: "none", note: "Aconex approved downstream contract changes vs column H (determined variation orders) – for information: the dashboard folds historic variations into the award" },
   { key: "pvo", label: "Pending changes (PVO)", aconex: "pending_changes", dashboard: "J", decides: "none", note: "Aconex pending downstream contract changes vs column J (potential variation orders) – for information" },
-  { key: "eac", label: "Estimate at completion", aconex: "eac", dashboard: "N", decides: "both", note: "Aconex estimate at completion vs column N (anticipated final account) – decides for every line" },
+  { key: "ew", label: "Early warnings", aconex: "approved_early_warnings_rsg", dashboard: "L", decides: "none", note: "Aconex approved + pending early warnings (RSG columns) vs column L (early warnings) – for information: RSG keeps its early warnings on the budget hold, the dashboard on the contract they belong to" },
+  { key: "eac", label: "Estimate at completion", aconex: "eac", dashboard: "N", decides: "both", note: "Aconex estimate at completion – RSG 1115 (approved budget less the approved early warnings) where the export carries it, else the standard Aconex EAC, which is the approved budget – vs column N (anticipated final account) – decides for every line" },
   { key: "incurred", label: "Incurred to date", aconex: "incurred_to_date", dashboard: "P", decides: "contract", note: "Aconex incurred to date vs column P (certified to date) – decides for contracts" },
 ] as const;
 
@@ -70,7 +71,7 @@ export interface AconexReconciliation {
 export const TOLERANCE = 1;
 
 function blankMeasures(): Record<AconexMeasureKey, number | null> {
-  return { budget: null, commitments: null, dvo: null, pvo: null, eac: null, incurred: null };
+  return { budget: null, commitments: null, dvo: null, pvo: null, ew: null, eac: null, incurred: null };
 }
 
 export function buildAconexReconciliation(data: ReportData): AconexReconciliation {
@@ -85,10 +86,12 @@ export function buildAconexReconciliation(data: ReportData): AconexReconciliatio
     commitments: r.current_commitments === null || r.current_commitments === undefined ? null : n(r.current_commitments),
     dvo: r.approved_changes === null || r.approved_changes === undefined ? null : n(r.approved_changes),
     pvo: r.pending_changes === null || r.pending_changes === undefined ? null : n(r.pending_changes),
-    eac: r.eac === null || r.eac === undefined ? null : n(r.eac),
+    ew: r.approved_early_warnings_rsg === null || r.approved_early_warnings_rsg === undefined ? (r.pending_early_warnings_rsg === null || r.pending_early_warnings_rsg === undefined ? null : n(r.pending_early_warnings_rsg)) : r2(n(r.approved_early_warnings_rsg) + n(r.pending_early_warnings_rsg)),
+    // RSG's own estimate at completion (1115) where the export carries it; the standard Aconex EAC is the budget
+    eac: r.eac_rsg !== null && r.eac_rsg !== undefined ? n(r.eac_rsg) : r.eac === null || r.eac === undefined ? null : n(r.eac),
     incurred: r.incurred_to_date === null || r.incurred_to_date === undefined ? null : n(r.incurred_to_date),
   });
-  const dashOf = (l: (typeof data.costReport.lines)[number]): Record<AconexMeasureKey, number | null> => ({ budget: l.G, commitments: l.I, dvo: l.H, pvo: l.J, eac: l.N, incurred: l.P });
+  const dashOf = (l: (typeof data.costReport.lines)[number]): Record<AconexMeasureKey, number | null> => ({ budget: l.G, commitments: l.I, dvo: l.H, pvo: l.J, ew: l.L, eac: l.N, incurred: l.P });
   const finish = (line: AconexLine) => {
     for (const m of ACONEX_MEASURES) {
       const a = line.aconex[m.key];
@@ -142,7 +145,7 @@ export function buildAconexReconciliation(data: ReportData): AconexReconciliatio
     if (usedLine.has(l.id)) continue;
     lines.push(finish({ status: "dashboard_only", code: l.code, aconexCode: "", name: l.name, contractor: l.contractor, category: l.category, rowType: l.is_budget_hold ? "Budget hold" : "Contract", aconex: blankMeasures(), dashboard: dashOf(l), diff: blankMeasures(), worst: 0, differs: [] }));
   }
-  const zero = () => ({ budget: 0, commitments: 0, dvo: 0, pvo: 0, eac: 0, incurred: 0 });
+  const zero = () => ({ budget: 0, commitments: 0, dvo: 0, pvo: 0, ew: 0, eac: 0, incurred: 0 });
   // The comparison is only meaningful over the lines both systems hold: an Aconex row with no
   // cost report line, or a cost report line Aconex does not carry, would otherwise be read as a
   // difference – and a cost report line that several Aconex rows point at must be counted once.
@@ -154,7 +157,7 @@ export function buildAconexReconciliation(data: ReportData): AconexReconciliatio
   const unmatched = { aconex: zero(), dashboard: zero() };
   const countedLines = new Set<string>();
   // budget and estimate at completion over every line; commitments, changes and incurred over the contracts only
-  const counts = (m: (typeof ACONEX_MEASURES)[number], rowType: string) => m.key === "budget" || m.key === "eac" || rowType !== "Budget hold";
+  const counts = (m: (typeof ACONEX_MEASURES)[number], rowType: string) => m.key === "budget" || m.key === "eac" || m.key === "ew" || rowType !== "Budget hold";
   for (const line of lines) {
     for (const m of ACONEX_MEASURES) {
       if (!counts(m, line.rowType)) continue;
@@ -208,7 +211,7 @@ export interface VarianceSource {
  * add up exactly to the figure in the totals table. Largest first; lines that agree are left out.
  */
 export function varianceSources(rec: AconexReconciliation, key: AconexMeasureKey): { lines: VarianceSource[]; total: number; agreeing: number } {
-  const counts = (rowType: string) => key === "budget" || key === "eac" || rowType !== "Budget hold";
+  const counts = (rowType: string) => key === "budget" || key === "eac" || key === "ew" || rowType !== "Budget hold";
   const groups = new Map<string, VarianceSource>();
   for (const l of rec.lines) {
     if (l.status !== "matched" || !counts(l.rowType)) continue;

@@ -75,7 +75,10 @@ export interface AconexResult {
   kept: number;
 }
 
-const COLS = ["Baseline Budget", "Approved Budget Changes", "Approved Budget Transfers", "Approved Budget", "Pending Budget", "Current Commitments", "Approved Downstream Contracts", "Approved Downstream Contract Changes", "Pending Downstream Contract Changes", "Current Downstream Contracts", "Estimate at Completion", "Potential EAC", "Incurred to Date", "Direct Actuals to Date", "At Completion Variance"] as const;
+// the standard Aconex Cost columns, then RSG's own columns (Estimate At Completion RSG 1115 is the budget less the
+// approved early warnings; 1040 the certification view) – read where the export carries them
+const RSG_COLS = ["Estimate At Completion RSG 1115", "At Completion Variance RSG 1115", "Approved Early Warnings RSG", "Pending Early Warnings RSG", "Potential Change / Early Warning", "Pending Contract Changes (PVOs)", "AMA Potential ETC", "Remaining To Certify RSG 1040", "Paid To Date", "Deductions (Non-Repayable)", "Deductions (Repayable)"] as const;
+const COLS = ["Baseline Budget", "Approved Budget Changes", "Approved Budget Transfers", "Approved Budget", "Pending Budget", "Current Commitments", "Approved Downstream Contracts", "Approved Downstream Contract Changes", "Pending Downstream Contract Changes", "Current Downstream Contracts", "Estimate at Completion", "Potential EAC", "Incurred to Date", "Direct Actuals to Date", "At Completion Variance", ...RSG_COLS] as const;
 
 export function convertAconexExport(sheets: SheetValues[], ctx: AconexContext): AconexResult {
   const s: Sheet = sheets[0];
@@ -137,8 +140,11 @@ export function convertAconexExport(sheets: SheetValues[], ctx: AconexContext): 
       num(v, "Incurred to Date"),
       num(v, "Direct Actuals to Date"),
       num(v, "At Completion Variance"),
+      ...RSG_COLS.map((c) => num(v, c)),
     ]);
   }
+  const rsgPresent = RSG_COLS.filter((c) => (money.get(c) ?? -1) >= 0);
+  notes.push(rsgPresent.length ? `RSG columns read as well: ${rsgPresent.join(", ")}.` : "No RSG columns (Estimate At Completion RSG 1115, early warnings, PVOs) in this export – the standard Aconex figures are compared.");
   notes.push(`Aconex control account export: ${kept} contract and budget-hold rows of ${ctx.programmeName} (${ctx.programmeCode}) out of ${total} rows in the file; ${linked} tied to a cost report line by contract code.`);
   if (kept && linked < kept) notes.push(`${kept - linked} row(s) have no cost report line with the same contract code – they are listed in the reconciliation as "not on the dashboard".`);
   return {
@@ -170,6 +176,17 @@ export function convertAconexExport(sheets: SheetValues[], ctx: AconexContext): 
           ["Incurred to date", "incurred_to_date"],
           ["Direct actuals to date", "actuals_to_date"],
           ["At completion variance", "at_completion_variance"],
+          ["Estimate at completion (RSG 1115)", "eac_rsg"],
+          ["At completion variance (RSG 1115)", "at_completion_variance_rsg"],
+          ["Approved early warnings (RSG)", "approved_early_warnings_rsg"],
+          ["Pending early warnings (RSG)", "pending_early_warnings_rsg"],
+          ["Potential change / early warning", "potential_change_ew"],
+          ["Pending contract changes (PVOs, RSG)", "pending_pvos_rsg"],
+          ["AMA potential ETC", "potential_etc_ama"],
+          ["Remaining to certify (RSG 1040)", "remaining_to_certify_rsg"],
+          ["Paid to date", "paid_to_date"],
+          ["Deductions (non-repayable)", "deductions_non_repayable"],
+          ["Deductions (repayable)", "deductions_repayable"],
         ]),
         rows: out,
       },

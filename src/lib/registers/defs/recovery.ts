@@ -162,6 +162,17 @@ export const aconexControlAccounts: RegisterDef = {
     { key: "incurred_to_date", label: "Incurred to date", type: "money", section: FIGURES },
     { key: "actuals_to_date", label: "Direct actuals to date", type: "money", section: FIGURES, hideInTable: true },
     { key: "at_completion_variance", label: "At completion variance", type: "money", section: FIGURES, hideInTable: true },
+    { key: "eac_rsg", label: "Estimate at completion (RSG 1115)", type: "money", section: FIGURES, help: "RSG's own EAC column in the Aconex export – the approved budget less the approved early warnings. Compared with column N when the export carries it." },
+    { key: "at_completion_variance_rsg", label: "At completion variance (RSG 1115)", type: "money", section: FIGURES, hideInTable: true },
+    { key: "approved_early_warnings_rsg", label: "Approved early warnings (RSG)", type: "money", section: FIGURES, hideInTable: true },
+    { key: "pending_early_warnings_rsg", label: "Pending early warnings (RSG)", type: "money", section: FIGURES, hideInTable: true },
+    { key: "potential_change_ew", label: "Potential change / early warning", type: "money", section: FIGURES, hideInTable: true },
+    { key: "pending_pvos_rsg", label: "Pending contract changes (PVOs, RSG)", type: "money", section: FIGURES, hideInTable: true },
+    { key: "potential_etc_ama", label: "AMA potential ETC", type: "money", section: FIGURES, hideInTable: true },
+    { key: "remaining_to_certify_rsg", label: "Remaining to certify (RSG 1040)", type: "money", section: FIGURES, hideInTable: true },
+    { key: "paid_to_date", label: "Paid to date", type: "money", section: FIGURES, hideInTable: true },
+    { key: "deductions_non_repayable", label: "Deductions (non-repayable)", type: "money", section: FIGURES, hideInTable: true },
+    { key: "deductions_repayable", label: "Deductions (repayable)", type: "money", section: FIGURES, hideInTable: true },
   ],
 };
 

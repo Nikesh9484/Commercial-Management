@@ -54,6 +54,9 @@ export interface LineParts {
   claims: number | null;
   eac: number | null;
   incurred: number | null;
+  /** RSG's early-warning columns in the Aconex export (approved, pending), null on the dashboard side */
+  ewApproved?: number | null;
+  ewPending?: number | null;
 }
 export interface LineDetail {
   code: string;
@@ -111,9 +114,14 @@ export function varianceDetail(data: ReportData, rec: AconexReconciliation): Rec
       a.dvo = add(a.dvo, n(r.approved_changes));
       a.commitments = add(a.commitments, n(r.current_commitments));
       a.pvo = add(a.pvo, n(r.pending_changes));
-      a.eac = add(a.eac, n(r.eac));
+      if (r.approved_early_warnings_rsg !== null && r.approved_early_warnings_rsg !== undefined) a.ewApproved = add(a.ewApproved ?? null, n(r.approved_early_warnings_rsg));
+      if (r.pending_early_warnings_rsg !== null && r.pending_early_warnings_rsg !== undefined) a.ewPending = add(a.ewPending ?? null, n(r.pending_early_warnings_rsg));
+      if (a.ewApproved !== null && a.ewApproved !== undefined) a.ew = add(a.ew, 0);
+      // RSG's own EAC (1115) where the export carries it; the standard Aconex EAC is the budget
+      a.eac = add(a.eac, r.eac_rsg !== null && r.eac_rsg !== undefined ? n(r.eac_rsg) : n(r.eac));
       a.incurred = add(a.incurred, n(r.incurred_to_date));
     }
+    if (a.ewApproved !== undefined || a.ewPending !== undefined) a.ew = (a.ewApproved ?? 0) + (a.ewPending ?? 0);
     // the changes: register entries on the line's cost lines, Aconex events on the contract, paired by number
     const pairs = new Map<string, ChangePair>();
     const pair = (key: string) => {

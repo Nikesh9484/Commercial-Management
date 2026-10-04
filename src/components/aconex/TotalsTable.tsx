@@ -40,7 +40,7 @@ export function TotalsTable({ rec, detail }: { rec: AconexReconciliation; detail
                 <tr className={`border-t border-line ${isOpen ? "bg-sky-50/60" : ""}`}>
                   <td className="px-4 py-1.5 font-medium text-ink">
                     {m.label}
-                    <div className="text-[11px] font-normal text-muted">over {rec.totals.lines[m.key]} {m.key === "budget" || m.key === "eac" ? "lines" : "contracts"}</div>
+                    <div className="text-[11px] font-normal text-muted">over {rec.totals.lines[m.key]} {m.key === "budget" || m.key === "eac" || m.key === "ew" ? "lines" : "contracts"}</div>
                   </td>
                   <td className="px-3 py-1.5 text-right tnum">{money(rec.totals.aconex[m.key])}</td>
                   <td className="px-3 py-1.5 text-right tnum">{money(rec.totals.dashboard[m.key])}</td>
@@ -169,12 +169,19 @@ function LineItems({ d, measure, money }: { d: LineDetail; measure: AconexMeasur
           ]
         : measure === "pvo"
           ? [{ label: "Pending changes (PVO)", a: d.aconex.pvo, b: d.dashboard.pvo, note: "Aconex pending downstream contract changes vs column J" }]
+          : measure === "ew"
+            ? [
+                { label: "Approved early warnings", a: d.aconex.ewApproved ?? null, b: null, note: "RSG column – kept on the budget hold in Aconex" },
+                { label: "Pending early warnings", a: d.aconex.ewPending ?? null, b: null, note: "RSG column" },
+                { label: "Early warnings", a: d.aconex.ew, b: d.dashboard.ew, note: "Aconex approved + pending early warnings vs column L" },
+              ]
           : measure === "eac"
             ? [
                 { label: "Commitments", a: d.aconex.commitments, b: d.dashboard.commitments, note: "column I" },
                 { label: "Pending changes (PVO)", a: d.aconex.pvo, b: d.dashboard.pvo, note: "column J" },
-                { label: "RFC, early warnings, claims", a: null, b: (d.dashboard.rfc ?? 0) + (d.dashboard.ew ?? 0) + (d.dashboard.claims ?? 0), note: "columns K + L + M – Aconex carries these inside its estimate to complete" },
-                { label: "Estimate at completion", a: d.aconex.eac, b: d.dashboard.eac, note: "Aconex EAC vs column N" },
+                { label: "RFC, early warnings, claims", a: d.aconex.ew, b: (d.dashboard.rfc ?? 0) + (d.dashboard.ew ?? 0) + (d.dashboard.claims ?? 0), note: "columns K + L + M – Aconex: the RSG early warnings; the rest sits inside its estimate to complete" },
+                { label: "Approved budget", a: d.aconex.budget, b: d.dashboard.budget, note: "the standard Aconex EAC is the approved budget" },
+                { label: "Estimate at completion", a: d.aconex.eac, b: d.dashboard.eac, note: "Aconex EAC (RSG 1115 where the export carries it) vs column N" },
               ]
             : [{ label: "Incurred / certified to date", a: d.aconex.incurred, b: d.dashboard.incurred, note: "Aconex incurred to date vs column P" }];
   const showChanges = measure !== "incurred" && measure !== "budget";
