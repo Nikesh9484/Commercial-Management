@@ -74,9 +74,13 @@ function firstDate(...vals: unknown[]): string | null {
   return null;
 }
 
+/** a change filed as a final account adjustment (an omission or a negotiated figure on the statement) is not a variation order */
+export const isFinalAccountAdjustment = (row: RecordRow) => /final\s*account/i.test(String(row.change_category_id__label ?? ""));
+
 function classify(row: RecordRow): KpiCategory | null {
   const overall = s(row.overall_status_id__label);
   if (DEAD_STATUSES.includes(overall)) return null;
+  if (isFinalAccountAdjustment(row)) return null;
   const dvo = s(row.dvo_status_id__label);
   if (dvo === "Approved") return "closed";
   const pvo = s(row.pvo_status_id__label);

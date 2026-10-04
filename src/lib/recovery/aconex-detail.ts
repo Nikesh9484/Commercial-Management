@@ -132,6 +132,8 @@ export function varianceDetail(data: ReportData, rec: AconexReconciliation): Rec
       const pvo = n(c.pvo_tracker_amount ?? c.pvo_cr_amount);
       const dvo = n(c.dvo_tracker_amount ?? c.dvo_cr_amount);
       const p = pair(key);
+      const fa = /final\s*account/i.test(String(c.change_category_id__label ?? ""));
+      if (fa && key.startsWith("item:")) p.finding = "final account adjustment – inside Aconex's approved contract changes on the control account, no change event of its own";
       if (p.register) {
         p.register.item += ` + ${String(c.item_no ?? c.id)}`;
         p.register.pvo = add(p.register.pvo, pvo);
@@ -165,6 +167,7 @@ export function varianceDetail(data: ReportData, rec: AconexReconciliation): Rec
       }
     }
     for (const p of pairs.values()) {
+      if (p.finding) continue;
       if (!p.register) p.finding = "only in Aconex – not on the change register";
       else if (!p.aconex) p.finding = "only on the dashboard – no Aconex change event";
       else {

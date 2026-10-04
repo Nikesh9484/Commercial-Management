@@ -254,12 +254,16 @@ export function buildAconexChangeCheck(data: ReportData): AconexChangeCheck {
     }
     b.lines.push(line);
   }
-  // the register's changes with a PVO / RFC reference that no event matched
+  // the register's changes with a PVO / RFC reference that no event matched – and its final account
+  // adjustments (an omission or a negotiated figure on the statement), which Aconex carries inside the
+  // control account's approved contract changes without an event of their own
+  const isFaAdjustment = (c: RecordRow) => /final\s*account/i.test(String(c.change_category_id__label ?? ""));
   for (const c of changes) {
     if (usedChange.has(Number(c.id))) continue;
     const pvoNum = refNumber(c.pvo_ref);
     const rfcNum = refNumber(c.rfc_ref);
-    if (pvoNum === null && rfcNum === null) continue;
+    const fa = isFaAdjustment(c);
+    if (pvoNum === null && rfcNum === null && !fa) continue;
     const v = dashValues(c);
     const b = block(changeContractor(c));
     const frag = changeFrag(c) ?? "";
@@ -269,7 +273,7 @@ export function buildAconexChangeCheck(data: ReportData): AconexChangeCheck {
     b.lines.push({
       status: "dashboard_only",
       eventNo: "",
-      kind: pvoNum !== null ? "PVO" : "RFC",
+      kind: fa && pvoNum === null && rfcNum === null ? "FA adj." : pvoNum !== null ? "PVO" : "RFC",
       name: String(c.description ?? ""),
       eventDate: String(c.pvo_date ?? c.rfc_date ?? c.date_raised ?? ""),
       aconexStatus: "",
@@ -287,9 +291,9 @@ export function buildAconexChangeCheck(data: ReportData): AconexChangeCheck {
       dashboardValue: value,
       diff: null,
       differs: false,
-      note: `register ${pvoNum !== null ? `PVO ${String(c.pvo_ref)}` : `RFC ${String(c.rfc_ref)}`} on contract ${frag || "?"} – no Aconex event with that number`,
+      note: fa && pvoNum === null && rfcNum === null ? `final account adjustment (${String(c.description ?? "").slice(0, 60)}) – carried inside Aconex's approved contract changes on the control account, no change event of its own` : `register ${pvoNum !== null ? `PVO ${String(c.pvo_ref)}` : `RFC ${String(c.rfc_ref)}`} on contract ${frag || "?"} – no Aconex event with that number`,
     });
-    b.onlyDashboard++;
+    if (!(fa && pvoNum === null && rfcNum === null)) b.onlyDashboard++;
   }
   // the register's side of every contractor: its changes by status, and its transfers
   for (const c of changes) {
