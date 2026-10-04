@@ -369,14 +369,24 @@ export async function addPaymentsFromDocuments(files: DocFile[], user: UserInfo,
         record.cumulative_certified = ipc.workDoneToDate;
         push("Cumulative work done (certified)", ipc.workDoneToDate, ipc.name);
       } else if (ipc.netCertified !== null) {
-        // the letter alone gives the net for this IPC: the gross behind it is carried on the previous cumulative
-        const prevCum = Number(prev?.cumulative_certified ?? 0) || Number(prev?.cumulative_claimed ?? 0) || 0;
+        // the letter alone gives the net for this IPC: the gross behind it is carried on the previous cumulative –
+        // taken from the pack's own certificate history first (the rows it lists are not on the register yet
+        // when the pack is read), then from the register's previous row
+        const histPrev = [...(ipc.history ?? []), ...(cert?.history ?? [])].filter((h) => no !== null && h.no < no).sort((a, b) => b.no - a.no)[0];
+        const packPrev = histPrev ? (adv + ret > 0 ? histPrev.cumulativeGross : histPrev.cumulativeNet) : 0;
+        const prevCum = packPrev || Number(prev?.cumulative_certified ?? 0) || Number(prev?.cumulative_claimed ?? 0) || 0;
         const factor = 1 - adv - ret;
         const gross = factor > 0 ? Math.round((ipc.netCertified / factor) * 100) / 100 : ipc.netCertified;
-        if (!existing?.cumulative_certified) {
-          record.cumulative_certified = Math.round((prevCum + gross) * 100) / 100;
-          push("Cumulative certified (previous + this IPC's gross)", record.cumulative_certified as number, ipc.name);
+        const cumulative = Math.round((prevCum + gross) * 100) / 100;
+        // a cumulative already on the row that sits below the previous certificate's cumulative was built on
+        // a missing previous figure: the corrected one is offered (shown as a difference to decide)
+        const wrongOnRow = existing?.cumulative_certified !== null && existing?.cumulative_certified !== undefined && prevCum > 0 && Number(existing.cumulative_certified) < prevCum - 0.5 && ipc.netCertified > 0;
+        if (!existing?.cumulative_certified || wrongOnRow) {
+          record.cumulative_certified = cumulative;
+          push(`Cumulative certified (previous ${formatMoney(prevCum)} + this IPC's gross)`, cumulative, histPrev ? `${ipc.name} – certificate history` : ipc.name);
+          if (wrongOnRow) record.cumulative_claimed = existing?.cumulative_claimed !== null && Number(existing?.cumulative_claimed) < prevCum - 0.5 ? cumulative : record.cumulative_claimed;
         }
+        if (!prevCum && no !== null && no > 1) result.warnings.push(`${ipc.name}: no previous certificate was found for IPC ${no} – the cumulative certified is this certificate's gross alone. Check the row, or upload the certificate pack with its history.`);
       }
     }
     if (!record.cumulative_claimed && record.cumulative_certified && !existing?.cumulative_claimed) record.cumulative_claimed = record.cumulative_certified;
