@@ -261,10 +261,23 @@ export function RegisterPage({
     // a person's own choice of columns (the Columns button) stands over both
     const shown = def?.fields.filter((f) => (hiddenCols ? !hiddenCols.has(f.key) && !["programme_id", "contract_closed"].includes(f.key) && !f.hideInForm : def.wideTable ? !["programme_id", "contract_closed"].includes(f.key) : !f.hideInTable) && f.type !== "password" && !hideFields.includes(f.key)) ?? [];
     // a field can ask for its place in the table without moving on the record form
-    return shown
+    const ordered = shown
       .map((f, i) => ({ f, i }))
       .sort((a, b) => (a.f.tableOrder ?? Number.MAX_SAFE_INTEGER) - (b.f.tableOrder ?? Number.MAX_SAFE_INTEGER) || a.i - b.i)
       .map((x) => x.f);
+    // the columns of one heading sit together, each heading once, in the order the headings first appear
+    if (!ordered.some((f) => f.section)) return ordered;
+    const groups: string[] = [];
+    const by = new Map<string, FieldDef[]>();
+    for (const f of ordered) {
+      const k = f.section ?? "";
+      if (!by.has(k)) {
+        by.set(k, []);
+        groups.push(k);
+      }
+      by.get(k)!.push(f);
+    }
+    return groups.flatMap((k) => by.get(k)!);
   }, [def, hideFields, hiddenCols]);
   const filterFields = useMemo(() => {
     if (!def) return [];
