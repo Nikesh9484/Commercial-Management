@@ -246,21 +246,67 @@ function LineItems({ d, measure, money }: { d: LineDetail; measure: AconexMeasur
           </tbody>
         </table>
       </div>
+      {(() => {
+        const x = d.explain[measure];
+        if (!x || (x.aconex.length === 0 && x.dashboard.length === 0)) return null;
+        const side = (title: string, items: typeof x.aconex) => (
+          <div className="min-w-[24rem] flex-1">
+            <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">{title}</div>
+            <table className="w-full rounded-lg border border-line bg-white">
+              <tbody>
+                {items.length === 0 && (
+                  <tr>
+                    <td className="px-2 py-1 text-muted">nothing itemised on this side</td>
+                  </tr>
+                )}
+                {items.map((i, k) => (
+                  <tr key={`${i.ref}-${k}`} className="border-t border-line first:border-t-0">
+                    <td className="whitespace-nowrap px-2 py-1 font-mono text-[11px]">{i.ref}</td>
+                    <td className="max-w-[24rem] truncate px-2 py-1" title={`${i.label}${i.note ? ` – ${i.note}` : ""}`}>
+                      {i.label} {i.note && <span className="text-muted">– {i.note}</span>}
+                    </td>
+                    <td className="whitespace-nowrap px-2 py-1 text-right tnum">{money(i.value)}</td>
+                  </tr>
+                ))}
+                <tr className="border-t border-line bg-slate-50 font-semibold">
+                  <td className="px-2 py-1" colSpan={2}>Total</td>
+                  <td className="px-2 py-1 text-right tnum">{money(items.reduce((t, i) => t + i.value, 0))}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        );
+        return (
+          <div>
+            <div className="mb-1 font-semibold text-ink">
+              Items behind the difference of {money(x.total)}: Aconex items less dashboard items = {money(x.explained)}
+              {Math.abs(x.residual) >= 1 && <span className="ml-2 font-normal text-muted">(leaving {money(x.residual)} not itemised – {x.residualNote})</span>}
+              {Math.abs(x.residual) < 1 && <span className="ml-2 font-normal text-emerald-700">– the items account for the whole difference</span>}
+            </div>
+            <div className="flex flex-wrap gap-3">
+              {side("Aconex side", x.aconex)}
+              {side("Dashboard side (the register items behind columns F to M)", x.dashboard)}
+            </div>
+          </div>
+        );
+      })()}
       {blocks.map((b) => (
         <div key={b.measure}>
           <div className="mb-1 font-semibold text-ink">
             {b.measure === "dvo" ? "Approved changes (DVO)" : "Pending changes (PVO)"}:{" "}
             {Math.abs(b.explained - b.total) < 1
               ? `the difference of ${money(b.total)} comes from ${b.items.length === 0 ? "no single item" : `${b.items.length === 1 ? "this item" : `these ${b.items.length} items`}`}`
-              : `the items whose values differ – they add up to ${money(b.explained)}, the line's difference is ${money(b.total)}`}
-            {Math.abs(b.explained - b.total) >= 1 && (
-              <span className="ml-2 font-normal text-muted">
-                (the rest is how the two systems hold this contract&apos;s changes – the dashboard folds earlier variations into the award, Aconex lists each event – so this list shows where the values differ, not a sum to the difference)
-              </span>
-            )}
+              : `the items listed add up to ${money(b.explained)} of the line's difference of ${money(b.total)}`}
           </div>
+          {b.notes.length > 0 && (
+            <ul className="mb-1 list-disc space-y-0.5 pl-5 text-muted">
+              {b.notes.map((nt, i) => (
+                <li key={i}>{nt}</li>
+              ))}
+            </ul>
+          )}
           {b.items.length === 0 ? (
-            <div className="text-muted">Every item paired by number carries the same value on both sides.</div>
+            <div className="text-muted">{b.notes.length ? "No item to list." : "Every item paired carries the same value on both sides."}</div>
           ) : (
             <div className="overflow-x-auto rounded-lg border border-line bg-white">
               <table className="w-full">

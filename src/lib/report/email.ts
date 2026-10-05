@@ -21,6 +21,7 @@ const signed = (n: number) => (Math.abs(n) < 0.005 ? "–" : `${n > 0 ? "+" : ""
 const pad = (s: string, w: number) => (s.length >= w ? s : " ".repeat(w - s.length) + s);
 
 export function buildEmailSummary(data: ReportData, sender: { name: string; email: string }): EmailSummary {
+  void sender; // the mail client adds the sender's own signature
   const g = executiveTotals(data.costReport);
   const m = data.movement;
   const d = data.dashboard;
@@ -103,7 +104,7 @@ ${
 <ul style="margin:0;padding-left:18px">${openItems.map((i) => `<li>${esc(i)}</li>`).join("")}</ul>
 ${keyIssues ? `<h3 style="font-size:14px;margin:16px 0 4px 0;color:#0f2b4c">Key issues this period</h3><p style="white-space:pre-wrap">${esc(keyIssues)}</p>` : ""}
 <p>Full detail is in the attached PDFs and on ${esc(APP_NAME)}.</p>
-<p>Kind regards,<br><b>${esc(sender.name)}</b><br>Commercial Management – ${esc(assetName)}</p>
+<p>Kind regards,</p>
 </div>`;
 
   // ---------- plain text
@@ -125,8 +126,6 @@ ${keyIssues ? `<h3 style="font-size:14px;margin:16px 0 4px 0;color:#0f2b4c">Key 
     `Full detail is in the attached PDFs and on ${APP_NAME}.`,
     "",
     "Kind regards,",
-    sender.name,
-    `Commercial Management – ${assetName}`,
   ].join("\r\n");
 
   const to = [...new Set(data.team.map((t) => String(t.email ?? "").trim()).filter((e) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)))];

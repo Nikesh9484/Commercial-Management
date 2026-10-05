@@ -87,7 +87,7 @@ function tableText(t: Table): string[] {
 }
 
 function render(opts: { data: ReportData; sender: { name: string }; reportName: string; subjectTag: string; fileTag: string; tiles: Tile[]; summary: string[]; sections: Section[] }): EmailSummary {
-  const { data, sender } = opts;
+  const { data } = opts;
   const assetName = data.asset ? `${data.asset.code} ${data.asset.name}` : data.programme.name;
   const cutOff = formatDate(data.period.period_end);
   const draft = data.locked ? "" : " · DRAFT (period not locked)";
@@ -109,7 +109,7 @@ ${opts.sections
   })
   .join("\n")}
 <p style="margin:16px 0 4px 0;font-size:12px;color:${MUTED}">Full detail is in the attached PDF and on ${esc(APP_NAME)}.</p>
-<p>Kind regards,<br><b>${esc(sender.name)}</b><br>Commercial Management – ${esc(assetName)}</p>
+<p>Kind regards,</p>
 </div>`;
 
   const text = [
@@ -128,8 +128,6 @@ ${opts.sections
     `Full detail is in the attached PDF and on ${APP_NAME}.`,
     "",
     "Kind regards,",
-    sender.name,
-    `Commercial Management – ${assetName}`,
   ].join("\r\n");
   const to = [...new Set(data.team.map((t) => String(t.email ?? "").trim()).filter((e) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)))];
   return {

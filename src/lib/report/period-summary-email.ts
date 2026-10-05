@@ -1,7 +1,6 @@
 import type { ReportData } from "./data";
 import type { EmailSummary } from "./email";
 import { buildPeriodSummary, sar, sarMove, type PeriodSummary } from "./period-summary";
-import { APP_NAME } from "../brand";
 
 /**
  * The Period Summary as an email: the same wording the directors receive each month –
@@ -59,8 +58,7 @@ ${
     : ""
 }
 <p style="margin-top:14px">Please let me know if you have any questions.</p>
-<p><b>${esc(ps.sender.name)}</b><br>${esc(ps.sender.role)}</p>
-<p style="font-size:11px;color:#6b7280">Prepared with ${esc(APP_NAME)}${ps.locked ? "" : " – draft, period not locked"}.</p>
+<p>Kind regards,</p>
 </div>`;
 
   const lines: string[] = [
@@ -100,7 +98,7 @@ ${
       }
     }
   }
-  lines.push("", "Please let me know if you have any questions.", "", ps.sender.name, ps.sender.role);
+  lines.push("", "Please let me know if you have any questions.", "", "Kind regards,");
   const text = lines.join("\r\n");
   return { subject: ps.subject, to, html, text, fileBase: `Period_Summary_${data.programme.code}_No${data.period.report_no}${data.locked ? "" : "_DRAFT"}` };
 }

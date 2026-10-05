@@ -344,8 +344,8 @@ html[data-ink="colour"] .text-slate-700, html[data-ink="colour"] .text-slate-600
    floating rail at the bottom of the window shows a thick thumb that can be dragged. */
 .overflow-x-auto::-webkit-scrollbar,
 .overflow-auto::-webkit-scrollbar {
-  height: 10px;
-  width: 10px;
+  height: 12px;
+  width: 12px;
 }
 .overflow-x-auto::-webkit-scrollbar-thumb,
 .overflow-auto::-webkit-scrollbar-thumb {
@@ -358,15 +358,8 @@ html[data-ink="colour"] .text-slate-700, html[data-ink="colour"] .text-slate-600
 .overflow-auto::-webkit-scrollbar-track {
   background: #f1f4f8;
 }
-.overflow-x-auto,
-.overflow-auto {
-  scrollbar-width: thin;
-  scrollbar-color: #b6c0cf #f1f4f8;
-}
-.scroll-rail {
-  scrollbar-width: auto;
-  scrollbar-color: #0f2b4c #e5e9f0;
-}
+/* no scrollbar-width / scrollbar-color here: once they are set, Chrome and Edge ignore the ::-webkit-scrollbar
+   rules above and macOS goes back to hiding the bar until the pointer scrolls */
 .scroll-rail::-webkit-scrollbar {
   height: 14px;
 }

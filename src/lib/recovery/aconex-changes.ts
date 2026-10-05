@@ -90,6 +90,111 @@ export function refNumber(ref: unknown): number | null {
   return m ? Number(m[1]) : null;
 }
 
+/** the PVO number in the register's PVO reference – none when the cell names another stage ("DVO-042", "EI 003", "FA") */
+export function pvoRefNumber(ref: unknown): number | null {
+  const t = String(ref ?? "").trim();
+  if (/^(DVO|DV|EI|VO|RFC|RFA|FA|AVI|N\/?A)\b/i.test(t) && !/^PVO/i.test(t)) return null;
+  return refNumber(t);
+}
+
+/** the Aconex event a register change answers to, chosen from every reference the register carries */
+export interface ChangePairing {
+  /** the PVO key ("PVO:5") the change pairs with, or the one its PVO reference names when no event has it */
+  pvoKey: string | null;
+  rfcKey: string | null;
+  /** how the pairing was made when not simply by the register's PVO reference */
+  note: string;
+}
+
+/**
+ * Pairs the register's changes on one contract with Aconex's PVO events. The register's PVO reference is
+ * the first word, but it is typed by hand: when two changes carry the same PVO number, or a change's VO /
+ * EI number names an event whose value is the change's, the VO / EI reference and the approved value decide
+ * – so "PVO 4, VO 05, DVO 006 = 849,266.31" pairs with Aconex PVO 005 (849,266.31), not PVO 004. A change
+ * with no reference at all still pairs with the one unclaimed event carrying its DVO value.
+ */
+export function pairRegisterChanges(regs: RecordRow[], events: Map<string, { approved: number | null; impact: number | null }>): Map<number, ChangePairing> {
+  const out = new Map<number, ChangePairing>();
+  const close = (a: number | null, b: number | null) => a !== null && b !== null && Math.abs(a) >= 1 && Math.abs(a - b) < EVENT_TOLERANCE;
+  const val = (v: unknown) => (v === null || v === undefined || v === "" ? null : n(v));
+  const candidates = (c: RecordRow) => {
+    const list: { num: number; by: string }[] = [];
+    for (const [ref, by] of [
+      [c.pvo_ref, "PVO ref"],
+      [c.vo_ref, "VO ref"],
+      [c.ei_ref, "EI ref"],
+    ] as const) {
+      const num = by === "PVO ref" ? pvoRefNumber(ref) : refNumber(ref);
+      if (num !== null && !list.some((x) => x.num === num)) list.push({ num, by: `${by} ${String(ref).trim()}` });
+    }
+    return list;
+  };
+  const claimed = new Map<string, number>(); // key → change id that proved it by value
+  const chosen = new Map<number, { key: string; note: string }>();
+  // first the pairings the values prove
+  for (const c of regs) {
+    const id = Number(c.id);
+    const dvo = val(c.dvo_cr_amount ?? c.dvo_tracker_amount);
+    const pvo = val(c.pvo_cr_amount ?? c.pvo_tracker_amount);
+    const cands = candidates(c);
+    const pvoNum = pvoRefNumber(c.pvo_ref);
+    for (const cand of cands) {
+      const key = `PVO:${cand.num}`;
+      const e = events.get(key);
+      if (!e || claimed.has(key)) continue;
+      if (close(dvo, e.approved) || close(pvo, e.impact)) {
+        claimed.set(key, id);
+        chosen.set(id, { key, note: cand.num === pvoNum ? "" : `register PVO ref "${String(c.pvo_ref ?? "").trim() || "–"}" – paired with Aconex PVO ${String(cand.num).padStart(3, "0")} by its ${cand.by} and matching value` });
+        break;
+      }
+    }
+  }
+  // then the rest by their PVO reference alone (a VO / EI number counts only when the value proves it)
+  for (const c of regs) {
+    const id = Number(c.id);
+    if (chosen.has(id)) continue;
+    const pvoNum = pvoRefNumber(c.pvo_ref);
+    if (pvoNum !== null) chosen.set(id, { key: `PVO:${pvoNum}`, note: claimed.has(`PVO:${pvoNum}`) && claimed.get(`PVO:${pvoNum}`) !== id ? `shares PVO ${pvoNum} with the register entry whose value Aconex carries` : "" });
+  }
+  // a register entry whose PVO number Aconex has no event for, but whose value Aconex carries inside another
+  // event together with that event's own entry (Aconex PVO 027 "Geo Bags" = the register's PVO 27 + PVO 28)
+  for (const c of regs) {
+    const id = Number(c.id);
+    const ch = chosen.get(id);
+    if (!ch || events.has(ch.key)) continue;
+    const dvo = val(c.dvo_cr_amount ?? c.dvo_tracker_amount);
+    if (dvo === null || Math.abs(dvo) < 1) continue;
+    for (const [k, e] of events) {
+      if (!k.startsWith("PVO:") || e.approved === null) continue;
+      const others = regs.filter((o) => o !== c && chosen.get(Number(o.id))?.key === k).reduce((t, o) => t + (val(o.dvo_cr_amount ?? o.dvo_tracker_amount) ?? 0), 0);
+      if (others !== 0 && Math.abs(others + dvo - e.approved) < EVENT_TOLERANCE) {
+        chosen.set(id, { key: k, note: `register PVO ref "${String(c.pvo_ref ?? "").trim()}" has no Aconex event of its own – Aconex carries its value inside ${k.replace(":", " ")}, which equals the register's entries added together` });
+        break;
+      }
+    }
+  }
+  // last, a change with no reference pairs with the one unclaimed event carrying its DVO value
+  const taken = new Set([...chosen.values()].map((x) => x.key));
+  for (const c of regs) {
+    const id = Number(c.id);
+    if (chosen.has(id)) continue;
+    const dvo = val(c.dvo_cr_amount ?? c.dvo_tracker_amount);
+    if (dvo === null || Math.abs(dvo) < 1) continue;
+    const hit = [...events.entries()].find(([k, e]) => !taken.has(k) && close(dvo, e.approved));
+    if (hit) {
+      taken.add(hit[0]);
+      chosen.set(id, { key: hit[0], note: `no PVO reference on the register – paired with Aconex ${hit[0].replace(/^(PVO|RFC|ADJ):/, "$1 ").replace(/^event:/, "")} by its DVO value` });
+    }
+  }
+  for (const c of regs) {
+    const id = Number(c.id);
+    const ch = chosen.get(id);
+    const rfcNum = refNumber(c.rfc_ref);
+    out.set(id, { pvoKey: ch?.key ?? null, rfcKey: rfcNum !== null ? `RFC:${rfcNum}` : null, note: ch?.note ?? "" });
+  }
+  return out;
+}
+
 const zero = (): AconexContractorFigures => ({ approved: 0, pending: 0, cancelled: 0, transfers: 0, items: 0 });
 const NO_CONTRACTOR = "No contractor (budget holds and events without a contract code)";
 const DIRECT_PAYMENTS = "Direct payments on behalf of the main contractor";
@@ -121,22 +226,40 @@ export function buildAconexChangeCheck(data: ReportData): AconexChangeCheck {
     return (l ? fragOf(l.code) : null) ?? fragOf(String(c.cost_line_id__label ?? "")) ?? null;
   };
   const usedChange = new Set<number>();
+  // the live events' values per contract, so each register change pairs with the event its references and value name
+  const eventValues = new Map<string, Map<string, { approved: number | null; impact: number | null }>>();
+  for (const e of events) {
+    const parsed = parseEventNo(String(e.event_no ?? ""));
+    const frag = String(e.contract_frag ?? "").toUpperCase() || parsed.frag || "";
+    if (!frag || parsed.number === null || parsed.kind === "BTR") continue;
+    if (statusGroup(String(e.cost_status ?? e.budget_status ?? "")) === "cancelled") continue;
+    let m = eventValues.get(frag);
+    if (!m) eventValues.set(frag, (m = new Map()));
+    const approved = n(e.approved_contract_changes) || (e.approved_cost_impact === null || e.approved_cost_impact === undefined ? null : n(e.approved_cost_impact));
+    m.set(`${parsed.kind}:${parsed.number}`, { approved, impact: e.total_cost_impact === null || e.total_cost_impact === undefined ? null : n(e.total_cost_impact) });
+  }
+  const regsByFrag = new Map<string, RecordRow[]>();
   for (const c of changes) {
     const frag = changeFrag(c);
     if (!frag) continue;
-    for (const [kind, ref] of [
-      ["PVO", c.pvo_ref],
-      ["RFC", c.rfc_ref],
-    ] as const) {
-      const num = refNumber(ref);
-      if (num === null) continue;
-      const key = `${frag}:${kind}:${num}`;
-      byKey.set(key, [...(byKey.get(key) ?? []), c]);
+    regsByFrag.set(frag, [...(regsByFrag.get(frag) ?? []), c]);
+  }
+  const pairNote = new Map<number, string>();
+  for (const [frag, regs] of regsByFrag) {
+    const pairing = pairRegisterChanges(regs, eventValues.get(frag) ?? new Map());
+    for (const c of regs) {
+      const how = pairing.get(Number(c.id));
+      for (const k of [how?.pvoKey, how?.rfcKey]) {
+        if (!k) continue;
+        const key = `${frag}:${k}`;
+        byKey.set(key, [...(byKey.get(key) ?? []), c]);
+      }
+      if (how?.note) pairNote.set(Number(c.id), how.note);
     }
   }
   const dashValues = (c: RecordRow) => {
-    const pvo = c.pvo_tracker_amount ?? c.pvo_cr_amount;
-    const dvo = c.dvo_tracker_amount ?? c.dvo_cr_amount;
+    const pvo = c.pvo_cr_amount ?? c.pvo_tracker_amount;
+    const dvo = c.dvo_cr_amount ?? c.dvo_tracker_amount;
     const hasDvo = (dvo !== null && dvo !== undefined && dvo !== "") || !!String(c.dvo_ref ?? "").trim();
     return { pvo: pvo === null || pvo === undefined || pvo === "" ? null : n(pvo), dvo: hasDvo && dvo !== null && dvo !== undefined && dvo !== "" ? n(dvo) : null, hasDvo };
   };
@@ -218,7 +341,7 @@ export function buildAconexChangeCheck(data: ReportData): AconexChangeCheck {
     };
     const key = `${frag}:${kind}:${parsed.number}`;
     const liveTwin = aconexGroup === "cancelled" && parsed.number !== null ? liveByKey.get(key) : undefined;
-    const hits = (kind === "PVO" || kind === "RFC") && frag && parsed.number !== null && !(liveTwin && liveTwin !== no) ? (byKey.get(key) ?? []) : [];
+    const hits = (kind === "PVO" || kind === "RFC" || kind === "ADJ") && frag && parsed.number !== null && !(liveTwin && liveTwin !== no) ? (byKey.get(key) ?? []) : [];
     if (liveTwin && liveTwin !== no) {
       line.note = `cancelled in Aconex – re-raised as ${liveTwin}, which is the event compared`;
       b.lines.push(line);
@@ -250,7 +373,7 @@ export function buildAconexChangeCheck(data: ReportData): AconexChangeCheck {
       const valueDiffers = !bothCancelled && Math.abs(line.diff) >= EVENT_TOLERANCE;
       const statusDiffers = line.aconexGroup !== "unknown" && line.dashboardGroup !== "unknown" && line.aconexGroup !== line.dashboardGroup;
       line.differs = valueDiffers || statusDiffers;
-      line.note = [bothCancelled ? "cancelled on both sides – values not compared" : "", valueDiffers ? `value differs by ${line.diff < 0 ? "-" : ""}SAR ${Math.abs(line.diff).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "", statusDiffers ? `Aconex ${aconexStatus.toLowerCase()} vs register ${line.changeStatus.toLowerCase()}` : "", hits.length > 1 ? `${hits.length} register entries added together` : ""].filter(Boolean).join("; ");
+      line.note = [bothCancelled ? "cancelled on both sides – values not compared" : "", valueDiffers ? `value differs by ${line.diff < 0 ? "-" : ""}SAR ${Math.abs(line.diff).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "", statusDiffers ? `Aconex ${aconexStatus.toLowerCase()} vs register ${line.changeStatus.toLowerCase()}` : "", hits.length > 1 ? `${hits.length} register entries added together` : "", ...hits.map((c) => pairNote.get(Number(c.id)) ?? "")].filter(Boolean).join("; ");
       if (line.differs) b.differing++;
     } else {
       line.note = kind === "BTR" ? "budget transfer – compared with the register's approved transfers into this contractor's packages (contractor total)" : kind === "ADJ" ? "an Aconex adjustment – nothing to match on the register" : parsed.number === null ? "no PVO / RFC number in the event number" : `no change register entry with ${kind} ${parsed.number} on contract ${frag || "?"}`;
@@ -264,7 +387,7 @@ export function buildAconexChangeCheck(data: ReportData): AconexChangeCheck {
   const isFaAdjustment = (c: RecordRow) => /final\s*account/i.test(String(c.change_category_id__label ?? ""));
   for (const c of changes) {
     if (usedChange.has(Number(c.id))) continue;
-    const pvoNum = refNumber(c.pvo_ref);
+    const pvoNum = pvoRefNumber(c.pvo_ref);
     const rfcNum = refNumber(c.rfc_ref);
     const fa = isFaAdjustment(c);
     if (pvoNum === null && rfcNum === null && !fa) continue;

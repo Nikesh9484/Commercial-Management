@@ -5,7 +5,6 @@ import { getAccommodationSummary, getCustomsSummary } from "../recovery/summary"
 import { getDb } from "../db";
 import { contractorKey } from "../bonds/name-key";
 import { formatDate, formatMoney, formatMonthYear } from "../format";
-import { APP_NAME } from "../brand";
 import { contractTermsFor, cite, under, citedList } from "../contracts/clauses";
 
 /**
@@ -176,12 +175,11 @@ export function buildAccommodationEmail(data: ReportData, sender: { name: string
     `<p>We request that:</p><ol><li>The full overdue amount of <b>SAR ${formatMoney(outstanding)}</b> is remitted by <b>${esc(payBy)}</b>, with the remittance advice sent to the commercial team and Finance so the receipt is recorded against the invoices listed above.</li><li>Any invoice you consider disputed is raised in writing within 7 days, quoting the invoice number and the grounds, so it can be reviewed with Finance.</li><li>Failing settlement by that date, the balance will be withheld from your next Interim Payment Certificate and recovered by contra-charge in line with the Lease Agreement and the Contract, and any balance still open at final account will be settled within the Final Account Statement.</li></ol>`,
     ["We request that:", `  1. The full overdue amount of SAR ${formatMoney(outstanding)} is remitted by ${payBy}, with the remittance advice sent to the commercial team and Finance so the receipt is recorded against the invoices listed above.`, "  2. Any invoice you consider disputed is raised in writing within 7 days, quoting the invoice number and the grounds, so it can be reviewed with Finance.", "  3. Failing settlement by that date, the balance will be withheld from your next Interim Payment Certificate and recovered by contra-charge in line with the Lease Agreement and the Contract, and any balance still open at final account will be settled within the Final Account Statement."].join("\n"),
   );
-  both(`<p>Kind regards,</p><p><b>${esc(sender.name)}</b><br>Commercial Management – ${esc(data.programme.name)} (${esc(data.programme.code)})</p>`, ["", "Kind regards,", sender.name, `Commercial Management – ${data.programme.name} (${data.programme.code})`].join("\n"));
+  both(`<p>Kind regards,</p>`, ["", "Kind regards,"].join("\n"));
   {
     const list = citedList(accCited);
     if (list) both(`<p style="font-size:12px;color:#555">Provisions referred to: ${esc(list)}.</p>`, `Provisions referred to: ${list}.`);
   }
-  html.push(`<p style="font-size:11px;color:#6b7280">Prepared with ${esc(APP_NAME)} from the accommodation invoice tracker as at ${esc(asOf)}.</p>`);
   return { subject, to: [], html: `<div style="font-family:Calibri,Arial,sans-serif;font-size:13px;color:#172033;line-height:1.45">${html.join("\n")}</div>`, text: text.join("\r\n"), fileBase: `Accommodation_Charges_${one ? fileTag(one.contractor) : "All"}_${data.programme.code}` };
 }
 
@@ -290,12 +288,11 @@ export function buildCustomsEmail(data: ReportData, sender: { name: string; emai
     `<p>We request that:</p><ol><li>You confirm the declarations and amounts above, or raise any item you consider disputed in writing with the Bayan number and the grounds, by <b>${esc(replyBy)}</b>.</li><li>The balance of <b>SAR ${formatMoney(still)}</b> is recovered through a Determined Variation Order and deducted from your next Interim Payment Certificate, in line with the Contract; any balance still open at final account will be settled within the Final Account Statement.</li></ol>`,
     ["We request that:", `  1. You confirm the declarations and amounts above, or raise any item you consider disputed in writing with the Bayan number and the grounds, by ${replyBy}.`, `  2. The balance of SAR ${formatMoney(still)} is recovered through a Determined Variation Order and deducted from your next Interim Payment Certificate, in line with the Contract; any balance still open at final account will be settled within the Final Account Statement.`].join("\n"),
   );
-  both(`<p>Kind regards,</p><p><b>${esc(sender.name)}</b><br>Commercial Management – ${esc(data.programme.name)} (${esc(data.programme.code)})</p>`, ["", "Kind regards,", sender.name, `Commercial Management – ${data.programme.name} (${data.programme.code})`].join("\n"));
+  both(`<p>Kind regards,</p>`, ["", "Kind regards,"].join("\n"));
   {
     const list = citedList(customsCited);
     if (list) both(`<p style="font-size:12px;color:#555">Contract provisions referred to: ${esc(list)}.</p>`, `Contract provisions referred to: ${list}.`);
   }
-  html.push(`<p style="font-size:11px;color:#6b7280">Prepared with ${esc(APP_NAME)} from the customs recovery tracker as at ${esc(asOf)}.</p>`);
   return { subject, to: [], html: `<div style="font-family:Calibri,Arial,sans-serif;font-size:13px;color:#172033;line-height:1.45">${html.join("\n")}</div>`, text: text.join("\r\n"), fileBase: `Customs_Duties_${one ? fileTag(one.contractor) : "All"}_${data.programme.code}` };
 }
 
@@ -305,6 +302,7 @@ export function buildCustomsEmail(data: ReportData, sender: { name: string; emai
  * what is still to recover and the next action. Sent with the cost recovery report attached.
  */
 export function buildCustomsManagementEmail(data: ReportData, sender: { name: string; email?: string }): EmailSummary {
+  void sender; // the mail client adds the sender's own signature
   const cus = getCustomsSummary(data.recovery.customs, data.registers.changes?.rows ?? [], data.recovery.customsDeclarations);
   const asOfIso = cus.asOf ?? data.period.period_end;
   const asOf = formatDate(asOfIso);
@@ -344,8 +342,7 @@ export function buildCustomsManagementEmail(data: ReportData, sender: { name: st
   if (noLink.length) both(`<p><b>Without a Change Management entry yet:</b> ${esc(noLink.map((g) => `${g.contractor} (SAR ${formatMoney(g.totals.stillToRecover)})`).join("; "))} – the RFC / EI for the recovery is to be raised and linked on the Cost Recovery page.</p>`, `Without a Change Management entry yet: ${noLink.map((g) => `${g.contractor} (SAR ${formatMoney(g.totals.stillToRecover)})`).join("; ")} – the RFC / EI for the recovery is to be raised and linked on the Cost Recovery page.`);
   if (cus.noFigures.length) both(`<p style="font-size:12px;color:#555">${cus.noFigures.length} contract(s) are annotated on the tracker without customs figures yet: ${esc(cus.noFigures.map((r) => String(r.contract_code ?? r.vendor ?? "")).join(", "))}.</p>`, `(${cus.noFigures.length} contract(s) are annotated on the tracker without customs figures yet.)`);
   both(`<p>The attached cost recovery report carries the contractor tables and the declaration-by-declaration lists (Bayan number, port, broker, supplier, invoice, duty paid) behind these figures.</p>`, ["", "The attached cost recovery report carries the contractor tables and the declaration-by-declaration lists behind these figures."]);
-  both(`<p>Kind regards,</p><p><b>${esc(sender.name)}</b><br>Commercial Management – ${esc(data.programme.name)} (${esc(data.programme.code)})</p>`, ["", "Kind regards,", sender.name, `Commercial Management – ${data.programme.name} (${data.programme.code})`]);
-  html.push(`<p style="font-size:11px;color:#6b7280">Prepared with ${esc(APP_NAME)} from the customs recovery tracker as at ${esc(asOf)} and the Change Management Tracker.</p>`);
+  both(`<p>Kind regards,</p>`, ["", "Kind regards,"]);
   return { subject, to: [], html: `<div style="font-family:Calibri,Arial,sans-serif;font-size:13px;color:#172033;line-height:1.45">${html.join("\n")}</div>`, text: text.join("\r\n"), fileBase: `Customs_Recovery_Management_Summary_${data.programme.code}` };
 }
 

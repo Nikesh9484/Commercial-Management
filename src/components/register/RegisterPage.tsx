@@ -6,7 +6,7 @@ import { groupTint } from "@/components/ui/column-groups";
 import { useScopeKey } from "@/components/layout/ScopeContext";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Plus, Search, Download, Upload, Pencil, Trash2, History, RotateCcw, EyeOff, ChevronUp, ChevronDown, ChevronsUpDown, ChevronRight, RefreshCw, Lock, Unlock, Filter, X, ExternalLink, Columns3, Copy, ClipboardPaste, Paperclip, FolderUp, Loader2 } from "lucide-react";
+import { Plus, Search, Download, Upload, Pencil, Trash2, History, RotateCcw, EyeOff, ChevronUp, ChevronDown, ChevronsUpDown, ChevronLeft, ChevronRight, RefreshCw, Lock, Unlock, Filter, X, ExternalLink, Columns3, Copy, ClipboardPaste, Paperclip, FolderUp, Loader2 } from "lucide-react";
 import { tableClipboard, writeClipboard } from "@/lib/copy-rows";
 import { PasteDialog } from "./PasteDialog";
 import type { FieldDef, LookupOption, RecordRow, RegisterDef } from "@/lib/registers/types";
@@ -722,19 +722,31 @@ ${lines.join("\n")}`)) return;
           const open = !closedLists.has(q.key);
           return (
             <div key={q.key} className={`card overflow-hidden border-l-4 ${q.border}`}>
-              <button
-                type="button"
-                className="flex w-full items-center gap-2 px-4 py-2.5 text-left hover:bg-black/[0.02]"
-                onClick={() => setClosedLists((prev) => { const next = new Set(prev); if (next.has(q.key)) next.delete(q.key); else next.add(q.key); return next; })}
-                title={open ? "Collapse this list" : "Expand this list"}
-              >
-                {open ? <ChevronDown size={15} className="text-muted" /> : <ChevronRight size={15} className="text-muted" />}
-                <span className="text-sm font-semibold text-ink">{q.title}</span>
-                <Chip tone={rows.length ? q.tone : "grey"}>{rows.length}</Chip>
-                <span className="text-xs text-muted">{q.hint}</span>
-              </button>
+              <div className="flex w-full items-center gap-2 pr-2">
+                <button
+                  type="button"
+                  className="flex min-w-0 flex-1 items-center gap-2 px-4 py-2.5 text-left hover:bg-black/[0.02]"
+                  onClick={() => setClosedLists((prev) => { const next = new Set(prev); if (next.has(q.key)) next.delete(q.key); else next.add(q.key); return next; })}
+                  title={open ? "Collapse this list" : "Expand this list"}
+                >
+                  {open ? <ChevronDown size={15} className="text-muted" /> : <ChevronRight size={15} className="text-muted" />}
+                  <span className="text-sm font-semibold text-ink">{q.title}</span>
+                  <Chip tone={rows.length ? q.tone : "grey"}>{rows.length}</Chip>
+                  <span className="text-xs text-muted">{q.hint}</span>
+                </button>
+                {open && rows.length > 0 && (
+                  <div className="flex shrink-0 items-center gap-0.5" title="Scroll the list sideways">
+                    <button type="button" className="btn btn-ghost btn-sm" aria-label="Scroll left" onClick={(e) => (e.currentTarget.closest(".card")?.querySelector(".quick-scroll") as HTMLElement | null)?.scrollBy({ left: -700, behavior: "smooth" })}>
+                      <ChevronLeft size={16} />
+                    </button>
+                    <button type="button" className="btn btn-ghost btn-sm" aria-label="Scroll right" onClick={(e) => (e.currentTarget.closest(".card")?.querySelector(".quick-scroll") as HTMLElement | null)?.scrollBy({ left: 700, behavior: "smooth" })}>
+                      <ChevronRight size={16} />
+                    </button>
+                  </div>
+                )}
+              </div>
               {open && rows.length > 0 && (
-                <div className="max-h-[40vh] overflow-auto border-t border-line">
+                <div className="quick-scroll max-h-[40vh] overflow-auto border-t border-line">
                   <table className="data compact w-full">
                     <thead>
                       {sectionBands(tableFields).some((b) => b.section) && (

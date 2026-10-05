@@ -4,7 +4,6 @@ import type { RecordRow } from "../registers/types";
 import { filterBonds, bondCategory, type BondsExpiry } from "../bonds/filter";
 import { contractorKey } from "../bonds/name-key";
 import { formatDate, formatMoney, todayIso } from "../format";
-import { APP_NAME } from "../brand";
 import { contractTermsFor, contractFrag, cite, under, citedList, type ContractTerms } from "../contracts/clauses";
 
 /**
@@ -224,8 +223,7 @@ export function buildBondsNoticeEmail(data: ReportData, sender: { name: string; 
     const list = citedList(cited);
     if (list) both(`<p style="font-size:12px;color:#555">Contract provisions referred to: ${esc(list)}.</p>`, `Contract provisions referred to: ${list}.`);
   }
-  both(`<p>Kind regards,</p><p><b>${esc(sender.name)}</b><br>Commercial Management – ${esc(data.programme.name)} (${esc(data.programme.code)})</p>`, ["", "Kind regards,", sender.name, `Commercial Management – ${data.programme.name} (${data.programme.code})`]);
-  html.push(`<p style="font-size:11px;color:#6b7280">Prepared with ${esc(APP_NAME)} from the Bonds &amp; Insurance register as at ${esc(formatDate(today))}. Items whose contract is closed or that a newer policy has replaced are not included.</p>`);
+  both(`<p>Kind regards,</p>`, ["", "Kind regards,"]);
   const tag = bucket === "expired" ? "Expired" : bucket === "d30" ? "Expiring_30_days" : "Expiring_60_days";
   return { subject, to: [], html: `<div style="font-family:Calibri,Arial,sans-serif;font-size:13px;color:#172033;line-height:1.45">${html.join("\n")}</div>`, text: text.join("\r\n"), fileBase: `Bonds_Insurance_Notice_${tag}_${one ? fileTag(one.contractor) : "All"}_${data.programme.code}` };
 }
