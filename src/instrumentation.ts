@@ -14,6 +14,8 @@ export async function register() {
     repairBareCustomsRows();
     const { repairAconexTies } = await import("./lib/repairs/aconex-ties");
     repairAconexTies();
+    const { mergeDuplicateLookups } = await import("./lib/repairs/merge-duplicates");
+    mergeDuplicateLookups();
     backup.startBackupLoop();
     // the Yacht Club's reports shipped with this version: imported in the background once the server is up
     const { importAycReportsAtStart } = await import("./lib/repairs/ayc-reports");

@@ -30,6 +30,14 @@ import { getChecklist, setChecklistItem } from "../checklist";
 
 const TMP = path.join(os.tmpdir(), "commercial-dashboard-uploads");
 /** Largest workbook accepted (your monthly report is ~11 MB). */
+import { matchContractor } from "./recovery";
+
+/** "Plant and Equipment" is "Plant & Equipment", "Workmen’s" is "Workmen's": one dropdown value, not two. */
+function sameLabel(a: string, b: string): boolean {
+  const n = (x: string) => x.toLowerCase().replace(/[’‘`]/g, "'").replace(/&/g, " and ").replace(/[^a-z0-9']+/g, " ").trim();
+  return n(a) === n(b);
+}
+
 export const MAX_UPLOAD_BYTES = 40 * 1024 * 1024;
 
 export function storeUpload(buffer: Buffer): string {
@@ -397,7 +405,11 @@ async function importWorkbookRun(req: ImportRequest, user: UserInfo, progress: I
             const hit =
               opts.find((o) => o.label.toLowerCase() === want) ??
               opts.find((o) => o.label.toLowerCase().startsWith(want + " · ")) ??
-              (want.length >= 3 ? opts.find((o) => o.label.toLowerCase().includes(want)) : undefined);
+              // the same name typed another way: "Plant and Equipment" for "Plant & Equipment", curly quotes, case
+              opts.find((o) => sameLabel(o.label, label)) ??
+              (want.length >= 3 ? opts.find((o) => o.label.toLowerCase().includes(want)) : undefined) ??
+              // the same company under another spelling or a short name ("Alutec", "HKS Architects Limited"): never a second entry
+              (target === "contractors" ? (() => { const m = matchContractor(label, opts.map((o) => ({ id: o.id, name: o.label }))); return m ? opts.find((o) => o.id === m.id) : undefined; })() : undefined);
             if (hit) {
               input[f.key] = hit.id;
               continue;
