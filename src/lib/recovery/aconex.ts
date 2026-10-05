@@ -24,16 +24,18 @@ export const ACONEX_MEASURES = [
   { key: "commitments", label: "Commitments", aconex: "current_commitments", dashboard: "I", decides: "contract", note: "Aconex current commitments vs column I (committed costs) – decides for contracts" },
   { key: "dvo", label: "Approved changes (DVO)", aconex: "approved_changes", dashboard: "H", decides: "none", note: "Aconex approved downstream contract changes vs column H (determined variation orders) – for information: the dashboard folds historic variations into the award" },
   { key: "pvo", label: "Pending changes (PVO)", aconex: "pending_changes", dashboard: "J", decides: "none", note: "Aconex pending downstream contract changes vs column J (potential variation orders) – for information" },
-  { key: "ew", label: "Early warnings", aconex: "approved_early_warnings_rsg", dashboard: "L", decides: "none", note: "Aconex approved + pending early warnings (RSG columns) vs column L (early warnings) – for information: RSG keeps its early warnings on the budget hold, the dashboard on the contract they belong to" },
-  { key: "eac", label: "Estimate at completion", aconex: "eac", dashboard: "N", decides: "both", note: "Aconex estimate at completion (the standard Aconex figure: the approved budget) vs column N (anticipated final account) – decides for every line" },
-  { key: "eac_rsg", label: "EAC after early warnings (RSG 1115)", aconex: "eac_rsg", dashboard: "N", decides: "none", note: "RSG's own estimate at completion 1115 – the approved budget less the early warnings RSG has approved, which RSG books on the budget hold – vs column N. For information: the dashboard's anticipated final account does not carry RSG's early-warning savings, so the whole early-warnings figure above shows here as a difference" },
+  { key: "hold", label: "Budget on hold (unspent, unallocated)", aconex: "eac", dashboard: "I", decides: "hold", note: "The .98 rows of Aconex Cost (PS, MS, CM, CN budget holds): their estimate at completion, the unspent and unallocated budget, vs Schedule B's budget-hold lines after the approved drawdowns (column E of Schedule B, committed costs – the latest budget less the DVOs drawn from the hold; Aconex moves that budget to the contract when the DVO is approved). Pending PVOs and early warnings only reach column J – decides for budget holds" },
+  { key: "ew", label: "Early warnings", aconex: "approved_early_warnings_rsg", dashboard: "L", decides: "none", note: "Aconex approved + pending early warnings (RSG columns) on the contract rows vs column L (early warnings) – for information; the budget-hold row's figure is budget on hold, shown above" },
+  { key: "eac", label: "Estimate at completion", aconex: "eac", dashboard: "N", decides: "contract", note: "Aconex estimate at completion (the standard Aconex figure: the approved budget) vs column N (anticipated final account) – decides for contracts; a budget hold is decided by its budget and by the Budget on hold row" },
+  { key: "eac_rsg", label: "EAC after early warnings (RSG 1115)", aconex: "eac_rsg", dashboard: "N", decides: "none", note: "RSG's own estimate at completion 1115 (the approved budget less RSG's approved early warnings) on the contract rows vs column N – for information; on a budget hold the standard figure is used" },
   { key: "incurred", label: "Incurred to date", aconex: "incurred_to_date", dashboard: "P", decides: "contract", note: "Aconex incurred to date vs column P (certified to date) – decides for contracts" },
 ] as const;
 
 /** Does this figure decide whether a line of this kind differs? */
 export function measureDecides(m: (typeof ACONEX_MEASURES)[number], rowType: string): boolean {
   const hold = /hold/i.test(rowType);
-  return m.decides === "both" || (m.decides === "hold" && hold) || (m.decides === "contract" && !hold);
+  const d: string = m.decides;
+  return d === "both" || (d === "hold" && hold) || (d === "contract" && !hold);
 }
 
 export type AconexMeasureKey = (typeof ACONEX_MEASURES)[number]["key"];
@@ -73,7 +75,7 @@ export interface AconexReconciliation {
 export const TOLERANCE = 1;
 
 function blankMeasures(): Record<AconexMeasureKey, number | null> {
-  return { budget: null, commitments: null, dvo: null, pvo: null, ew: null, eac: null, eac_rsg: null, incurred: null };
+  return { budget: null, commitments: null, dvo: null, pvo: null, hold: null, ew: null, eac: null, eac_rsg: null, incurred: null };
 }
 
 export function buildAconexReconciliation(data: ReportData): AconexReconciliation {
@@ -83,18 +85,23 @@ export function buildAconexReconciliation(data: ReportData): AconexReconciliatio
   const usedLine = new Set<number>();
   const byLine = new Map<number, (typeof data.costReport.lines)[number]>();
   for (const l of data.costReport.lines) byLine.set(l.id, l);
+  // the .98 rows (budget holds) are unspent, unallocated budget: RSG's early-warning columns and EAC 1115 on them are
+  // not read (the figure RSG keeps there is not an early warning); their budget on hold is their estimate at completion
+  const hold = (r: RecordRow) => String(r.row_type ?? "") === "Budget hold";
+  const ewOf = (r: RecordRow) => (r.approved_early_warnings_rsg === null || r.approved_early_warnings_rsg === undefined ? (r.pending_early_warnings_rsg === null || r.pending_early_warnings_rsg === undefined ? null : n(r.pending_early_warnings_rsg)) : r2(n(r.approved_early_warnings_rsg) + n(r.pending_early_warnings_rsg)));
   const aconexOf = (r: RecordRow): Record<AconexMeasureKey, number | null> => ({
     budget: r.approved_budget === null || r.approved_budget === undefined ? null : n(r.approved_budget),
     commitments: r.current_commitments === null || r.current_commitments === undefined ? null : n(r.current_commitments),
     dvo: r.approved_changes === null || r.approved_changes === undefined ? null : n(r.approved_changes),
     pvo: r.pending_changes === null || r.pending_changes === undefined ? null : n(r.pending_changes),
-    ew: r.approved_early_warnings_rsg === null || r.approved_early_warnings_rsg === undefined ? (r.pending_early_warnings_rsg === null || r.pending_early_warnings_rsg === undefined ? null : n(r.pending_early_warnings_rsg)) : r2(n(r.approved_early_warnings_rsg) + n(r.pending_early_warnings_rsg)),
+    hold: hold(r) ? (r.eac === null || r.eac === undefined ? null : n(r.eac)) : null,
+    ew: hold(r) ? null : ewOf(r),
     // the standard Aconex estimate at completion (the approved budget) decides; RSG's own 1115 is shown beside it
     eac: r.eac === null || r.eac === undefined ? null : n(r.eac),
-    eac_rsg: r.eac_rsg === null || r.eac_rsg === undefined ? null : n(r.eac_rsg),
+    eac_rsg: hold(r) ? (r.eac === null || r.eac === undefined ? null : n(r.eac)) : r.eac_rsg === null || r.eac_rsg === undefined ? null : n(r.eac_rsg),
     incurred: r.incurred_to_date === null || r.incurred_to_date === undefined ? null : n(r.incurred_to_date),
   });
-  const dashOf = (l: (typeof data.costReport.lines)[number]): Record<AconexMeasureKey, number | null> => ({ budget: l.G, commitments: l.I, dvo: l.H, pvo: l.J, ew: l.L, eac: l.N, eac_rsg: l.N, incurred: l.P });
+  const dashOf = (l: (typeof data.costReport.lines)[number]): Record<AconexMeasureKey, number | null> => ({ budget: l.G, commitments: l.I, dvo: l.H, pvo: l.J, hold: l.is_budget_hold ? l.I : null, ew: l.L, eac: l.N, eac_rsg: l.N, incurred: l.P });
   const finish = (line: AconexLine) => {
     for (const m of ACONEX_MEASURES) {
       const a = line.aconex[m.key];
@@ -198,7 +205,7 @@ export function buildAconexReconciliation(data: ReportData): AconexReconciliatio
     if (usedLine.has(l.id)) continue;
     lines.push(finish({ status: "dashboard_only", code: l.code, aconexCode: "", name: l.name, contractor: l.contractor, category: l.category, rowType: l.is_budget_hold ? "Budget hold" : "Contract", aconex: blankMeasures(), dashboard: dashOf(l), diff: blankMeasures(), worst: 0, differs: [] }));
   }
-  const zero = () => ({ budget: 0, commitments: 0, dvo: 0, pvo: 0, ew: 0, eac: 0, eac_rsg: 0, incurred: 0 });
+  const zero = () => ({ budget: 0, commitments: 0, dvo: 0, pvo: 0, hold: 0, ew: 0, eac: 0, eac_rsg: 0, incurred: 0 });
   // The comparison is only meaningful over the lines both systems hold: an Aconex row with no
   // cost report line, or a cost report line Aconex does not carry, would otherwise be read as a
   // difference – and a cost report line that several Aconex rows point at must be counted once.
@@ -210,7 +217,7 @@ export function buildAconexReconciliation(data: ReportData): AconexReconciliatio
   const unmatched = { aconex: zero(), dashboard: zero() };
   const countedLines = new Set<string>();
   // budget and estimate at completion over every line; commitments, changes and incurred over the contracts only
-  const counts = (m: (typeof ACONEX_MEASURES)[number], rowType: string) => m.key === "budget" || m.key === "eac" || m.key === "eac_rsg" || m.key === "ew" || rowType !== "Budget hold";
+  const counts = (m: (typeof ACONEX_MEASURES)[number], rowType: string) => (m.key === "hold" ? rowType === "Budget hold" : m.key === "budget" || m.key === "eac" || m.key === "eac_rsg" || m.key === "ew" || rowType !== "Budget hold");
   for (const line of lines) {
     for (const m of ACONEX_MEASURES) {
       if (!counts(m, line.rowType)) continue;
@@ -264,7 +271,7 @@ export interface VarianceSource {
  * add up exactly to the figure in the totals table. Largest first; lines that agree are left out.
  */
 export function varianceSources(rec: AconexReconciliation, key: AconexMeasureKey): { lines: VarianceSource[]; total: number; agreeing: number } {
-  const counts = (rowType: string) => key === "budget" || key === "eac" || key === "eac_rsg" || key === "ew" || rowType !== "Budget hold";
+  const counts = (rowType: string) => (key === "hold" ? rowType === "Budget hold" : key === "budget" || key === "eac" || key === "eac_rsg" || key === "ew" || rowType !== "Budget hold");
   const groups = new Map<string, VarianceSource>();
   for (const l of rec.lines) {
     if (l.status !== "matched" || !counts(l.rowType)) continue;

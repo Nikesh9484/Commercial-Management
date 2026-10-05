@@ -18,6 +18,7 @@ export function TotalsTable({ rec, detail }: { rec: AconexReconciliation; detail
   // shown on request: they are RSG's forecasting view, not a like-for-like comparison with the cost report
   const [rsg, setRsg] = useState(false);
   const rsgKeys: AconexMeasureKey[] = ["ew", "eac_rsg"];
+  // (the budget-on-hold row stays: it is what the hold row's figure is)
   const measures = ACONEX_MEASURES.filter((m) => rsg || !rsgKeys.includes(m.key));
   const money = (v: number | null | undefined) => (v === null || v === undefined ? "–" : formatMoney(v));
   return (
@@ -185,6 +186,16 @@ function LineItems({ d, measure, money }: { d: LineDetail; measure: AconexMeasur
                 { label: "Approved early warnings", a: d.aconex.ewApproved ?? null, b: null, note: "RSG column – kept on the budget hold in Aconex" },
                 { label: "Pending early warnings", a: d.aconex.ewPending ?? null, b: null, note: "RSG column" },
                 { label: "Early warnings", a: d.aconex.ew, b: d.dashboard.ew, note: "Aconex approved + pending early warnings vs column L" },
+              ]
+          : measure === "hold"
+            ? [
+                { label: "Baseline budget of the hold", a: d.aconex.baseline, b: d.dashboard.baseline, note: "Aconex baseline vs Schedule B column A" },
+                { label: "Budget transfers", a: d.aconex.transfers, b: d.dashboard.transfers, note: "Aconex moves budget out of the hold to a contract when it is awarded or a DVO approved; Schedule B column B carries the transfers only" },
+                { label: "Latest budget of the hold", a: d.aconex.budget, b: d.dashboard.budget, note: "Aconex approved budget of the .98 row vs Schedule B column C" },
+                { label: "Approved drawdowns on the hold (DVO)", a: null, b: d.dashboard.dvo, note: "Schedule B column D on the hold line – in Aconex these have already left the hold as transfers" },
+                { label: "Budget on hold (unspent, unallocated)", a: d.aconex.holdRsg ?? null, b: d.dashboard.holdRsg ?? null, note: "Aconex estimate at completion / estimate to complete of the .98 row vs Schedule B column E (committed costs of the hold line: latest budget less the DVO drawdowns) – this decides" },
+                { label: "Pending drawdowns (PVO, RFC, early warnings, claims)", a: null, b: (d.dashboard.pvo ?? 0) + (d.dashboard.rfc ?? 0) + (d.dashboard.ew ?? 0) + (d.dashboard.claims ?? 0), note: "Schedule B columns F to I on the hold line – not yet moved in Aconex" },
+                { label: "Anticipated final account of the hold", a: null, b: d.dashboard.eac, note: "Schedule B column J – what stays on hold once the pending drawdowns are taken too" },
               ]
           : measure === "eac_rsg"
             ? [

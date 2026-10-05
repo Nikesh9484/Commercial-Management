@@ -12,21 +12,32 @@ import { contractRowTie, exactLineOf } from "../workbook/aconex";
  */
 export function repairAconexTies(): void {
   const db = getDb();
-  if (getSetting(db, "repaired_aconex_ties") === "1") return;
-  setSetting(db, "repaired_aconex_ties", "1");
+  // v2 (5 Oct 2026, later the same day): the budget-hold rows too – a project's .98 rows tied to its
+  // "Remaining budget" lines by section (and the FF&E hold to its own line)
+  if (getSetting(db, "repaired_aconex_ties_v2") === "1") return;
+  setSetting(db, "repaired_aconex_ties_v2", "1");
   let changed = 0;
   const programmes = db.prepare("SELECT id, code, name FROM programmes ORDER BY id").all() as { id: number; code: string; name: string }[];
   for (const programme of programmes) {
-    const rows = db.prepare("SELECT id, code, name, row_type, cost_line_id FROM aconex_control_accounts WHERE programme_id = ? AND row_type IS NOT 'Budget hold'").all(programme.id) as { id: number; code: string; name: string | null; row_type: string | null; cost_line_id: number | null }[];
-    if (!rows.length) continue;
+    const all = db.prepare("SELECT id, code, name, row_type, cost_line_id FROM aconex_control_accounts WHERE programme_id = ?").all(programme.id) as { id: number; code: string; name: string | null; row_type: string | null; cost_line_id: number | null }[];
+    if (!all.length) continue;
     const ctx = aconexContextFor(db, programme, "");
     const lineId = new Map((db.prepare("SELECT id, code FROM cost_lines WHERE programme_id = ?").all(programme.id) as { id: number; code: string }[]).map((l) => [l.code, l.id]));
+    let own = 0;
+    for (const r of all.filter((x) => x.row_type === "Budget hold")) {
+      const parts = String(r.code).split(".");
+      const code = ctx.holdLinesByKey.get(parts.slice(0, -1).join("."));
+      const want = code ? (lineId.get(code) ?? null) : null;
+      if (want === (r.cost_line_id ?? null)) continue;
+      db.prepare("UPDATE aconex_control_accounts SET cost_line_id = ?, updated_at = ?, updated_by = 'system' WHERE id = ?").run(want, new Date().toISOString(), r.id);
+      own++;
+    }
+    const rows = all.filter((x) => x.row_type !== "Budget hold");
     const exact = new Set<string>();
     for (const r of rows) {
       const l = exactLineOf(String(r.code), ctx);
       if (l?.code) exact.add(l.code);
     }
-    let own = 0;
     for (const r of rows) {
       const tie = contractRowTie(String(r.code), String(r.name ?? ""), ctx, exact);
       const want = tie.line ? (lineId.get(tie.line.code) ?? null) : null;

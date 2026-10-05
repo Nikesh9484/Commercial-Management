@@ -60,6 +60,8 @@ export interface LineParts {
   ewPending?: number | null;
   /** RSG's own estimate at completion (1115: approved budget less the early warnings RSG has approved), Aconex side only */
   eacRsg?: number | null;
+  /** budget on hold: a .98 row's estimate at completion (Aconex side), the hold line's committed costs – Schedule B column E, column I here (dashboard side) */
+  holdRsg?: number | null;
 }
 /** One change item's share of a line's difference: the register's value against Aconex's, paired by number. */
 export interface DiffItem {
@@ -128,7 +130,7 @@ export function varianceDetail(data: ReportData, rec: AconexReconciliation): Rec
     const ids = new Set(members.map((m) => m.id));
     const packages = new Set(members.map((m) => m.package_id));
     // the dashboard's figures, over the line's members
-    const d: LineParts = { baseline: 0, transfers: 0, budgetChanges: null, budget: 0, awarded: null, dvo: 0, commitments: 0, pvo: 0, rfc: 0, ew: 0, claims: 0, eac: 0, incurred: 0 };
+    const d: LineParts = { baseline: 0, transfers: 0, budgetChanges: null, budget: 0, awarded: null, dvo: 0, commitments: 0, pvo: 0, rfc: 0, ew: 0, claims: 0, eac: 0, incurred: 0, holdRsg: members.some((m) => m.is_budget_hold) ? r2(members.filter((m) => m.is_budget_hold).reduce((t, m) => t + (m.I ?? 0), 0)) : null };
     for (const m of members) {
       d.baseline = r2((d.baseline ?? 0) + m.E);
       d.transfers = r2((d.transfers ?? 0) + m.F);
@@ -155,12 +157,16 @@ export function varianceDetail(data: ReportData, rec: AconexReconciliation): Rec
       a.dvo = add(a.dvo, n(r.approved_changes));
       a.commitments = add(a.commitments, n(r.current_commitments));
       a.pvo = add(a.pvo, n(r.pending_changes));
-      if (r.approved_early_warnings_rsg !== null && r.approved_early_warnings_rsg !== undefined) a.ewApproved = add(a.ewApproved ?? null, n(r.approved_early_warnings_rsg));
-      if (r.pending_early_warnings_rsg !== null && r.pending_early_warnings_rsg !== undefined) a.ewPending = add(a.ewPending ?? null, n(r.pending_early_warnings_rsg));
+      // a .98 row is unspent, unallocated budget: its budget on hold is its estimate at completion; RSG's early-warning
+      // columns on it are not read (what RSG keeps there is not an early warning)
+      const hold = String(r.row_type ?? "") === "Budget hold";
+      if (hold) a.holdRsg = add(a.holdRsg ?? null, n(r.eac));
+      if (!hold && r.approved_early_warnings_rsg !== null && r.approved_early_warnings_rsg !== undefined) a.ewApproved = add(a.ewApproved ?? null, n(r.approved_early_warnings_rsg));
+      if (!hold && r.pending_early_warnings_rsg !== null && r.pending_early_warnings_rsg !== undefined) a.ewPending = add(a.ewPending ?? null, n(r.pending_early_warnings_rsg));
       if (a.ewApproved !== null && a.ewApproved !== undefined) a.ew = add(a.ew, 0);
       // the standard Aconex EAC (the approved budget) is compared; RSG's own 1115 is shown beside it
       a.eac = add(a.eac, n(r.eac));
-      if (r.eac_rsg !== null && r.eac_rsg !== undefined) a.eacRsg = add(a.eacRsg ?? null, n(r.eac_rsg));
+      if (r.eac_rsg !== null && r.eac_rsg !== undefined) a.eacRsg = add(a.eacRsg ?? null, hold ? n(r.eac) : n(r.eac_rsg));
       a.incurred = add(a.incurred, n(r.incurred_to_date));
     }
     if (a.ewApproved !== undefined || a.ewPending !== undefined) a.ew = (a.ewApproved ?? 0) + (a.ewPending ?? 0);

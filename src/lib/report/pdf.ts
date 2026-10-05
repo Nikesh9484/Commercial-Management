@@ -1409,7 +1409,7 @@ function aconexReport(ctx: Ctx) {
       { key: "diff", label: "Difference", width: 1.1, align: "right", format: money },
       { key: "note", label: "What is compared", width: 3.2 },
     ],
-    ACONEX_MEASURES.map((m) => ({ label: `${m.label} (${rec.totals.lines[m.key]} ${m.key === "budget" || m.key === "eac" || m.key === "eac_rsg" || m.key === "ew" ? "lines" : "contracts"})`, aconex: rec.totals.aconex[m.key], dashboard: rec.totals.dashboard[m.key], diff: rec.totals.diff[m.key], note: m.note })),
+    ACONEX_MEASURES.map((m) => ({ label: `${m.label} (${rec.totals.lines[m.key]} ${m.key === "hold" ? "budget holds" : m.key === "budget" || m.key === "eac" || m.key === "eac_rsg" || m.key === "ew" ? "lines" : "contracts"})`, aconex: rec.totals.aconex[m.key], dashboard: rec.totals.dashboard[m.key], diff: rec.totals.diff[m.key], note: m.note })),
     { zebra: true, rowStyle: (r) => (Math.abs(Number(r.diff)) >= rec.counts.tolerance ? { color: "#b91c1c" } : undefined) },
   );
   const listed = [...rec.discrepancies, ...rec.aconexOnly, ...rec.dashboardOnly];

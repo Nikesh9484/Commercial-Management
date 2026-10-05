@@ -7,7 +7,7 @@ import { getReportData } from "@/lib/report/data";
 import { buildAconexReconciliation, ACONEX_MEASURES, measureDecides, type AconexLine } from "@/lib/recovery/aconex";
 
 // the line-by-line table compares like for like; RSG's own early-warning columns are on the totals table, on request
-const LINE_MEASURES = ACONEX_MEASURES.filter((m) => m.key !== "ew" && m.key !== "eac_rsg");
+const LINE_MEASURES = ACONEX_MEASURES.filter((m) => m.key !== "ew" && m.key !== "eac_rsg" && m.key !== "hold");
 import { buildAconexChangeCheck } from "@/lib/recovery/aconex-changes";
 import { ChangeEventsCheck } from "@/components/aconex/ChangeEventsCheck";
 import { TotalsTable } from "@/components/aconex/TotalsTable";

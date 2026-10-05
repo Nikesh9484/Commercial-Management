@@ -41,9 +41,14 @@ export function aconexContextFor(db: Database.Database, programme: { id: number;
     .all(programme.id) as { code: string; name: string | null; is_budget_hold: number | null; asset: string; contractor: string | null }[];
   for (const l of lines) {
     if (l.is_budget_hold) {
-      // "01.PS.98" / "PS.98" under asset 1TB01006.01 → "1TB01006.01.PS"
-      const m = String(l.code).match(/([A-Z&\s]+)\.98$/i);
-      if (m) holdLinesByKey.set(`${l.asset}.${m[1].replace(/[^A-Z]/gi, "").toUpperCase()}`, l.code);
+      // "01.PS.98" / "PS.98" under asset 1TB01006.01 → "1TB01006.01.PS"; a second hold of a section named for
+      // FF&E / OS&E ("CN.98-2 Remaining budget - FF&E and OSE") is Aconex's FFEOSE.98
+      const m = String(l.code).match(/([A-Z&\s]+)\.98(-\d+)?$/i);
+      if (m) {
+        const section = m[2] && /ff\s*&?\s*e|os\s*&?\s*e/i.test(String(l.name ?? "")) ? "FFEOSE" : m[1].replace(/[^A-Z]/gi, "").toUpperCase();
+        const key = `${l.asset}.${section}`;
+        if (!holdLinesByKey.has(key)) holdLinesByKey.set(key, l.code);
+      }
       continue;
     }
     const ck = contractKey(l.code);
