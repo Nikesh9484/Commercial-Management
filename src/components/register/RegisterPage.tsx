@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { createPortal } from "react-dom";
 import { useScopeKey } from "@/components/layout/ScopeContext";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -1195,14 +1196,27 @@ function cellKey(f: FieldDef, r: RecordRow): string {
 function ColumnFilter({ values, selected, onChange }: { values: { v: string; n: number }[]; selected: Set<string> | undefined; onChange: (next: Set<string> | undefined) => void }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
+  const [at, setAt] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
   const ref = useRef<HTMLDivElement>(null);
+  const btn = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (!open) return;
     const h = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      if (ref.current && !ref.current.contains(e.target as Node) && !btn.current?.contains(e.target as Node)) setOpen(false);
     };
+    const place = () => {
+      const r = btn.current?.getBoundingClientRect();
+      if (r) setAt({ top: r.bottom + 4, left: Math.max(8, Math.min(r.left, window.innerWidth - 300)) });
+    };
+    place();
     document.addEventListener("mousedown", h);
-    return () => document.removeEventListener("mousedown", h);
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("resize", place);
+    return () => {
+      document.removeEventListener("mousedown", h);
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("resize", place);
+    };
   }, [open]);
   const active = !!selected;
   const shown = values.filter((x) => !q || x.v.toLowerCase().includes(q.toLowerCase()));
@@ -1213,12 +1227,13 @@ function ColumnFilter({ values, selected, onChange }: { values: { v: string; n: 
     onChange(next.size >= values.length && values.every((x) => next.has(x.v)) ? undefined : next);
   };
   return (
-    <div ref={ref} className="relative inline-block align-middle" data-nocopy onClick={(e) => e.stopPropagation()}>
-      <button type="button" title={active ? "Filtered – click to change" : "Filter this column"} onClick={() => setOpen((o) => !o)} className={`ml-1 inline-flex rounded p-0.5 transition hover:bg-black/5 hover:text-ink ${active ? "text-accent" : "text-muted opacity-0 group-hover:opacity-100"}`}>
+    <div className="relative inline-block align-middle" data-nocopy onClick={(e) => e.stopPropagation()}>
+      <button ref={btn} type="button" title={active ? "Filtered – click to change" : "Filter this column"} onClick={() => setOpen((o) => !o)} className={`ml-1 inline-flex rounded p-0.5 transition hover:bg-black/5 hover:text-ink ${active ? "text-accent" : "text-muted opacity-0 group-hover:opacity-100"}`}>
         <Filter size={12} fill={active ? "currentColor" : "none"} />
       </button>
-      {open && (
-        <div className="absolute left-0 top-full z-50 mt-1 w-72 rounded-lg border border-line bg-white p-2 text-left text-xs font-normal normal-case tracking-normal text-ink shadow-xl">
+      {open &&
+        createPortal(
+        <div ref={ref} style={{ position: "fixed", top: at.top, left: at.left }} className="z-[1000] w-72 rounded-lg border border-line bg-white p-2 text-left text-xs font-normal normal-case tracking-normal text-ink shadow-xl" onClick={(e) => e.stopPropagation()}>
           <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search values…" className="input h-7 w-full text-xs" />
           <div className="my-1 flex items-center gap-3 text-[11px]">
             <button type="button" className="text-accent hover:underline" onClick={() => onChange(undefined)}>Select all</button>
@@ -1239,8 +1254,9 @@ function ColumnFilter({ values, selected, onChange }: { values: { v: string; n: 
           <div className="mt-1 flex justify-end">
             <button type="button" className="btn btn-sm btn-secondary" onClick={() => setOpen(false)}>Close</button>
           </div>
-        </div>
-      )}
+        </div>,
+        document.body,
+        )}
     </div>
   );
 }
