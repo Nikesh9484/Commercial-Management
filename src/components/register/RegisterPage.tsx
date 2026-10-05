@@ -88,6 +88,8 @@ export function RegisterPage({
     return () => clearTimeout(t);
   }, []);
   const [filters, setFilters] = useState<Record<string, string>>({});
+  // Excel-style column filters: a column's chosen values (undefined = every value)
+  const [colFilters, setColFilters] = useState<Record<string, Set<string> | undefined>>({});
   const [showFilters, setShowFilters] = useState(false);
   const [sort, setSort] = useState<{ field: string; dir: "asc" | "desc" } | null>(null);
   const [page, setPage] = useState(1);
@@ -287,7 +289,7 @@ export function RegisterPage({
   }, [def, fixedFilter]);
   const effectiveSort = sort ?? def?.defaultSort ?? null;
 
-  const visible = useMemo(() => {
+  const base = useMemo(() => {
     if (!data) return [];
     const q = search.trim().toLowerCase();
     let rows = data.rows;
@@ -317,6 +319,32 @@ export function RegisterPage({
         return String(r[key] ?? "") === val;
       });
     }
+    return rows;
+  }, [data, search, filters, fixedFilter, rowFilter]);
+  /** the values each column offers in its filter, counted over the rows the other filters leave */
+  const columnValues = useMemo(() => {
+    const out: Record<string, { v: string; n: number }[]> = {};
+    if (!data) return out;
+    for (const f of tableFields) {
+      const others = Object.entries(colFilters).filter(([k, set]) => k !== f.key && set);
+      const counts = new Map<string, number>();
+      for (const r of base) {
+        if (!others.every(([k, set]) => set!.has(cellKey(data.def.fields.find((x) => x.key === k)!, r)))) continue;
+        const v = cellKey(f, r);
+        counts.set(v, (counts.get(v) ?? 0) + 1);
+      }
+      out[f.key] = [...counts.entries()].map(([v, n]) => ({ v, n })).sort((a, b) => a.v.localeCompare(b.v, undefined, { numeric: true, sensitivity: "base" }));
+    }
+    return out;
+  }, [data, base, tableFields, colFilters]);
+  const visible = useMemo(() => {
+    if (!data) return [];
+    let rows = base;
+    for (const [key, set] of Object.entries(colFilters)) {
+      if (!set) continue;
+      const f = data.def.fields.find((x) => x.key === key);
+      if (f) rows = rows.filter((r) => set.has(cellKey(f, r)));
+    }
     if (effectiveSort) {
       const f = data.def.fields.find((x) => x.key === effectiveSort.field);
       const dir = effectiveSort.dir === "asc" ? 1 : -1;
@@ -330,7 +358,7 @@ export function RegisterPage({
       });
     }
     return rows;
-  }, [data, search, filters, effectiveSort, fixedFilter, rowFilter]);
+  }, [data, base, colFilters, effectiveSort]);
 
   const pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount);
@@ -677,6 +705,11 @@ ${lines.join("\n")}`)) return;
               <X size={14} /> Clear
             </button>
           )}
+          {Object.values(colFilters).some(Boolean) && (
+            <button className="btn btn-ghost btn-sm text-accent" onClick={() => { setPage(1); setColFilters({}); }} title="Remove the column filters (the funnel on each column)">
+              <Filter size={14} fill="currentColor" /> Clear column filters ({Object.values(colFilters).filter(Boolean).length})
+            </button>
+          )}
         </div>
       )}
 
@@ -809,6 +842,7 @@ ${lines.join("\n")}`)) return;
                         <ChevronsUpDown size={13} className="opacity-40" />
                       )}
                     </button>
+                    <ColumnFilter values={columnValues[f.key] ?? []} selected={colFilters[f.key]} onChange={(next) => { setPage(1); setColFilters((x) => ({ ...x, [f.key]: next })); }} />
                     {/* hide this column (the Columns button brings it back) */}
                     <button
                       type="button"
@@ -1145,6 +1179,70 @@ function MenuItem({ icon, label, hint, onClick }: { icon: React.ReactNode; label
 
 function isNumeric(f: FieldDef) {
   return f.type === "number" || f.type === "money" || f.type === "percent";
+}
+
+/** the text a column filter offers for a cell – what the table shows, blanks as "" */
+function cellKey(f: FieldDef, r: RecordRow): string {
+  const v = displayValue(f, r);
+  if (v === null || v === undefined || v === "") return "";
+  if (f.type === "money") return formatMoney(Number(v));
+  if (f.type === "number") return formatNumber(Number(v), Number.isInteger(Number(v)) ? 0 : 2);
+  if (f.type === "percent") return formatPercent(Number(v));
+  return String(v);
+}
+
+/** An Excel-style filter on one column: search the values, tick the ones to keep, select all / clear. */
+function ColumnFilter({ values, selected, onChange }: { values: { v: string; n: number }[]; selected: Set<string> | undefined; onChange: (next: Set<string> | undefined) => void }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const h = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, [open]);
+  const active = !!selected;
+  const shown = values.filter((x) => !q || x.v.toLowerCase().includes(q.toLowerCase()));
+  const toggle = (v: string) => {
+    const next = new Set(selected ?? values.map((x) => x.v));
+    if (next.has(v)) next.delete(v);
+    else next.add(v);
+    onChange(next.size >= values.length && values.every((x) => next.has(x.v)) ? undefined : next);
+  };
+  return (
+    <div ref={ref} className="relative inline-block align-middle" data-nocopy onClick={(e) => e.stopPropagation()}>
+      <button type="button" title={active ? "Filtered – click to change" : "Filter this column"} onClick={() => setOpen((o) => !o)} className={`ml-1 inline-flex rounded p-0.5 transition hover:bg-black/5 hover:text-ink ${active ? "text-accent" : "text-muted opacity-0 group-hover:opacity-100"}`}>
+        <Filter size={12} fill={active ? "currentColor" : "none"} />
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full z-50 mt-1 w-72 rounded-lg border border-line bg-white p-2 text-left text-xs font-normal normal-case tracking-normal text-ink shadow-xl">
+          <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search values…" className="input h-7 w-full text-xs" />
+          <div className="my-1 flex items-center gap-3 text-[11px]">
+            <button type="button" className="text-accent hover:underline" onClick={() => onChange(undefined)}>Select all</button>
+            <button type="button" className="text-accent hover:underline" onClick={() => onChange(new Set())}>Clear</button>
+            {q && <button type="button" className="text-accent hover:underline" onClick={() => onChange(new Set(shown.map((x) => x.v)))}>Only these</button>}
+            <span className="ml-auto text-muted">{values.length} value{values.length === 1 ? "" : "s"}</span>
+          </div>
+          <div className="max-h-64 overflow-y-auto">
+            {shown.length === 0 && <div className="py-1 text-muted">No value matches.</div>}
+            {shown.map((x) => (
+              <label key={x.v} className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 hover:bg-slate-50">
+                <input type="checkbox" checked={!selected || selected.has(x.v)} onChange={() => toggle(x.v)} />
+                <span className={`flex-1 truncate ${x.v ? "" : "italic text-muted"}`} title={x.v}>{x.v || "(blank)"}</span>
+                <span className="tnum text-muted">{x.n}</span>
+              </label>
+            ))}
+          </div>
+          <div className="mt-1 flex justify-end">
+            <button type="button" className="btn btn-sm btn-secondary" onClick={() => setOpen(false)}>Close</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function displayValue(f: FieldDef, r: RecordRow): unknown {
