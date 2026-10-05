@@ -143,7 +143,7 @@ export const aconexControlAccounts: RegisterDef = {
     { key: "code", label: "WBS code", type: "text", required: true, section: WBS, width: "15rem" },
     { key: "name", label: "Name", type: "text", section: WBS, width: "18rem" },
     { key: "description", label: "Description", type: "text", section: WBS, hideInTable: true },
-    { key: "row_type", label: "Row type", type: "select", options: ["Contract", "Budget hold"], section: WBS, chip: true, filter: true },
+    { key: "row_type", label: "Row type", type: "select", options: ["Contract", "Budget hold", "Direct payment"], section: WBS, chip: true, filter: true, help: "Direct payment: a payment RSG made straight to a vendor on behalf of the main contractor – these rows are compared as one group against the cost report's Direct Payment lines." },
     { key: "level", label: "Level", type: "text", section: WBS, hideInTable: true },
     { key: "parent_code", label: "Parent code", type: "text", section: WBS, hideInTable: true },
     { key: "cost_line_id", label: "Cost report line", type: "lookup", lookup: { register: "cost_lines" }, section: WBS, hideInTable: true, help: "Matched by contract code (031C15 ↔ CN.031C15); set it by hand where the codes differ." },

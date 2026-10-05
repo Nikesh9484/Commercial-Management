@@ -1,6 +1,7 @@
 import type { ReportData } from "../report/data";
 import type { AconexReconciliation } from "./aconex";
 import { parseEventNo } from "../workbook/aconex";
+import { isDirectPaymentLine, contractKey } from "./aconex-codes";
 import { refNumber, statusGroup } from "./aconex-changes";
 
 /**
@@ -69,7 +70,10 @@ export interface LineDetail {
   transfers: { register: TransferItem[]; aconex: TransferItem[] };
 }
 
-const accOf = (code: string) => code.match(/\b(\d{3}[A-Z]\d{2})\b/)?.[1]?.toUpperCase() ?? null;
+/** the contract code with its section, as the check groups lines (MS.003F02, FFEOSE.003F02) */
+const accOf = (code: string) => contractKey(code)?.key ?? null;
+/** the bare contract code, as the change events and contracts name it (003F02) */
+const fragOnly = (code: string) => contractKey(code)?.frag ?? null;
 
 export function varianceDetail(data: ReportData, rec: AconexReconciliation): Record<string, LineDetail> {
   const lines = data.costReport.lines;
@@ -80,10 +84,24 @@ export function varianceDetail(data: ReportData, rec: AconexReconciliation): Rec
   const events = data.recovery.aconexEvents;
   const accounts = data.recovery.aconex;
   const out: Record<string, LineDetail> = {};
+  const byId = new Map(lines.map((l) => [l.id, l]));
+  // lines tied to an Aconex row of another code belong to that row alone (as the check builds them)
+  const explicit = new Set<number>();
+  for (const a of accounts) {
+    const l = byId.get(Number(a.cost_line_id));
+    if (l && String(a.row_type ?? "") !== "Budget hold" && accOf(String(a.code ?? "")) !== accOf(l.code)) explicit.add(l.id);
+  }
   for (const rl of rec.lines) {
     if (rl.status !== "matched" || out[rl.code]) continue;
-    const frag = rl.rowType === "Budget hold" ? null : accOf(rl.aconexCode) ?? accOf(rl.code);
-    const members = frag ? lines.filter((l) => !l.is_budget_hold && accOf(l.code) === frag) : lines.filter((l) => l.code === rl.code.replace(/ \(\+\d+ lines?\)$/, ""));
+    const direct = rl.rowType === "Direct payment";
+    const frag = rl.rowType === "Budget hold" || direct ? null : accOf(rl.aconexCode) ?? accOf(rl.code);
+    const own = accounts.find((a) => String(a.code ?? "") === rl.aconexCode);
+    const tied = own ? byId.get(Number(own.cost_line_id)) : undefined;
+    const sameKey = frag ? lines.filter((l) => !l.is_budget_hold && accOf(l.code) === frag && !explicit.has(l.id)) : [];
+    // one side without a section: the code's only group
+    const sameFrag = frag && !sameKey.length ? lines.filter((l) => !l.is_budget_hold && fragOnly(l.code) === fragOnly(frag) && !explicit.has(l.id)) : [];
+    const group = sameKey.length ? sameKey : frag && new Set(sameFrag.map((l) => accOf(l.code))).size === 1 && (!frag.includes(".") || !accOf(sameFrag[0].code)?.includes(".")) ? sameFrag : [];
+    const members = direct ? lines.filter((l) => !l.is_budget_hold && isDirectPaymentLine(l.code, l.name)) : group.length ? group : tied ? [tied] : lines.filter((l) => l.code === rl.code.replace(/ \(\+\d+ lines?\)$/, ""));
     const ids = new Set(members.map((m) => m.id));
     const packages = new Set(members.map((m) => m.package_id));
     // the dashboard's figures, over the line's members
@@ -103,7 +121,7 @@ export function varianceDetail(data: ReportData, rec: AconexReconciliation): Rec
     }
     d.awarded = d.budget; // the award sits in column G (awarded contract / latest budget); the DVOs come on top in H
     // Aconex's figures: every control-account row pointing at this line
-    const rows = accounts.filter((a) => rec.lines.some((x) => x.code === rl.code && x.aconexCode === String(a.code ?? "")));
+    const rows = direct ? accounts.filter((a) => String(a.row_type ?? "") === "Direct payment") : accounts.filter((a) => rec.lines.some((x) => x.code === rl.code && x.aconexCode === String(a.code ?? "")));
     const a: LineParts = { baseline: null, transfers: null, budgetChanges: null, budget: null, awarded: null, dvo: null, commitments: null, pvo: null, rfc: null, ew: null, claims: null, eac: null, incurred: null };
     for (const r of rows) {
       a.baseline = add(a.baseline, n(r.baseline_budget));
@@ -149,11 +167,12 @@ export function varianceDetail(data: ReportData, rec: AconexReconciliation): Rec
       } else p.register = { item: String(c.item_no ?? c.id), label: String(c.description ?? ""), status: String(c.overall_status_id__label ?? ""), pvo, dvo };
     }
     const btr: TransferItem[] = [];
-    if (frag) {
+    const bare = frag ? fragOnly(frag) : null;
+    if (bare) {
       for (const e of events) {
         const parsed = parseEventNo(String(e.event_no ?? ""));
         const ef = String(e.contract_frag ?? "").toUpperCase() || parsed.frag || "";
-        if (ef !== frag) continue;
+        if (ef !== bare) continue;
         const status = String(e.cost_status ?? e.budget_status ?? "");
         if (parsed.kind === "BTR") {
           btr.push({ ref: String(e.event_no ?? ""), label: String(e.name ?? ""), status, amount: n(e.total_budget_impact), direction: "in" });
@@ -193,7 +212,7 @@ export function varianceDetail(data: ReportData, rec: AconexReconciliation): Rec
     const order = (k: string) => (k.startsWith("PVO:") ? 0 : k.startsWith("RFC:") ? 1 : 2);
     const changeList = [...pairs.values()].sort((x, y) => order(x.key) - order(y.key) || (refNumber(x.key.split(":")[1]) ?? 0) - (refNumber(y.key.split(":")[1]) ?? 0) || x.key.localeCompare(y.key));
     // the payments: every application on the contracts tied to the line
-    const contractIds = new Set(contracts.filter((c) => ids.has(Number(c.cost_line_id)) || (frag && accOf(String(c.acc_ref ?? "")) === frag)).map((c) => Number(c.id)));
+    const contractIds = new Set(contracts.filter((c) => ids.has(Number(c.cost_line_id)) || (bare && fragOnly(String(c.acc_ref ?? "")) === bare)).map((c) => Number(c.id)));
     const contractName = new Map(contracts.map((c) => [Number(c.id), String(c.title ?? c.acc_ref ?? c.id)]));
     const payments: PaymentItem[] = applications
       .filter((p) => contractIds.has(Number(p.contract_id)))
@@ -204,7 +223,7 @@ export function varianceDetail(data: ReportData, rec: AconexReconciliation): Rec
     const regTransfers: TransferItem[] = transfers
       .filter((t) => packages.has(Number(t.to_package_id)) || packages.has(Number(t.from_package_id)))
       .map((t) => ({ ref: String(t.item ?? t.id), label: String(t.description ?? ""), status: String(t.status ?? ""), amount: n(t.amount), direction: packages.has(Number(t.to_package_id)) && packages.has(Number(t.from_package_id)) ? "within" : packages.has(Number(t.to_package_id)) ? "in" : "out" }));
-    out[rl.code] = { code: rl.code, contracts: frag ? [frag] : [], aconex: a, dashboard: d, changes: changeList, payments, paymentsTotal, transfers: { register: regTransfers, aconex: btr } };
+    out[rl.code] = { code: rl.code, contracts: bare ? [bare] : [], aconex: a, dashboard: d, changes: changeList, payments, paymentsTotal, transfers: { register: regTransfers, aconex: btr } };
   }
   return out;
 }

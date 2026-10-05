@@ -616,7 +616,7 @@ export function convertCustomsTracker(sheets: SheetValues[], ctx: RecoveryContex
       const supplier = c.supplier >= 0 ? txt(v, c.supplier) : "";
       // the site team's contract code on the declaration ties it to our contract outright
       const codeCell = [c.otherCode, c.code].map((i) => (i >= 0 ? txt(v, i) : "")).find((x) => /\d{3}[A-Z]\d{2}/i.test(x)) ?? "";
-      const codeFrag = codeCell ? /(\d{3}[A-Z]\d{2})/i.exec(codeCell.toUpperCase())?.[1] ?? "" : "";
+      const codeFrag = codeCell ? /(\d{3}[A-Z]\d{2,3})(?!\d)/i.exec(codeCell.toUpperCase())?.[1] ?? "" : "";
       let rec: Rec | undefined = codeFrag ? byKey.get(`contract:${codeFrag.toLowerCase()}`) : undefined;
       if (!rec) {
         if (!supplier || !looksLikeCompanyName(supplier)) continue;

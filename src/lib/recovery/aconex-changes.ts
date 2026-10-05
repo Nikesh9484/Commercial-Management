@@ -92,12 +92,16 @@ export function refNumber(ref: unknown): number | null {
 
 const zero = (): AconexContractorFigures => ({ approved: 0, pending: 0, cancelled: 0, transfers: 0, items: 0 });
 const NO_CONTRACTOR = "No contractor (budget holds and events without a contract code)";
+const DIRECT_PAYMENTS = "Direct payments on behalf of the main contractor";
 
 export function buildAconexChangeCheck(data: ReportData): AconexChangeCheck {
   const events = data.recovery.aconexEvents;
   const asOf = events.map((r) => String(r.tracker_date ?? "")).filter(Boolean).sort().pop() ?? null;
   const lines = data.costReport.lines;
-  const fragOf = (code: string) => code.match(/\b(\d{3}[A-Z]\d{2})\b/)?.[1]?.toUpperCase() ?? null;
+  const fragOf = (code: string) => code.match(/\b(\d{3}[A-Z]\d{2,3})\b/)?.[1]?.toUpperCase() ?? null;
+  // the contract codes Aconex uses for direct payments on behalf of the main contractor (one per vendor and month)
+  const directFrags = new Set<string>();
+  for (const a of data.recovery.aconex) if (String(a.row_type ?? "") === "Direct payment") { const f = fragOf(String(a.code ?? "")); if (f) directFrags.add(f); }
   // the contractor of each contract code, from the cost report
   const contractorOfFrag = new Map<string, string>();
   for (const l of lines) {
@@ -174,7 +178,7 @@ export function buildAconexChangeCheck(data: ReportData): AconexChangeCheck {
     const parsed = parseEventNo(no);
     const frag = String(e.contract_frag ?? "").toUpperCase() || parsed.frag || "";
     const kind = String(e.kind ?? parsed.kind ?? "Other");
-    const contractor = String(e.contractor_id__label ?? "") || (frag ? (contractorOfFrag.get(frag) ?? "") : "");
+    const contractor = String(e.contractor_id__label ?? "") || (frag ? (contractorOfFrag.get(frag) ?? (directFrags.has(frag) ? DIRECT_PAYMENTS : "")) : "");
     const b = block(contractor);
     addContract(b, frag || null);
     const aconexStatus = String(e.cost_status ?? e.budget_status ?? "");

@@ -446,7 +446,7 @@ export async function addBondsFromDocuments(files: DocFile[], user: UserInfo, de
     const missingNote = missing.length ? `Not found in the documents – to be added by hand: ${missing.join(", ")}.` : "";
     // the ref follows the project's own pattern: G-<ACC>-n, else the next number
     const pattern = rows.map((r) => String(r.ref ?? "")).find((r) => /^G-\d{3}[A-Z]\d{2}-\d+$/i.test(r));
-    const accOf = p.acc || (contract ? (String(contract.title).match(/\d{3}[A-Z]\d{2}/)?.[0] ?? "") : "");
+    const accOf = p.acc || (contract ? (String(contract.title).match(/\d{3}[A-Z]\d{2,3}(?!\d)/)?.[0] ?? "") : "");
     let ref: string;
     if (pattern && accOf) {
       const n = rows.map((r) => Number(String(r.ref ?? "").match(new RegExp(`^G-${accOf}-(\\d+)$`, "i"))?.[1] ?? 0)).reduce((a, b) => Math.max(a, b), 0);

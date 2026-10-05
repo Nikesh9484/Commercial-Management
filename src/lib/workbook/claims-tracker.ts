@@ -106,7 +106,7 @@ export function contractFrag(contractNo: string, programmeCode: string): string 
 
 /** Fragment of one of our codes: "CN.031C02-2" -> "031C02", "PS.031D03" -> "031D03". */
 export function codeFrag(code: string): string | null {
-  const m = /(\d{3}[A-Z]\d{2})/i.exec(code.toUpperCase());
+  const m = /(\d{3}[A-Z]\d{2,3})(?!\d)/i.exec(code.toUpperCase());
   return m ? m[1] : null;
 }
 

@@ -9,8 +9,8 @@
 import type { SheetValues } from "./read";
 import { cellText } from "./read";
 import { cols, findHeaderRow, rows, txt, type ConvertedSheet, type Sheet } from "./marina";
-import { codeFrag } from "./claims-tracker";
 import { programmeCodeOf } from "./recovery";
+import { isDirectPaymentLine, contractKey } from "../recovery/aconex-codes";
 
 /** A CSV file as the same sheet shape the workbook reader produces, so the converters need not care. */
 export function csvToSheets(text: string, name: string): SheetValues[] {
@@ -57,15 +57,90 @@ export function looksLikeAconexExport(sheets: SheetValues[]): boolean {
   return !!s && findHeaderRow(s, "parent code", "control budget", "estimate at completion") !== null;
 }
 
+export interface AconexKnownLine {
+  code: string;
+  name: string;
+  contractor: string;
+}
+
 export interface AconexContext {
   programmeCode: string;
   programmeName: string;
-  /** cost lines by contract code fragment (031C15) */
+  /** cost lines by contract code fragment (031C15) and, where the line's code carries its section, by "CN.031C15" too */
   linesByFrag: Map<string, { code: string; contractor: string }>;
+  /** every contract line with its name – for a row whose code the cost report does not carry, tied by contract number or name */
+  lines?: AconexKnownLine[];
   /** the budget-hold cost lines by "asset.section" ("1TB01006.01.PS") */
   holdLinesByKey: Map<string, string>;
   fileName: string;
   today: string;
+}
+
+export { DIRECT_PAYMENT, isDirectPaymentLine, contractKey } from "../recovery/aconex-codes";
+
+const NAME_STOP = new Set(["works", "work", "services", "service", "supply", "company", "contracting", "contractor", "saudi", "arabia", "arabian", "limited", "package", "project", "amaala", "yacht", "marina", "village", "installation", "engineering", "construction", "general", "trading", "international", "branch", "section", "precinct", "hotel", "beach"]);
+/** The distinctive word stems of a contract's name, each with its word: "Owner Controlled Insurance Program" → owner, contro, insura, progra. */
+function nameStems(name: string): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const w of name.toLowerCase().replace(/[^a-z0-9]+/g, " ").split(" ")) {
+    if (w.length < 5 || /^\d/.test(w) || NAME_STOP.has(w)) continue;
+    if (!out.has(w.slice(0, 6))) out.set(w.slice(0, 6), w);
+  }
+  return out;
+}
+
+/**
+ * A contract row whose code the cost report does not carry (the report codes the contract under another
+ * line – NSCC's piling as CN.003C13-3, Aconex 003C14): tied to the cost report line naming the same
+ * contract number (2220032), else the one line sharing at least two distinctive words of the name and
+ * no other line sharing as many. Direct-payment lines are never tied this way – they are compared as a group.
+ */
+export function tieByName(name: string, lines: AconexKnownLine[]): AconexKnownLine | null {
+  const candidates = lines.filter((l) => !isDirectPaymentLine(l.code, l.name));
+  const numbers = name.match(/\b2\d{6}\b/g) ?? [];
+  if (numbers.length) {
+    const hits = candidates.filter((l) => numbers.some((x) => l.name.includes(x)));
+    if (hits.length === 1) return hits[0];
+  }
+  const stems = nameStems(name);
+  if (!stems.size) return null;
+  let best: AconexKnownLine | null = null;
+  let bestShared: string[] = [];
+  let bestScore = 0;
+  let runnerUp = 0;
+  for (const l of candidates) {
+    const shared = [...nameStems(l.name).keys()].filter((s) => stems.has(s));
+    if (shared.length > bestScore) {
+      runnerUp = bestScore;
+      bestScore = shared.length;
+      best = l;
+      bestShared = shared;
+    } else if (shared.length > runnerUp) runnerUp = shared.length;
+  }
+  if (!best || bestScore <= runnerUp) return null;
+  if (bestScore >= 2) return best;
+  // one shared word only: enough when it is a long, telling one ("Scaffolding") that no other line shares
+  return runnerUp === 0 && (stems.get(bestShared[0])?.length ?? 0) >= 8 ? best : null;
+}
+
+/** The cost report line of a contract row's code: the line of the same section and code first (MS.003F02 before FFEOSE.003F02), else any line of the code. */
+export function exactLineOf(code: string, ctx: Pick<AconexContext, "linesByFrag">): { code: string; contractor: string } | undefined {
+  const ck = contractKey(code);
+  if (!ck) return undefined;
+  return (ck.section ? ctx.linesByFrag.get(ck.key) : undefined) ?? ctx.linesByFrag.get(ck.frag);
+}
+
+/**
+ * How a contract row of the export meets the cost report: its line by code; else a direct payment on behalf
+ * of the main contractor (compared as a group); else the line of the same contract by number or name
+ * (never a line another row already holds by code).
+ */
+export function contractRowTie(code: string, name: string, ctx: Pick<AconexContext, "linesByFrag" | "lines">, exactCodes: Set<string>): { rowType: "Contract" | "Direct payment"; line?: { code: string; contractor: string }; byName: boolean } {
+  const line = exactLineOf(code, ctx);
+  if (line?.code) return { rowType: "Contract", line, byName: false };
+  if (isDirectPaymentLine(code, name)) return { rowType: "Direct payment", byName: false };
+  const found = tieByName(name, (ctx.lines ?? []).filter((l) => !exactCodes.has(l.code)));
+  return found ? { rowType: "Contract", line: found, byName: true } : { rowType: "Contract", byName: false };
 }
 
 export interface AconexResult {
@@ -98,6 +173,16 @@ export function convertAconexExport(sheets: SheetValues[], ctx: AconexContext): 
   let total = 0;
   let kept = 0;
   let linked = 0;
+  let byName = 0;
+  let direct = 0;
+  const ours = (code: string, type: string) => !!code && !code.startsWith("[") && programmeCodeOf(code) === ctx.programmeCode.toUpperCase() && type === "wbs" && /^\d{3}[A-Z]\d{2,3}$/i.test(code.split(".").pop() ?? "");
+  // the lines held by code, so a tie by name never takes a line another row holds by code
+  const exactCodes = new Set<string>();
+  for (const [r, v] of rows(s)) {
+    if (r <= hdr || !ours(txt(v, ix.code), txt(v, ix.type))) continue;
+    const l = exactLineOf(txt(v, ix.code), ctx);
+    if (l?.code) exactCodes.add(l.code);
+  }
   for (const [r, v] of rows(s)) {
     if (r <= hdr) continue;
     const code = txt(v, ix.code);
@@ -107,21 +192,26 @@ export function convertAconexExport(sheets: SheetValues[], ctx: AconexContext): 
     if (programmeCodeOf(code) !== ctx.programmeCode.toUpperCase()) continue;
     const parts = code.split(".");
     const last = parts[parts.length - 1];
-    // kept: the contract rows (a WBS row whose last segment is a contract code, e.g. 031C15) and the
-    // budget-hold control accounts (…98); the .00/.01/.02 control accounts roll up into their contract
-    const isContract = type === "wbs" && !!codeFrag(code) && /^\d{3}[A-Z]\d{2,3}$/i.test(last);
+    // kept: the contract rows (a WBS row whose last segment is a contract code – 031C15, or the Yacht
+    // Club's longer 003C270, read whole so that 003C270 is never taken for 003C27) and the budget-hold
+    // control accounts (…98); the .00/.01/.02 control accounts roll up into their contract
+    const isContract = type === "wbs" && /^\d{3}[A-Z]\d{2,3}$/i.test(last);
     const isHold = type === "controlAccount" && last === "98";
     if (!isContract && !isHold) continue;
     kept++;
-    const frag = isContract ? codeFrag(code) : null;
-    const line = frag ? ctx.linesByFrag.get(frag) : isHold ? { code: ctx.holdLinesByKey.get(parts.slice(0, -1).join(".")) ?? "", contractor: "" } : undefined;
+    const name = txt(v, ix.name);
+    const tie = isContract ? contractRowTie(code, name, ctx, exactCodes) : null;
+    const line = tie ? tie.line : { code: ctx.holdLinesByKey.get(parts.slice(0, -1).join(".")) ?? "", contractor: "" };
+    const rowType = tie ? tie.rowType : "Budget hold";
+    if (tie?.rowType === "Direct payment") direct++;
+    if (tie?.byName) byName++;
     if (line?.code) linked++;
     out.push([
       code,
       code,
-      txt(v, ix.name),
+      name,
       txt(v, ix.desc),
-      isContract ? "Contract" : "Budget hold",
+      rowType,
       txt(v, ix.level),
       txt(v, ix.parent),
       line?.code || null,
@@ -145,8 +235,9 @@ export function convertAconexExport(sheets: SheetValues[], ctx: AconexContext): 
   }
   const rsgPresent = RSG_COLS.filter((c) => (money.get(c) ?? -1) >= 0);
   notes.push(rsgPresent.length ? `RSG columns read as well: ${rsgPresent.join(", ")}.` : "No RSG columns (Estimate At Completion RSG 1115, early warnings, PVOs) in this export – the standard Aconex figures are compared.");
-  notes.push(`Aconex control account export: ${kept} contract and budget-hold rows of ${ctx.programmeName} (${ctx.programmeCode}) out of ${total} rows in the file; ${linked} tied to a cost report line by contract code.`);
-  if (kept && linked < kept) notes.push(`${kept - linked} row(s) have no cost report line with the same contract code – they are listed in the reconciliation as "not on the dashboard".`);
+  notes.push(`Aconex control account export: ${kept} contract and budget-hold rows of ${ctx.programmeName} (${ctx.programmeCode}) out of ${total} rows in the file; ${linked} tied to a cost report line${byName ? ` (${byName} of them by contract number or name, the cost report coding the contract under another line)` : ""}.`);
+  if (direct) notes.push(`${direct} row(s) are direct payments on behalf of the main contractor (one Aconex row per vendor and month) – compared together against the cost report's "Direct Payment" lines.`);
+  if (kept && linked + direct < kept) notes.push(`${kept - linked - direct} row(s) have no cost report line with the same contract code – they are listed in the reconciliation as "not on the dashboard".`);
   return {
     sheets: [
       {

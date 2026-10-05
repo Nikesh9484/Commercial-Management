@@ -21,17 +21,17 @@ import type { UserInfo } from "../registers/types";
 const FILES = ["AYC_Commercial_Report_No._48_Final.xlsx", "AYC_Commercial_Report_No._49_Live.xlsx"];
 const SYSTEM = { id: 0, name: "system", email: "", role: "admin" } as UserInfo;
 
-export function importAycReportsAtStart(): void {
+export function importAycReportsAtStart(): Promise<void> {
   const db = getDb();
-  if (getSetting(db, "ayc_reports_imported") === "1") return;
+  if (getSetting(db, "ayc_reports_imported") === "1") return Promise.resolve();
   const programme = db.prepare("SELECT id FROM programmes WHERE code = '1TB01003'").get() as { id: number } | undefined;
-  if (!programme) return;
+  if (!programme) return Promise.resolve();
   const dir = path.join(process.cwd(), "data-seed", "ayc");
   const files = FILES.map((f) => path.join(dir, f)).filter((f) => fs.existsSync(f));
-  if (!files.length) return;
+  if (!files.length) return Promise.resolve();
   if (getSetting(db, "ayc_reports_attempted") === "1") {
     console.warn("[ayc] the start-up import of the Yacht Club reports was tried before and did not finish – import them from the monthly import page.");
-    return;
+    return Promise.resolve();
   }
   setSetting(db, "ayc_reports_attempted", "1");
   const run = async () => {
@@ -73,5 +73,5 @@ export function importAycReportsAtStart(): void {
     setSetting(db, "ayc_reports_imported", "1");
     requestBackup("ayc-reports");
   };
-  void run().catch((e) => console.error("[ayc] start-up import failed:", e));
+  return run().catch((e) => console.error("[ayc] start-up import failed:", e));
 }

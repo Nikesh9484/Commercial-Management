@@ -1,5 +1,6 @@
 import type { RecordRow } from "../registers/types";
 import type { ReportData } from "../report/data";
+import { isDirectPaymentLine, contractKey } from "./aconex-codes";
 
 /**
  * The Aconex cost check: every contract and budget hold in the Aconex control account export set
@@ -64,7 +65,7 @@ export interface AconexReconciliation {
   totals: { aconex: Record<AconexMeasureKey, number>; dashboard: Record<AconexMeasureKey, number>; diff: Record<AconexMeasureKey, number>; lines: Record<AconexMeasureKey, number> };
   /** what sits on one side only, so the matched totals can be tied back to each system's grand total */
   unmatched: { aconex: Record<AconexMeasureKey, number>; dashboard: Record<AconexMeasureKey, number> };
-  counts: { aconex: number; dashboard: number; matched: number; differing: number; tolerance: number };
+  counts: { aconex: number; dashboard: number; matched: number; differing: number; tolerance: number; directRows: number };
 }
 
 /** Differences under one SAR are rounding, not discrepancies. */
@@ -105,22 +106,44 @@ export function buildAconexReconciliation(data: ReportData): AconexReconciliatio
   // Aconex carries one row per contract; the cost report may split that contract over several lines
   // (preliminaries, the main works, each provisional-sum allowance – CN.031C02, CN.031C02-2 … -18), so
   // a contract row is compared with the sum of every line carrying its contract code
-  const accOf = (code: string) => code.match(/\b(\d{3}[A-Z]\d{2})\b/)?.[1]?.toUpperCase() ?? null;
-  const groups = new Map<string, (typeof data.costReport.lines)[number][]>();
-  for (const l of data.costReport.lines) {
-    const acc = accOf(l.code);
-    if (acc && !l.is_budget_hold) groups.set(acc, [...(groups.get(acc) ?? []), l]);
+  // the contract code with its section (MS.003F02 and FFEOSE.003F02 are two contracts)
+  const accOf = (code: string) => contractKey(code)?.key ?? null;
+  // a cost report line tied to an Aconex row of another code (NSCC's piling, coded CN.003C13-3 on the
+  // report and 003C14 in Aconex) belongs to that row alone, not to the group of the code it is filed under
+  const explicit = new Set<number>();
+  for (const r of rows) {
+    const l = byLine.get(Number(r.cost_line_id));
+    if (l && String(r.row_type ?? "") !== "Budget hold" && accOf(String(r.code ?? "")) !== accOf(l.code)) explicit.add(l.id);
   }
+  const groups = new Map<string, (typeof data.costReport.lines)[number][]>();
+  const keysOfFrag = new Map<string, Set<string>>();
+  for (const l of data.costReport.lines) {
+    const ck = contractKey(l.code);
+    if (!ck || l.is_budget_hold || explicit.has(l.id)) continue;
+    groups.set(ck.key, [...(groups.get(ck.key) ?? []), l]);
+    keysOfFrag.set(ck.frag, new Set([...(keysOfFrag.get(ck.frag) ?? []), ck.key]));
+  }
+  // the group of a row's code: the same section and code, else – when one side carries no section – the code's only group
+  const groupOf = (code: string) => {
+    const ck = contractKey(code);
+    if (!ck) return undefined;
+    const own = groups.get(ck.key);
+    if (own) return own;
+    const keys = [...(keysOfFrag.get(ck.frag) ?? [])];
+    return keys.length === 1 && (!ck.section || !keys[0].includes(".")) ? groups.get(keys[0]) : undefined;
+  };
   const sumOf = (members: (typeof data.costReport.lines)[number][]): Record<AconexMeasureKey, number | null> => {
     const out = blankMeasures();
     for (const m of members) for (const k of Object.keys(out) as AconexMeasureKey[]) out[k] = r2((out[k] ?? 0) + (dashOf(m)[k] ?? 0));
     return out;
   };
+  const directRows = rows.filter((r) => String(r.row_type ?? "") === "Direct payment");
   for (const r of rows) {
+    if (String(r.row_type ?? "") === "Direct payment") continue;
     const lineId = Number(r.cost_line_id);
     const l = lineId ? byLine.get(lineId) : undefined;
     const acc = String(r.row_type ?? "") === "Budget hold" ? null : accOf(String(r.code ?? ""));
-    const grp = acc ? groups.get(acc) : undefined;
+    const grp = acc ? groupOf(String(r.code ?? "")) : undefined;
     const members = grp && grp.length ? grp : l ? [l] : [];
     for (const m of members) usedLine.add(m.id);
     const lead = members.find((m) => m.id === l?.id) ?? members[0];
@@ -135,6 +158,34 @@ export function buildAconexReconciliation(data: ReportData): AconexReconciliatio
         rowType: String(r.row_type ?? ""),
         aconex: aconexOf(r),
         dashboard: lead ? sumOf(members) : blankMeasures(),
+        diff: blankMeasures(),
+        worst: 0,
+        differs: [],
+      }),
+    );
+  }
+  // the direct payments on behalf of the main contractor: Aconex's rows (one per vendor and month) added
+  // together against the cost report's "Direct Payment" lines, as one line of the check
+  if (directRows.length) {
+    const members = data.costReport.lines.filter((l) => !l.is_budget_hold && !usedLine.has(l.id) && isDirectPaymentLine(l.code, l.name));
+    for (const m of members) usedLine.add(m.id);
+    const aconex = blankMeasures();
+    for (const r of directRows) {
+      const a = aconexOf(r);
+      for (const k of Object.keys(aconex) as AconexMeasureKey[]) if (a[k] !== null) aconex[k] = r2((aconex[k] ?? 0) + (a[k] ?? 0));
+    }
+    const first = members[0];
+    lines.push(
+      finish({
+        status: first ? "matched" : "aconex_only",
+        code: first ? `Direct payments (${members.length} lines)` : "",
+        aconexCode: `${directRows.length} Aconex rows`,
+        name: `Direct payments on behalf of the main contractor – ${directRows.length} Aconex row(s)${first ? ` against the cost report's ${members.length} Direct Payment line(s)` : ""}`,
+        contractor: "",
+        category: first ? first.category : "Direct payment",
+        rowType: "Direct payment",
+        aconex,
+        dashboard: first ? sumOf(members) : blankMeasures(),
         diff: blankMeasures(),
         worst: 0,
         differs: [],
@@ -189,7 +240,7 @@ export function buildAconexReconciliation(data: ReportData): AconexReconciliatio
     dashboardOnly: lines.filter((l) => l.status === "dashboard_only"),
     totals,
     unmatched,
-    counts: { aconex: rows.length, dashboard: data.costReport.lines.length, matched: matched.length, differing: discrepancies.length, tolerance: TOLERANCE },
+    counts: { aconex: rows.length, dashboard: data.costReport.lines.length, matched: matched.length, differing: discrepancies.length, tolerance: TOLERANCE, directRows: directRows.length },
   };
 }
 

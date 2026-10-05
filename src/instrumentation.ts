@@ -11,10 +11,18 @@ export async function register() {
     repairFinalAccountBreakdown();
     const { repairCustomsVendorLinks } = await import("./lib/repairs/customs-vendors");
     repairCustomsVendorLinks();
+    const { repairAconexTies } = await import("./lib/repairs/aconex-ties");
+    repairAconexTies();
     backup.startBackupLoop();
     // the Yacht Club's reports shipped with this version: imported in the background once the server is up
     const { importAycReportsAtStart } = await import("./lib/repairs/ayc-reports");
-    setTimeout(() => importAycReportsAtStart(), 20_000);
+    // then every project without cost-recovery rows yet is filled from the latest accommodation and customs trackers
+    const { fillRecoveryTrackersAtStart } = await import("./lib/repairs/recovery-trackers");
+    setTimeout(() => {
+      void importAycReportsAtStart()
+        .then(() => fillRecoveryTrackersAtStart())
+        .catch((e) => console.error("[recovery] start-up fill failed:", e));
+    }, 20_000);
     // the uploaded files beside the database: anything the disk lost comes back, anything never sent goes up
     const files = await import("./lib/file-store");
     void files.restoreMissingAtStart().then(() => files.uploadUnsentAtStart()).catch((e) => console.error("[files] start-up sync failed:", e));

@@ -8,9 +8,10 @@ import { withHeavyLock, releaseMemory } from "@/lib/workbook/heavy";
 import { looksLikeMarinaReport, convertMarinaReport, toSheetValues } from "@/lib/workbook/marina";
 import { looksLikeVbhReport, convertVbhReport } from "@/lib/workbook/vbh";
 import { looksLikeClaimsTracker, convertClaimsTracker, codeFrag, type KnownLine } from "@/lib/workbook/claims-tracker";
-import { looksLikeAccommodationTracker, looksLikeCustomsTracker, convertRecoveryTrackers, trackerReadPlan, type RecoveryContext } from "@/lib/workbook/recovery";
+import { looksLikeAccommodationTracker, looksLikeCustomsTracker, convertRecoveryTrackers, trackerReadPlan } from "@/lib/workbook/recovery";
+import { recoveryContextsFor, aconexContextFor } from "@/lib/recovery/contexts";
+import { keepTrackerUpload } from "@/lib/repairs/recovery-trackers";
 import { csvToSheets, looksLikeAconexExport, convertAconexExport, looksLikeAconexChangeEvents, convertAconexChangeEvents } from "@/lib/workbook/aconex";
-import { todayIso } from "@/lib/format";
 import { getAppContext } from "@/lib/context";
 import { getDb } from "@/lib/db";
 import { getRegisterDef } from "@/lib/registers";
@@ -86,22 +87,7 @@ export async function POST(req: Request, ctx: unknown) {
       if (!programme) return NextResponse.json({ error: "Select a programme in the top bar first." }, { status: 400 });
       const app = { programme };
       const db = getDb();
-      const linesByFrag = new Map<string, { code: string; contractor: string }>();
-      const holdLinesByKey = new Map<string, string>();
-      const lines = db
-        .prepare("SELECT l.code, l.is_budget_hold, a.code AS asset, c.name AS contractor FROM cost_lines l JOIN assets a ON a.id = l.asset_id LEFT JOIN contractors c ON c.id = l.contractor_id WHERE l.programme_id = ? ORDER BY COALESCE(l.approved_baseline_budget, 0) + COALESCE(l.opening_transfers, 0) DESC, l.sort_order, l.code")
-        .all(app.programme.id) as { code: string; is_budget_hold: number | null; asset: string; contractor: string | null }[];
-      for (const l of lines) {
-        if (l.is_budget_hold) {
-          // "01.PS.98" / "PS.98" under asset 1TB01006.01 → "1TB01006.01.PS"
-          const m = String(l.code).match(/([A-Z&\s]+)\.98$/i);
-          if (m) holdLinesByKey.set(`${l.asset}.${m[1].replace(/[^A-Z]/gi, "").toUpperCase()}`, l.code);
-          continue;
-        }
-        const frag = codeFrag(l.code);
-        if (frag && !linesByFrag.has(frag)) linesByFrag.set(frag, { code: l.code, contractor: l.contractor ?? "" });
-      }
-      const actx = { programmeCode: app.programme.code, programmeName: app.programme.name, linesByFrag, holdLinesByKey, fileName: name, today: todayIso() };
+      const actx = aconexContextFor(db, app.programme, name);
       const conv = changeEvents ? convertAconexChangeEvents(worksheets, actx) : convertAconexExport(worksheets, actx);
       worksheets = toSheetValues(conv);
       saveConverted(fileId, worksheets);
@@ -147,21 +133,11 @@ export async function POST(req: Request, ctx: unknown) {
       // every project's rows are picked out with that project's contractors and cost report lines,
       // and each row is filed under its own project.
       const db = getDb();
-      const ctxs: RecoveryContext[] = getAppContext().programmes.map((programme) => {
-        const linesByFrag = new Map<string, { code: string; contractor: string }>();
-        const contractors = new Map<number, { id: number; name: string; primary: boolean }>();
-        const lines = db
-          .prepare("SELECT l.code, l.contractor_id, c.name AS contractor FROM cost_lines l LEFT JOIN contractors c ON c.id = l.contractor_id WHERE l.programme_id = ? AND l.is_budget_hold IS NOT 1 ORDER BY COALESCE(l.approved_baseline_budget, 0) + COALESCE(l.opening_transfers, 0) DESC, l.sort_order, l.code")
-          .all(programme.id) as { code: string; contractor_id: number | null; contractor: string | null }[];
-        for (const l of lines) {
-          const frag = codeFrag(l.code);
-          if (frag && !linesByFrag.has(frag)) linesByFrag.set(frag, { code: l.code, contractor: l.contractor ?? "" });
-          if (l.contractor_id && l.contractor) contractors.set(l.contractor_id, { id: l.contractor_id, name: l.contractor, primary: true });
-        }
-        for (const c of db.prepare("SELECT DISTINCT c.id, c.name FROM contractors c JOIN (SELECT contractor_id FROM bonds WHERE programme_id = ? UNION SELECT contractor_id FROM final_accounts WHERE programme_id = ? UNION SELECT contractor_id FROM early_warnings WHERE programme_id = ?) x ON x.contractor_id = c.id").all(programme.id, programme.id, programme.id) as { id: number; name: string }[]) if (!contractors.has(c.id)) contractors.set(c.id, { id: c.id, name: c.name, primary: false });
-        return { programmeCode: programme.code, programmeName: programme.name, contractors: [...contractors.values()], linesByFrag, fileName: name };
-      });
-      const conv = convertRecoveryTrackers(worksheets, ctxs, looksLikeAccommodationTracker(worksheets) ? "accommodation" : "customs");
+      const kind = looksLikeAccommodationTracker(worksheets) ? "accommodation" : "customs";
+      // the file is kept, so a project set up later (or on a fresh start) is filled from it without a new upload
+      keepTrackerUpload(kind, uploadPath(fileId), name);
+      const ctxs = recoveryContextsFor(db, getAppContext().programmes, name);
+      const conv = convertRecoveryTrackers(worksheets, ctxs, kind);
       worksheets = toSheetValues(conv);
       saveConverted(fileId, worksheets);
       conversion = { notes: conv.notes, reportNo: null, periodEnd: null };

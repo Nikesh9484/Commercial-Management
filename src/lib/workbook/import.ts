@@ -312,11 +312,18 @@ async function importWorkbookRun(req: ImportRequest, user: UserInfo, progress: I
     const costLines = hasCostLine ? (db.prepare("SELECT id, package_id, contractor_id FROM cost_lines").all() as { id: number; package_id: number | null; contractor_id: number | null }[]) : [];
     // dropdown options are read once per target register for the sheet, not once per cell
     const optionCache = new Map<string, { id: number; label: string }[]>();
-    const optionsOf = (target: string) => {
-      let o = optionCache.get(target);
+    const scopedTarget = (target: string) => !!getRegisterDef(target)?.fields.some((f) => f.key === "programme_id");
+    // a register kept per project offers only that project's rows: a Marina "PS.98" is never VBH's "01.PS.98"
+    const optionsOf = (target: string, pid = programmeId) => {
+      const cacheKey = `${target}|${pid}`;
+      let o = optionCache.get(cacheKey);
       if (!o) {
         o = lookupOptions(db, target, true);
-        optionCache.set(target, o);
+        if (scopedTarget(target)) {
+          const own = new Set((db.prepare(`SELECT id FROM "${getRegisterDef(target)!.table}" WHERE programme_id = ?`).all(pid) as { id: number }[]).map((r) => r.id));
+          o = o.filter((x) => own.has(x.id));
+        }
+        optionCache.set(cacheKey, o);
       }
       return o;
     };
@@ -360,6 +367,8 @@ async function importWorkbookRun(req: ImportRequest, user: UserInfo, progress: I
         }
         try {
           // lookups by name: create missing dropdown values if allowed
+          // the project the row belongs to: the one its "Project" column names on an AMAALA-wide tracker, else the import's
+          const rowProgramme = (programmeCol >= 0 ? programmeByCode.get(cellText(row[programmeCol]).trim().toUpperCase()) : undefined) ?? programmeId;
           for (const c of colMap) {
             const f = c.field;
             const v = input[f.key];
@@ -383,7 +392,7 @@ async function importWorkbookRun(req: ImportRequest, user: UserInfo, progress: I
             if (f.type !== "lookup") continue;
             const target = f.lookup!.register;
             const label = String(v).trim();
-            const opts = optionsOf(target);
+            const opts = optionsOf(target, rowProgramme);
             const want = label.toLowerCase();
             const hit =
               opts.find((o) => o.label.toLowerCase() === want) ??
@@ -397,7 +406,7 @@ async function importWorkbookRun(req: ImportRequest, user: UserInfo, progress: I
             const tdef = getRegisterDef(target);
             const codeField = tdef?.fields.find((x) => ["code", "ref", "reef_po_no", "item_no", "claim_no", "ew_no"].includes(x.key));
             if (tdef && codeField) {
-              const byCode = db.prepare(`SELECT id FROM "${tdef.table}" WHERE lower(trim("${codeField.key}")) = ?`).get(want) as { id: number } | undefined;
+              const byCode = (scopedTarget(target) ? db.prepare(`SELECT id FROM "${tdef.table}" WHERE lower(trim("${codeField.key}")) = ? AND programme_id = ?`).get(want, rowProgramme) : db.prepare(`SELECT id FROM "${tdef.table}" WHERE lower(trim("${codeField.key}")) = ?`).get(want)) as { id: number } | undefined;
               if (byCode) {
                 input[f.key] = byCode.id;
                 continue;
@@ -408,7 +417,7 @@ async function importWorkbookRun(req: ImportRequest, user: UserInfo, progress: I
               const created = createRecord(getRegisterDef(target)!, { name: label, ...extra }, user, "import");
               lookupsCreated.push(`${getRegisterDef(target)!.singular}: ${label}`);
               input[f.key] = created.id;
-              optionCache.delete(target);
+              for (const k of [...optionCache.keys()]) if (k.startsWith(`${target}|`)) optionCache.delete(k);
             } else if (target === "programmes") {
               delete input[f.key]; // fall back to the current asset / programme
             }
