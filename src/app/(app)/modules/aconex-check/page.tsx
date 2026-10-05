@@ -5,6 +5,7 @@ import { getAppContext } from "@/lib/context";
 import { getModule } from "@/lib/modules";
 import { getReportData } from "@/lib/report/data";
 import { buildAconexReconciliation, ACONEX_MEASURES, measureDecides, type AconexLine } from "@/lib/recovery/aconex";
+import { groupTint } from "@/components/ui/column-groups";
 
 // the line-by-line table compares like for like; RSG's own early-warning columns are on the totals table, on request
 const LINE_MEASURES = ACONEX_MEASURES.filter((m) => m.key !== "ew" && m.key !== "eac_rsg" && m.key !== "hold");
@@ -97,16 +98,16 @@ export default async function AconexCheckPage({ searchParams }: { searchParams: 
                   <th className="px-2 py-2">Line</th>
                   <th className="px-2 py-2">Contractor</th>
                   <th className="px-2 py-2">Status</th>
-                  {LINE_MEASURES.map((m) => (
-                    <th key={m.key} className="px-2 py-2 text-right" colSpan={3}>
+                  {LINE_MEASURES.map((m, i) => (
+                    <th key={m.key} className={`px-2 py-2 text-center text-[11px] font-semibold uppercase tracking-wide ${groupTint(i).band}`} colSpan={3}>
                       {m.label}
                     </th>
                   ))}
                 </tr>
                 <tr className="text-left text-[10px] text-muted">
                   <th colSpan={3} />
-                  {LINE_MEASURES.map((m) => (
-                    <th key={`${m.key}-sub`} className="px-2 py-1 text-right" colSpan={3}>
+                  {LINE_MEASURES.map((m, i) => (
+                    <th key={`${m.key}-sub`} className={`px-2 py-1 text-right ${groupTint(i).th}`} colSpan={3}>
                       Aconex · dashboard · difference
                     </th>
                   ))}
@@ -161,23 +162,23 @@ function LineRow({ l, tolerance, money }: { l: AconexLine; tolerance: number; mo
       </td>
       <td className="max-w-[12rem] truncate px-2 py-1 text-muted">{l.contractor}</td>
       <td className={`px-2 py-1 font-medium ${tone}`}>{status}</td>
-      {LINE_MEASURES.map((m) => {
+      {LINE_MEASURES.map((m, i) => {
         const d = l.diff[m.key];
         const bad = d !== null && Math.abs(d) >= tolerance && l.status === "matched" && measureDecides(m, l.rowType);
         return (
-          <FragmentCells key={m.key} a={money(l.aconex[m.key])} b={money(l.dashboard[m.key])} d={money(d)} bad={bad} />
+          <FragmentCells key={m.key} a={money(l.aconex[m.key])} b={money(l.dashboard[m.key])} d={money(d)} bad={bad} tint={groupTint(i).td} />
         );
       })}
     </tr>
   );
 }
 
-function FragmentCells({ a, b, d, bad }: { a: string; b: string; d: string; bad: boolean }) {
+function FragmentCells({ a, b, d, bad, tint }: { a: string; b: string; d: string; bad: boolean; tint: string }) {
   return (
     <>
-      <td className="px-2 py-1 text-right tnum text-muted">{a}</td>
-      <td className="px-2 py-1 text-right tnum text-muted">{b}</td>
-      <td className={`px-2 py-1 text-right tnum ${bad ? "font-semibold text-red-700" : ""}`}>{d}</td>
+      <td className={`px-2 py-1 text-right tnum text-muted ${tint}`}>{a}</td>
+      <td className={`px-2 py-1 text-right tnum text-muted ${tint}`}>{b}</td>
+      <td className={`px-2 py-1 text-right tnum ${tint} ${bad ? "font-semibold text-red-700" : ""}`}>{d}</td>
     </>
   );
 }

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
+import { groupTint } from "@/components/ui/column-groups";
 import { useScopeKey } from "@/components/layout/ScopeContext";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -1299,20 +1300,6 @@ function stageTint(registerKey: string, key: string): { th: string; td: string }
  * run of "EOT days / Compensable days / Cost" reads at a glance as whose figures they are. The same
  * palette in every register. The Change Management Tracker keeps its stage colours.
  */
-const SECTION_PALETTE: { th: string; td: string; band: string }[] = [
-  { th: "bg-none! bg-sky-100!", td: "bg-sky-50/60", band: "bg-sky-200/80 text-sky-900" },
-  { th: "bg-none! bg-amber-100!", td: "bg-amber-50/60", band: "bg-amber-200/80 text-amber-900" },
-  { th: "bg-none! bg-emerald-100!", td: "bg-emerald-50/60", band: "bg-emerald-200/80 text-emerald-900" },
-  { th: "bg-none! bg-violet-100!", td: "bg-violet-50/60", band: "bg-violet-200/80 text-violet-900" },
-  { th: "bg-none! bg-rose-100!", td: "bg-rose-50/60", band: "bg-rose-200/80 text-rose-900" },
-  { th: "bg-none! bg-teal-100!", td: "bg-teal-50/60", band: "bg-teal-200/80 text-teal-900" },
-  { th: "bg-none! bg-orange-100!", td: "bg-orange-50/60", band: "bg-orange-200/80 text-orange-900" },
-  { th: "bg-none! bg-indigo-100!", td: "bg-indigo-50/60", band: "bg-indigo-200/80 text-indigo-900" },
-  { th: "bg-none! bg-lime-100!", td: "bg-lime-50/60", band: "bg-lime-200/80 text-lime-900" },
-  { th: "bg-none! bg-fuchsia-100!", td: "bg-fuchsia-50/60", band: "bg-fuchsia-200/80 text-fuchsia-900" },
-  { th: "bg-none! bg-cyan-100!", td: "bg-cyan-50/60", band: "bg-cyan-200/80 text-cyan-900" },
-  { th: "bg-none! bg-stone-200!", td: "bg-stone-100/60", band: "bg-stone-300/80 text-stone-900" },
-];
 const NO_TINT = { th: "", td: "", band: "" };
 function colTint(def: { fields: FieldDef[] } | undefined, registerKey: string, key: string): { th: string; td: string; band: string } {
   const stage = stageTint(registerKey, key);
@@ -1321,7 +1308,7 @@ function colTint(def: { fields: FieldDef[] } | undefined, registerKey: string, k
   if (!f?.section || !def) return NO_TINT;
   const sections: string[] = [];
   for (const x of def.fields) if (x.section && !sections.includes(x.section)) sections.push(x.section);
-  return SECTION_PALETTE[sections.indexOf(f.section) % SECTION_PALETTE.length];
+  return groupTint(sections.indexOf(f.section));
 }
 /** The runs of neighbouring columns under one heading, for the band row above the column headers. */
 function sectionBands(fields: FieldDef[]): { section: string | null; span: number; key: string }[] {

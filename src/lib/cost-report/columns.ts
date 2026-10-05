@@ -75,3 +75,17 @@ export interface CostReport {
   chart: { package: string; baseline: number; afa: number }[];
 }
 
+
+/** The blocks of Schedule B the money columns fall into – coloured together in the tables. */
+export const COLUMN_GROUPS: { label: string; keys: string[] }[] = [
+  { label: "Budget", keys: ["E", "F", "G"] },
+  { label: "Committed", keys: ["H", "I"] },
+  { label: "Uncommitted", keys: ["J", "K", "L", "M"] },
+  { label: "Anticipated final account", keys: ["N", "O"] },
+  { label: "Certified / to complete", keys: ["P", "Q"] },
+  { label: "Movement", keys: ["R", "S"] },
+];
+export function columnGroupIndex(key: string): number {
+  const i = COLUMN_GROUPS.findIndex((g) => g.keys.includes(key));
+  return i < 0 ? COLUMN_GROUPS.length : i;
+}

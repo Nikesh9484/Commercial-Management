@@ -1,11 +1,12 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useState } from "react";
+import { groupTint } from "@/components/ui/column-groups";
 import { useScopeKey } from "@/components/layout/ScopeContext";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Download, Pencil, RefreshCw, AlertTriangle, CheckCircle2, Info } from "lucide-react";
-import { MONEY_COLUMNS, type CostReport, type CostLineRow, type Money, type MoneyKey } from "@/lib/cost-report/columns";
+import {MONEY_COLUMNS, type CostReport, type CostLineRow, type Money, type MoneyKey, COLUMN_GROUPS, columnGroupIndex } from "@/lib/cost-report/columns";
 import type { Level1Matrix } from "@/lib/cost-report/level1";
 import type { Level1Check } from "@/lib/workbook/level1-check";
 import type { LookupOption, RegisterDef } from "@/lib/registers/types";
@@ -177,6 +178,15 @@ export function CostReportPage({ canEdit, isAdmin, initialTab }: { canEdit: bool
               <table className="data w-full">
                 <thead>
                   <tr>
+                    <th colSpan={4 + (assetFilter === "all" ? 1 : 0)} className="sticky left-0 z-[2] bg-[#f7f8fb]" />
+                    {COLUMN_GROUPS.filter((g) => g.keys.some((k) => MONEY_COLUMNS.some((c) => c.key === k))).map((g, i) => (
+                      <th key={g.label} colSpan={g.keys.filter((k) => MONEY_COLUMNS.some((c) => c.key === k)).length} className={`text-center text-[11px] font-semibold uppercase tracking-wide ${groupTint(i).band}`}>
+                        {g.label}
+                      </th>
+                    ))}
+                    {canEdit && <th />}
+                  </tr>
+                  <tr>
                     <th className="sticky left-0 z-[2] bg-[#f7f8fb]">
                       <Letter>A</Letter>Code
                     </th>
@@ -223,7 +233,7 @@ export function CostReportPage({ canEdit, isAdmin, initialTab }: { canEdit: bool
                             Check: Level 1 total − Level 2 total (must be zero)
                           </td>
                           {MONEY_COLUMNS.map((c) => (
-                            <td key={c.key} className="tnum text-right">
+                            <td key={c.key} className={`tnum text-right ${groupTint(columnGroupIndex(c.key)).td}`}>
                               {formatMoney(report.check[c.key])}
                             </td>
                           ))}
@@ -289,7 +299,7 @@ function Letter({ children }: { children: string }) {
 
 function ColHead({ col }: { col: (typeof MONEY_COLUMNS)[number] }) {
   return (
-    <th className="min-w-36 whitespace-normal text-right align-bottom" title={col.formula && col.formula !== "auto" && col.formula !== "snapshot" ? `= ${col.formula}` : col.formula === "auto" ? "Filled automatically from another module" : col.formula === "snapshot" ? "From the previous locked period" : "Entered on the Line setup tab"}>
+    <th className={`min-w-36 whitespace-normal text-right align-bottom ${groupTint(columnGroupIndex(col.key)).th}`} title={col.formula && col.formula !== "auto" && col.formula !== "snapshot" ? `= ${col.formula}` : col.formula === "auto" ? "Filled automatically from another module" : col.formula === "snapshot" ? "From the previous locked period" : "Entered on the Line setup tab"}>
       <div className="flex items-start justify-end gap-1">
         <Letter>{col.key}</Letter>
         <span className="text-xs leading-tight">{col.label}</span>
@@ -307,7 +317,7 @@ function MoneyCells({ m }: { m: Money }) {
         const signed = SIGNED.includes(c.key);
         const cls = signed ? (v > 0.004 ? "text-red-700" : v < -0.004 ? "text-emerald-700" : "text-muted") : v === 0 ? "text-muted/70" : "";
         return (
-          <td key={c.key} className={`tnum text-right ${cls}`}>
+          <td key={c.key} className={`tnum text-right ${groupTint(columnGroupIndex(c.key)).td} ${cls}`}>
             {formatMoney(v)}
           </td>
         );

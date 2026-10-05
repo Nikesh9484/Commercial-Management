@@ -1,5 +1,6 @@
 import { ChevronDown } from "lucide-react";
 import { formatDate, formatMoney } from "@/lib/format";
+import { groupTint } from "@/components/ui/column-groups";
 import type { AconexChangeCheck, AconexContractorBlock, AconexEventLine } from "@/lib/recovery/aconex-changes";
 
 /**
@@ -22,17 +23,24 @@ export function ChangeEventsCheck({ check }: { check: AconexChangeCheck }) {
         <div className="border-b border-line bg-slate-50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-muted">Contractor-wise variance – Aconex change events vs the change register (open a contractor for the breakdown)</div>
         <table className="w-full text-sm">
           <thead>
+            <tr className="text-center text-[11px] font-semibold uppercase tracking-wide">
+              <th />
+              <th colSpan={3} className={`px-3 py-1 ${groupTint(0).band}`}>Approved changes</th>
+              <th colSpan={3} className={`px-3 py-1 ${groupTint(1).band}`}>Pending changes</th>
+              <th colSpan={3} className={`px-3 py-1 ${groupTint(2).band}`}>Budget transfers in</th>
+              <th />
+            </tr>
             <tr className="text-left text-xs text-muted">
               <th className="px-4 py-2">Contractor</th>
-              <th className="px-3 py-2 text-right">Approved – Aconex</th>
-              <th className="px-3 py-2 text-right">Approved – register</th>
-              <th className="px-3 py-2 text-right">Variance</th>
-              <th className="px-3 py-2 text-right">Pending – Aconex</th>
-              <th className="px-3 py-2 text-right">Pending – register</th>
-              <th className="px-3 py-2 text-right">Variance</th>
-              <th className="px-3 py-2 text-right">Transfers in – Aconex</th>
-              <th className="px-3 py-2 text-right">Transfers in – register</th>
-              <th className="px-3 py-2 text-right">Variance</th>
+              <th className={`px-3 py-2 text-right ${groupTint(0).th}`}>Approved – Aconex</th>
+              <th className={`px-3 py-2 text-right ${groupTint(0).th}`}>Approved – register</th>
+              <th className={`px-3 py-2 text-right ${groupTint(0).th}`}>Variance</th>
+              <th className={`px-3 py-2 text-right ${groupTint(1).th}`}>Pending – Aconex</th>
+              <th className={`px-3 py-2 text-right ${groupTint(1).th}`}>Pending – register</th>
+              <th className={`px-3 py-2 text-right ${groupTint(1).th}`}>Variance</th>
+              <th className={`px-3 py-2 text-right ${groupTint(2).th}`}>Transfers in – Aconex</th>
+              <th className={`px-3 py-2 text-right ${groupTint(2).th}`}>Transfers in – register</th>
+              <th className={`px-3 py-2 text-right ${groupTint(2).th}`}>Variance</th>
               <th className="px-3 py-2 text-right">Items</th>
             </tr>
           </thead>
@@ -44,15 +52,15 @@ export function ChangeEventsCheck({ check }: { check: AconexChangeCheck }) {
           <tfoot>
             <tr className="border-t-2 border-line bg-slate-50 font-semibold text-ink">
               <td className="px-4 py-2">Total</td>
-              <td className="px-3 py-2 text-right tnum">{money(check.totals.aconex.approved)}</td>
-              <td className="px-3 py-2 text-right tnum">{money(check.totals.dashboard.approved)}</td>
-              <td className={`px-3 py-2 text-right tnum ${bad(check.totals.variance.approved) ? "text-red-700" : "text-emerald-700"}`}>{money(check.totals.variance.approved)}</td>
-              <td className="px-3 py-2 text-right tnum">{money(check.totals.aconex.pending)}</td>
-              <td className="px-3 py-2 text-right tnum">{money(check.totals.dashboard.pending)}</td>
-              <td className={`px-3 py-2 text-right tnum ${bad(check.totals.variance.pending) ? "text-red-700" : "text-emerald-700"}`}>{money(check.totals.variance.pending)}</td>
-              <td className="px-3 py-2 text-right tnum">{money(check.totals.aconex.transfers)}</td>
-              <td className="px-3 py-2 text-right tnum">{money(check.totals.dashboard.transfers)}</td>
-              <td className={`px-3 py-2 text-right tnum ${bad(check.totals.variance.transfers) ? "text-amber-700" : "text-emerald-700"}`}>{money(check.totals.variance.transfers)}</td>
+              <td className={`px-3 py-2 text-right tnum ${groupTint(0).td} ${groupTint(0).td}`}>{money(check.totals.aconex.approved)}</td>
+              <td className={`px-3 py-2 text-right tnum ${groupTint(0).td} ${groupTint(0).td}`}>{money(check.totals.dashboard.approved)}</td>
+              <td className={`px-3 py-2 text-right tnum ${groupTint(0).td} ${bad(check.totals.variance.approved) ? "text-red-700" : "text-emerald-700"}`}>{money(check.totals.variance.approved)}</td>
+              <td className={`px-3 py-2 text-right tnum ${groupTint(1).td} ${groupTint(1).td}`}>{money(check.totals.aconex.pending)}</td>
+              <td className={`px-3 py-2 text-right tnum ${groupTint(1).td} ${groupTint(1).td}`}>{money(check.totals.dashboard.pending)}</td>
+              <td className={`px-3 py-2 text-right tnum ${groupTint(1).td} ${bad(check.totals.variance.pending) ? "text-red-700" : "text-emerald-700"}`}>{money(check.totals.variance.pending)}</td>
+              <td className={`px-3 py-2 text-right tnum ${groupTint(2).td} ${groupTint(2).td}`}>{money(check.totals.aconex.transfers)}</td>
+              <td className={`px-3 py-2 text-right tnum ${groupTint(2).td} ${groupTint(2).td}`}>{money(check.totals.dashboard.transfers)}</td>
+              <td className={`px-3 py-2 text-right tnum ${groupTint(2).td} ${bad(check.totals.variance.transfers) ? "text-amber-700" : "text-emerald-700"}`}>{money(check.totals.variance.transfers)}</td>
               <td className="px-3 py-2 text-right tnum">{check.totals.aconex.items} / {check.totals.dashboard.items}</td>
             </tr>
           </tfoot>
