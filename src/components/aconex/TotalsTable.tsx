@@ -14,10 +14,21 @@ import type { LineDetail } from "@/lib/recovery/aconex-detail";
 export function TotalsTable({ rec, detail }: { rec: AconexReconciliation; detail: Record<string, LineDetail> }) {
   const [open, setOpen] = useState<AconexMeasureKey | null>(null);
   const [openLine, setOpenLine] = useState<string | null>(null);
+  // RSG's own early-warning columns (the early warnings RSG books on the budget hold and its EAC 1115) are
+  // shown on request: they are RSG's forecasting view, not a like-for-like comparison with the cost report
+  const [rsg, setRsg] = useState(false);
+  const rsgKeys: AconexMeasureKey[] = ["ew", "eac_rsg"];
+  const measures = ACONEX_MEASURES.filter((m) => rsg || !rsgKeys.includes(m.key));
   const money = (v: number | null | undefined) => (v === null || v === undefined ? "–" : formatMoney(v));
   return (
     <div className="card overflow-x-auto p-0">
-      <div className="border-b border-line bg-slate-50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-muted">Totals – Aconex vs dashboard, over the lines both systems hold and compare for each figure</div>
+      <div className="flex items-center gap-3 border-b border-line bg-slate-50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-muted">
+        <span>Totals – Aconex vs dashboard, over the lines both systems hold and compare for each figure</span>
+        <label className="ml-auto inline-flex cursor-pointer items-center gap-1.5 normal-case tracking-normal" title="RSG's own columns in the export: the early warnings RSG books on the budget hold and its estimate at completion 1115 (budget less those early warnings). For information – they are not compared like for like.">
+          <input type="checkbox" checked={rsg} onChange={(e) => setRsg(e.target.checked)} />
+          Show RSG&apos;s early-warning columns
+        </label>
+      </div>
       <table className="w-full text-sm">
         <thead>
           <tr className="text-left text-xs text-muted">
@@ -30,7 +41,7 @@ export function TotalsTable({ rec, detail }: { rec: AconexReconciliation; detail
           </tr>
         </thead>
         <tbody>
-          {ACONEX_MEASURES.map((m) => {
+          {measures.map((m) => {
             const diff = rec.totals.diff[m.key];
             const bad = Math.abs(diff) >= rec.counts.tolerance;
             const isOpen = open === m.key;

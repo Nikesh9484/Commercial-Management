@@ -5,6 +5,9 @@ import { getAppContext } from "@/lib/context";
 import { getModule } from "@/lib/modules";
 import { getReportData } from "@/lib/report/data";
 import { buildAconexReconciliation, ACONEX_MEASURES, measureDecides, type AconexLine } from "@/lib/recovery/aconex";
+
+// the line-by-line table compares like for like; RSG's own early-warning columns are on the totals table, on request
+const LINE_MEASURES = ACONEX_MEASURES.filter((m) => m.key !== "ew" && m.key !== "eac_rsg");
 import { buildAconexChangeCheck } from "@/lib/recovery/aconex-changes";
 import { ChangeEventsCheck } from "@/components/aconex/ChangeEventsCheck";
 import { TotalsTable } from "@/components/aconex/TotalsTable";
@@ -94,7 +97,7 @@ export default async function AconexCheckPage({ searchParams }: { searchParams: 
                   <th className="px-2 py-2">Line</th>
                   <th className="px-2 py-2">Contractor</th>
                   <th className="px-2 py-2">Status</th>
-                  {ACONEX_MEASURES.map((m) => (
+                  {LINE_MEASURES.map((m) => (
                     <th key={m.key} className="px-2 py-2 text-right" colSpan={3}>
                       {m.label}
                     </th>
@@ -102,7 +105,7 @@ export default async function AconexCheckPage({ searchParams }: { searchParams: 
                 </tr>
                 <tr className="text-left text-[10px] text-muted">
                   <th colSpan={3} />
-                  {ACONEX_MEASURES.map((m) => (
+                  {LINE_MEASURES.map((m) => (
                     <th key={`${m.key}-sub`} className="px-2 py-1 text-right" colSpan={3}>
                       Aconex · dashboard · difference
                     </th>
@@ -112,7 +115,7 @@ export default async function AconexCheckPage({ searchParams }: { searchParams: 
               <tbody>
                 {listed.length === 0 && (
                   <tr>
-                    <td className="px-4 py-3 text-sm text-emerald-700" colSpan={3 + ACONEX_MEASURES.length * 3}>
+                    <td className="px-4 py-3 text-sm text-emerald-700" colSpan={3 + LINE_MEASURES.length * 3}>
                       Every compared figure agrees with the dashboard within SAR {rec.counts.tolerance}.
                     </td>
                   </tr>
@@ -158,7 +161,7 @@ function LineRow({ l, tolerance, money }: { l: AconexLine; tolerance: number; mo
       </td>
       <td className="max-w-[12rem] truncate px-2 py-1 text-muted">{l.contractor}</td>
       <td className={`px-2 py-1 font-medium ${tone}`}>{status}</td>
-      {ACONEX_MEASURES.map((m) => {
+      {LINE_MEASURES.map((m) => {
         const d = l.diff[m.key];
         const bad = d !== null && Math.abs(d) >= tolerance && l.status === "matched" && measureDecides(m, l.rowType);
         return (
