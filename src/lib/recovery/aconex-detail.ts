@@ -58,6 +58,28 @@ export interface LineParts {
   /** RSG's early-warning columns in the Aconex export (approved, pending), null on the dashboard side */
   ewApproved?: number | null;
   ewPending?: number | null;
+  /** RSG's own estimate at completion (1115: approved budget less the early warnings RSG has approved), Aconex side only */
+  eacRsg?: number | null;
+}
+/** One change item's share of a line's difference: the register's value against Aconex's, paired by number. */
+export interface DiffItem {
+  key: string;
+  item: string;
+  event: string;
+  label: string;
+  register: number | null;
+  aconex: number | null;
+  diff: number;
+  note: string;
+}
+/** Which items a line's difference comes from – listed so they add up to the figure in the totals. */
+export interface DiffBlock {
+  measure: "dvo" | "pvo";
+  /** the line's difference on this figure (Aconex less dashboard) */
+  total: number;
+  /** what the listed items add up to – equal to the total when every item is paired by number */
+  explained: number;
+  items: DiffItem[];
 }
 export interface LineDetail {
   code: string;
@@ -65,6 +87,7 @@ export interface LineDetail {
   aconex: LineParts;
   dashboard: LineParts;
   changes: ChangePair[];
+  byItem: { dvo: DiffBlock; pvo: DiffBlock };
   payments: PaymentItem[];
   paymentsTotal: number | null;
   transfers: { register: TransferItem[]; aconex: TransferItem[] };
@@ -135,8 +158,9 @@ export function varianceDetail(data: ReportData, rec: AconexReconciliation): Rec
       if (r.approved_early_warnings_rsg !== null && r.approved_early_warnings_rsg !== undefined) a.ewApproved = add(a.ewApproved ?? null, n(r.approved_early_warnings_rsg));
       if (r.pending_early_warnings_rsg !== null && r.pending_early_warnings_rsg !== undefined) a.ewPending = add(a.ewPending ?? null, n(r.pending_early_warnings_rsg));
       if (a.ewApproved !== null && a.ewApproved !== undefined) a.ew = add(a.ew, 0);
-      // RSG's own EAC (1115) where the export carries it; the standard Aconex EAC is the budget
-      a.eac = add(a.eac, r.eac_rsg !== null && r.eac_rsg !== undefined ? n(r.eac_rsg) : n(r.eac));
+      // the standard Aconex EAC (the approved budget) is compared; RSG's own 1115 is shown beside it
+      a.eac = add(a.eac, n(r.eac));
+      if (r.eac_rsg !== null && r.eac_rsg !== undefined) a.eacRsg = add(a.eacRsg ?? null, n(r.eac_rsg));
       a.incurred = add(a.incurred, n(r.incurred_to_date));
     }
     if (a.ewApproved !== undefined || a.ewPending !== undefined) a.ew = (a.ewApproved ?? 0) + (a.ewPending ?? 0);
@@ -223,7 +247,30 @@ export function varianceDetail(data: ReportData, rec: AconexReconciliation): Rec
     const regTransfers: TransferItem[] = transfers
       .filter((t) => packages.has(Number(t.to_package_id)) || packages.has(Number(t.from_package_id)))
       .map((t) => ({ ref: String(t.item ?? t.id), label: String(t.description ?? ""), status: String(t.status ?? ""), amount: n(t.amount), direction: packages.has(Number(t.to_package_id)) && packages.has(Number(t.from_package_id)) ? "within" : packages.has(Number(t.to_package_id)) ? "in" : "out" }));
-    out[rl.code] = { code: rl.code, contracts: bare ? [bare] : [], aconex: a, dashboard: d, changes: changeList, payments, paymentsTotal, transfers: { register: regTransfers, aconex: btr } };
+    // which items the DVO / PVO difference comes from: each pair's register value against Aconex's, so the
+    // list adds up to the line's difference and the one item behind a 309.58 is named, not just listed
+    const block = (measure: "dvo" | "pvo"): DiffBlock => {
+      const total = r2(((measure === "dvo" ? a.dvo : a.pvo) ?? 0) - ((measure === "dvo" ? d.dvo : d.pvo) ?? 0));
+      const items: DiffItem[] = [];
+      for (const p of changeList) {
+        const pendingReg = p.register ? statusGroup(p.register.status) !== "approved" : false;
+        const register = measure === "dvo" ? (p.register?.dvo ?? null) : p.register && pendingReg ? (p.register.pvo ?? null) : null;
+        const aconex = measure === "dvo" ? (p.aconex?.approved ?? null) : (p.aconex?.pending ?? null);
+        const diff = r2((aconex ?? 0) - (register ?? 0));
+        if (Math.abs(diff) < 0.005) continue;
+        const what = measure === "dvo" ? "DVO" : "PVO";
+        const note = !p.register ? `only in Aconex – nothing on the register` : !p.aconex ? `${what} on the register, no Aconex event` : register === null ? `Aconex carries a value, the register none` : aconex === null ? `the register carries a value, Aconex none` : `register ${what} ${fmt(register)} vs Aconex ${fmt(aconex)}`;
+        items.push({ key: p.key, item: p.register?.item ?? "", event: p.aconex?.event ?? "", label: p.register?.label || p.aconex?.label || "", register, aconex, diff, note });
+      }
+      // two items that cancel each other out (Aconex carries both under one event, the register as two)
+      for (const x of items) {
+        const y = items.find((o) => o !== x && Math.abs(o.diff + x.diff) < 0.005);
+        if (y) x.note += ` – cancels out with ${y.item || y.event}`;
+      }
+      items.sort((x, y) => Math.abs(y.diff) - Math.abs(x.diff));
+      return { measure, total, explained: r2(items.reduce((t, i) => t + i.diff, 0)), items };
+    };
+    out[rl.code] = { code: rl.code, contracts: bare ? [bare] : [], aconex: a, dashboard: d, changes: changeList, byItem: { dvo: block("dvo"), pvo: block("pvo") }, payments, paymentsTotal, transfers: { register: regTransfers, aconex: btr } };
   }
   return out;
 }

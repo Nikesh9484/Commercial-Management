@@ -175,16 +175,23 @@ function LineItems({ d, measure, money }: { d: LineDetail; measure: AconexMeasur
                 { label: "Pending early warnings", a: d.aconex.ewPending ?? null, b: null, note: "RSG column" },
                 { label: "Early warnings", a: d.aconex.ew, b: d.dashboard.ew, note: "Aconex approved + pending early warnings vs column L" },
               ]
+          : measure === "eac_rsg"
+            ? [
+                { label: "Approved budget", a: d.aconex.budget, b: d.dashboard.budget, note: "the standard Aconex EAC is the approved budget – column G" },
+                { label: "Approved early warnings (RSG)", a: d.aconex.ewApproved ?? null, b: d.dashboard.ew, note: "RSG books its early warnings on the budget hold; the dashboard carries early warnings on the contract they belong to (column L)" },
+                { label: "EAC after early warnings (RSG 1115)", a: d.aconex.eacRsg ?? null, b: d.dashboard.eac, note: "approved budget less RSG's approved early warnings, vs column N (anticipated final account)" },
+              ]
           : measure === "eac"
             ? [
                 { label: "Commitments", a: d.aconex.commitments, b: d.dashboard.commitments, note: "column I" },
                 { label: "Pending changes (PVO)", a: d.aconex.pvo, b: d.dashboard.pvo, note: "column J" },
                 { label: "RFC, early warnings, claims", a: d.aconex.ew, b: (d.dashboard.rfc ?? 0) + (d.dashboard.ew ?? 0) + (d.dashboard.claims ?? 0), note: "columns K + L + M – Aconex: the RSG early warnings; the rest sits inside its estimate to complete" },
                 { label: "Approved budget", a: d.aconex.budget, b: d.dashboard.budget, note: "the standard Aconex EAC is the approved budget" },
-                { label: "Estimate at completion", a: d.aconex.eac, b: d.dashboard.eac, note: "Aconex EAC (RSG 1115 where the export carries it) vs column N" },
+                { label: "Estimate at completion", a: d.aconex.eac, b: d.dashboard.eac, note: "the standard Aconex EAC (the approved budget) vs column N" },
               ]
             : [{ label: "Incurred / certified to date", a: d.aconex.incurred, b: d.dashboard.incurred, note: "Aconex incurred to date vs column P" }];
   const showChanges = measure !== "incurred" && measure !== "budget";
+  const blocks = (measure === "pvo" ? [d.byItem.pvo] : measure === "dvo" || measure === "commitments" ? [d.byItem.dvo] : measure === "eac" || measure === "eac_rsg" ? [d.byItem.dvo, d.byItem.pvo] : []).filter((b) => b.measure === measure || Math.abs(b.total) >= 1);
   const showPayments = measure === "incurred";
   const showTransfers = measure === "budget";
   return (
@@ -217,6 +224,58 @@ function LineItems({ d, measure, money }: { d: LineDetail; measure: AconexMeasur
           </tbody>
         </table>
       </div>
+      {blocks.map((b) => (
+        <div key={b.measure}>
+          <div className="mb-1 font-semibold text-ink">
+            {b.measure === "dvo" ? "Approved changes (DVO)" : "Pending changes (PVO)"}:{" "}
+            {Math.abs(b.explained - b.total) < 1
+              ? `the difference of ${money(b.total)} comes from ${b.items.length === 0 ? "no single item" : `${b.items.length === 1 ? "this item" : `these ${b.items.length} items`}`}`
+              : `the items whose values differ – they add up to ${money(b.explained)}, the line's difference is ${money(b.total)}`}
+            {Math.abs(b.explained - b.total) >= 1 && (
+              <span className="ml-2 font-normal text-muted">
+                (the rest is how the two systems hold this contract&apos;s changes – the dashboard folds earlier variations into the award, Aconex lists each event – so this list shows where the values differ, not a sum to the difference)
+              </span>
+            )}
+          </div>
+          {b.items.length === 0 ? (
+            <div className="text-muted">Every item paired by number carries the same value on both sides.</div>
+          ) : (
+            <div className="overflow-x-auto rounded-lg border border-line bg-white">
+              <table className="w-full">
+                <thead>
+                  <tr className="bg-slate-50 text-left text-[11px] text-muted">
+                    <th className="px-2 py-1">Register item</th>
+                    <th className="px-2 py-1">Aconex event</th>
+                    <th className="px-2 py-1 text-right">Register {b.measure === "dvo" ? "DVO" : "PVO"}</th>
+                    <th className="px-2 py-1 text-right">Aconex {b.measure === "dvo" ? "approved" : "pending"}</th>
+                    <th className="px-2 py-1 text-right">Difference</th>
+                    <th className="px-2 py-1">Why</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {b.items.map((i) => (
+                    <tr key={i.key} className="border-t border-line">
+                      <td className="max-w-[22rem] truncate px-2 py-1" title={`${i.item} ${i.label}`}>
+                        {i.item ? <span className="font-mono text-[11px]">{i.item}</span> : <span className="text-amber-700">– not on the register</span>} <span className="text-muted">{i.label}</span>
+                      </td>
+                      <td className="px-2 py-1 font-mono text-[11px]">{i.event || <span className="font-sans text-amber-700">– no Aconex event</span>}</td>
+                      <td className="px-2 py-1 text-right tnum">{money(i.register)}</td>
+                      <td className="px-2 py-1 text-right tnum">{money(i.aconex)}</td>
+                      <td className="px-2 py-1 text-right tnum font-semibold text-red-700">{money(i.diff)}</td>
+                      <td className="max-w-[26rem] px-2 py-1 text-muted">{i.note}</td>
+                    </tr>
+                  ))}
+                  <tr className="border-t border-line bg-slate-50 font-semibold">
+                    <td className="px-2 py-1" colSpan={4}>Total of the items listed</td>
+                    <td className="px-2 py-1 text-right tnum">{money(b.explained)}</td>
+                    <td className="px-2 py-1 text-muted">line difference {money(b.total)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      ))}
       {showChanges && (
         <div>
           <div className="mb-1 font-semibold text-ink">
