@@ -42,6 +42,8 @@ export interface FieldDef {
   tableOrder?: number;
   /** Hide from the form (system fields). */
   hideInForm?: boolean;
+  /** The table shows this other field's value in the column instead (the form still edits the field itself). */
+  tableFrom?: string;
   /** Short helper text shown under the input. */
   help?: string;
   /** Default value for new records. */

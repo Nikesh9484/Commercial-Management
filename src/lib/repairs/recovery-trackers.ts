@@ -9,7 +9,8 @@ import { analyzeWorkbook } from "../workbook/analyze";
 import { storeUpload, saveConverted, importWorkbook } from "../workbook/import";
 import { withHeavyLock } from "../workbook/heavy";
 import { looksLikeAccommodationTracker, looksLikeCustomsTracker, convertRecoveryTrackers, trackerReadPlan } from "../workbook/recovery";
-import { recoveryContextsFor } from "../recovery/contexts";
+import { looksLikeClaimsTracker, convertClaimsTracker } from "../workbook/claims-tracker";
+import { recoveryContextsFor, claimsContextsFor } from "../recovery/contexts";
 import type { UserInfo } from "../registers/types";
 
 /**
@@ -22,10 +23,17 @@ import type { UserInfo } from "../registers/types";
  * been uploaded for it. Projects that already hold rows are not touched: their rows change only when
  * a tracker is uploaded.
  */
-export type TrackerKind = "accommodation" | "customs";
-const KINDS: Record<TrackerKind, { seed: string; registers: string[]; table: string; label: string }> = {
-  accommodation: { seed: "Accomodation_Invoice_Tracker_for_Finance_Team_-_As_of_2026.09.23.xlsx", registers: ["accommodation_recovery", "accommodation_invoices"], table: "accommodation_recovery", label: "accommodation invoice tracker" },
-  customs: { seed: "TRSP_-_Customs_Recovery_Tracker_2026-10-04.xlsx", registers: ["customs_recovery", "customs_declarations"], table: "customs_recovery", label: "customs recovery tracker" },
+export type TrackerKind = "accommodation" | "customs" | "claims";
+/**
+ * additive: the Claims Tracker only adds and updates claims (a claim entered by hand, or dropped from the
+ * tracker, stays), so the file shipped with a version is applied to every project once – the latest
+ * remarks reach the projects that already hold claims too. The accommodation and customs trackers mirror
+ * the file whole for the projects they feed, so they only fill projects with no rows yet.
+ */
+const KINDS: Record<TrackerKind, { seed: string; registers: string[]; table: string; label: string; additive: boolean }> = {
+  accommodation: { seed: "Accomodation_Invoice_Tracker_for_Finance_Team_-_As_of_2026.09.23.xlsx", registers: ["accommodation_recovery", "accommodation_invoices"], table: "accommodation_recovery", label: "accommodation invoice tracker", additive: false },
+  customs: { seed: "TRSP_-_Customs_Recovery_Tracker_2026-10-04.xlsx", registers: ["customs_recovery", "customs_declarations"], table: "customs_recovery", label: "customs recovery tracker", additive: false },
+  claims: { seed: "AMA-CM-MARINA_VILLAGE_ClaimTracker_R65.xlsx", registers: ["claims"], table: "claims", label: "claims tracker", additive: true },
 };
 const SYSTEM = { id: 0, name: "system", email: "", role: "admin" } as UserInfo;
 
@@ -39,7 +47,10 @@ export function keepTrackerUpload(kind: TrackerKind, file: string, name: string)
     const dest = keptPath(kind);
     fs.mkdirSync(path.dirname(dest), { recursive: true });
     fs.copyFileSync(file, dest);
-    setSetting(getDb(), `recovery_tracker_name:${kind}`, name);
+    const db = getDb();
+    setSetting(db, `recovery_tracker_name:${kind}`, name);
+    // an additive tracker uploaded from the page has just been applied to every project: not again at the next start
+    if (KINDS[kind].additive) for (const p of db.prepare("SELECT id FROM programmes").all() as { id: number }[]) setSetting(db, `tracker_applied:${kind}:${name}:${p.id}`, "1");
     keepFile(dest);
   } catch (e) {
     console.warn(`[recovery] the ${KINDS[kind].label} could not be kept for later projects:`, e instanceof Error ? e.message : e);
@@ -61,25 +72,29 @@ export async function fillRecoveryTrackersAtStart(): Promise<void> {
   const programmes = db.prepare("SELECT id, code, name FROM programmes ORDER BY id").all() as { id: number; code: string; name: string }[];
   for (const kind of Object.keys(KINDS) as TrackerKind[]) {
     const k = KINDS[kind];
-    const missing = programmes.filter(
-      (p) => getSetting(db, `recovery_filled:${kind}:${p.id}`) !== "1" && !db.prepare(`SELECT 1 FROM "${k.table}" WHERE programme_id = ? LIMIT 1`).get(p.id) && !!db.prepare("SELECT 1 FROM reporting_periods WHERE programme_id = ? LIMIT 1").get(p.id),
-    );
-    if (!missing.length) continue;
     const src = latestTrackerFile(kind);
+    const withPeriod = programmes.filter((p) => !!db.prepare("SELECT 1 FROM reporting_periods WHERE programme_id = ? LIMIT 1").get(p.id));
+    // an additive tracker: every project once per file; a mirrored one: the projects with no rows yet
+    const missing = k.additive
+      ? src
+        ? withPeriod.filter((p) => getSetting(db, `tracker_applied:${kind}:${src.name}:${p.id}`) !== "1")
+        : []
+      : withPeriod.filter((p) => getSetting(db, `recovery_filled:${kind}:${p.id}`) !== "1" && !db.prepare(`SELECT 1 FROM "${k.table}" WHERE programme_id = ? LIMIT 1`).get(p.id));
+    if (!missing.length) continue;
     if (!src) {
       console.warn(`[recovery] no ${k.label} on file – ${missing.map((p) => p.name).join(", ")} stay empty until one is uploaded.`);
       continue;
     }
     // tried once: a fill that fails is not repeated at every start – the tracker can always be uploaded from the import page
-    for (const p of missing) setSetting(db, `recovery_filled:${kind}:${p.id}`, "1");
+    for (const p of missing) setSetting(db, k.additive ? `tracker_applied:${kind}:${src.name}:${p.id}` : `recovery_filled:${kind}:${p.id}`, "1");
     try {
       await withHeavyLock(async () => {
         const fileId = storeUpload(fs.readFileSync(src.file));
         const plan = trackerReadPlan(await readWorkbookPreview(src.file));
         let sheets = await readWorkbookValues(src.file, plan ?? {});
-        const isKind = kind === "accommodation" ? looksLikeAccommodationTracker(sheets) : looksLikeCustomsTracker(sheets);
-        if (!isKind) throw new Error(`${src.name} is not an ${k.label}`);
-        const conv = convertRecoveryTrackers(sheets, recoveryContextsFor(db, missing, src.name), kind);
+        const isKind = kind === "accommodation" ? looksLikeAccommodationTracker(sheets) : kind === "customs" ? looksLikeCustomsTracker(sheets) : looksLikeClaimsTracker(sheets);
+        if (!isKind) throw new Error(`${src.name} is not a ${k.label}`);
+        const conv = kind === "claims" ? convertClaimsTracker(sheets, claimsContextsFor(db, missing)) : convertRecoveryTrackers(sheets, recoveryContextsFor(db, missing, src.name), kind);
         sheets = toSheetValues(conv);
         saveConverted(fileId, sheets);
         const a = analyzeWorkbook(sheets, src.name, fileId);
@@ -97,8 +112,9 @@ export async function fillRecoveryTrackersAtStart(): Promise<void> {
           SYSTEM,
         );
         const added = res.sheets.reduce((t, r) => t + r.created, 0);
+        const updated = res.sheets.reduce((t, r) => t + r.updated, 0);
         const errors = res.sheets.reduce((t, r) => t + r.errors.length, 0);
-        console.log(`[recovery] ${k.label} (${src.name}) → ${missing.map((p) => p.name).join(", ")}: ${added} row(s) added${errors ? `, ${errors} row(s) could not be read` : ""}. ${conv.notes.join(" ")}`);
+        console.log(`[recovery] ${k.label} (${src.name}) → ${missing.map((p) => p.name).join(", ")}: ${added} row(s) added, ${updated} updated${errors ? `, ${errors} row(s) could not be read` : ""}. ${conv.notes.join(" ")}`);
       });
       requestBackup("recovery-trackers");
     } catch (e) {

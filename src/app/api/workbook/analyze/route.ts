@@ -7,9 +7,9 @@ import { readWorkbookValues, readWorkbookPreview } from "@/lib/workbook/read";
 import { withHeavyLock, releaseMemory } from "@/lib/workbook/heavy";
 import { looksLikeMarinaReport, convertMarinaReport, toSheetValues } from "@/lib/workbook/marina";
 import { looksLikeVbhReport, convertVbhReport } from "@/lib/workbook/vbh";
-import { looksLikeClaimsTracker, convertClaimsTracker, codeFrag, type KnownLine } from "@/lib/workbook/claims-tracker";
+import { looksLikeClaimsTracker, convertClaimsTracker } from "@/lib/workbook/claims-tracker";
 import { looksLikeAccommodationTracker, looksLikeCustomsTracker, convertRecoveryTrackers, trackerReadPlan } from "@/lib/workbook/recovery";
-import { recoveryContextsFor, aconexContextFor } from "@/lib/recovery/contexts";
+import { recoveryContextsFor, aconexContextFor, claimsContextsFor } from "@/lib/recovery/contexts";
 import { keepTrackerUpload } from "@/lib/repairs/recovery-trackers";
 import { csvToSheets, looksLikeAconexExport, convertAconexExport, looksLikeAconexChangeEvents, convertAconexChangeEvents } from "@/lib/workbook/aconex";
 import { getAppContext } from "@/lib/context";
@@ -109,21 +109,9 @@ export async function POST(req: Request, ctx: unknown) {
       // by contract number or asset code, linked to that project's cost lines (the main contract line –
       // the one with the largest budget – when a contract has several), and filed under that project.
       const db = getDb();
-      const ctxs = getAppContext().programmes.map((programme) => {
-        const linesByFrag = new Map<string, KnownLine>();
-        const lines = db
-          .prepare("SELECT l.code, p.name AS package, c.name AS contractor FROM cost_lines l LEFT JOIN packages p ON p.id = l.package_id LEFT JOIN contractors c ON c.id = l.contractor_id WHERE l.programme_id = ? AND l.is_budget_hold IS NOT 1 ORDER BY COALESCE(l.approved_baseline_budget, 0) + COALESCE(l.opening_transfers, 0) DESC, l.sort_order, l.code")
-          .all(programme.id) as { code: string; package: string | null; contractor: string | null }[];
-        for (const l of lines) {
-          const frag = codeFrag(l.code);
-          if (frag && !linesByFrag.has(frag)) linesByFrag.set(frag, { code: l.code, package: l.package ?? "", contractor: l.contractor ?? "" });
-        }
-        const assets = (db.prepare("SELECT code FROM assets WHERE programme_id = ? ORDER BY id").all(programme.id) as { code: string }[]).map((a) => a.code);
-        const existingClaims = listRecords(getRegisterDef("claims")!, { allScopes: true })
-          .filter((c) => Number(c.programme_id) === programme.id)
-          .map((c) => ({ claim_no: String(c.claim_no), detail_letter_ref: c.detail_letter_ref as string | null, notice_letter_ref: c.notice_letter_ref as string | null, description: c.description as string | null }));
-        return { programmeCode: programme.code, assetCode: programme.code, assetLabel: assets[0] ?? programme.code, assets, linesByFrag, existingClaims };
-      });
+      // the file is kept, so a project set up later (or a fresh start) is filled from it without a new upload
+      keepTrackerUpload("claims", uploadPath(fileId), name);
+      const ctxs = claimsContextsFor(db, getAppContext().programmes);
       const conv = convertClaimsTracker(worksheets, ctxs);
       worksheets = toSheetValues(conv);
       saveConverted(fileId, worksheets);

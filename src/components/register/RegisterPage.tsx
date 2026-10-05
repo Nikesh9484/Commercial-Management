@@ -689,9 +689,19 @@ ${lines.join("\n")}`)) return;
                 <div className="max-h-[40vh] overflow-auto border-t border-line">
                   <table className="data compact w-full">
                     <thead>
+                      {sectionBands(tableFields).some((b) => b.section) && (
+                        <tr>
+                          {sectionBands(tableFields).map((b, i) => (
+                            <th key={i} colSpan={b.span} className={`text-center text-[11px] font-semibold uppercase tracking-wide ${b.section ? colTint(def, registerKey, b.key).band : ""}`}>
+                              {b.section ?? ""}
+                            </th>
+                          ))}
+                          <th data-nocopy />
+                        </tr>
+                      )}
                       <tr>
                         {tableFields.map((f) => (
-                          <th key={f.key} style={widthStyle(f)} className={`${isNumeric(f) ? "text-right" : ""} ${stageTint(registerKey, f.key).th}`}>
+                          <th key={f.key} style={widthStyle(f)} className={`${isNumeric(f) ? "text-right" : ""} ${colTint(def, registerKey, f.key).th}`}>
                             <span className={colWidths[f.key] ? "block truncate" : ""}>{f.label}</span>
                           </th>
                         ))}
@@ -702,7 +712,7 @@ ${lines.join("\n")}`)) return;
                       {rows.map((r) => (
                         <tr key={r.id} onClick={() => setFocusedId(Number(r.id))} onContextMenu={rowMenu(r)} onDoubleClick={() => data.canEdit && openEdit(r)} className={focusedId === Number(r.id) ? "outline outline-2 -outline-offset-2 outline-accent/60" : ""}>
                           {tableFields.map((f) => (
-                            <td key={f.key} style={colWidths[f.key] ? widthStyle(f) : undefined} className={`${isNumeric(f) ? "tnum text-right" : ""} ${colWidths[f.key] ? "overflow-hidden text-ellipsis whitespace-nowrap" : ""} ${stageTint(registerKey, f.key).td}`} title={f.type === "textarea" || colWidths[f.key] ? String(r[f.key] ?? "") : undefined}>
+                            <td key={f.key} style={colWidths[f.key] ? widthStyle(f) : undefined} className={`${isNumeric(f) ? "tnum text-right" : ""} ${colWidths[f.key] ? "overflow-hidden text-ellipsis whitespace-nowrap" : ""} ${colTint(def, registerKey, f.key).td}`} title={f.type === "textarea" || colWidths[f.key] ? String(r[f.tableFrom ?? f.key] ?? r[f.key] ?? "") : undefined}>
                               <Cell field={f} row={r} />
                             </td>
                           ))}
@@ -744,6 +754,18 @@ ${lines.join("\n")}`)) return;
           )}
           <table className="data w-full">
             <thead>
+              {sectionBands(tableFields).some((b) => b.section) && (
+                <tr>
+                  <th className="w-8 pr-0" data-nocopy />
+                  {data.canEdit && <th className="w-9" data-nocopy />}
+                  {sectionBands(tableFields).map((b, i) => (
+                    <th key={i} colSpan={b.span} className={`text-center text-[11px] font-semibold uppercase tracking-wide ${b.section ? colTint(def, registerKey, b.key).band : ""}`}>
+                      {b.section ?? ""}
+                    </th>
+                  ))}
+                  <th data-nocopy />
+                </tr>
+              )}
               <tr>
                 <th className="w-8 pr-0" data-nocopy title="Tick rows to copy only those">
                   <input
@@ -761,7 +783,7 @@ ${lines.join("\n")}`)) return;
                 </th>
                 {data.canEdit && <th className="w-9" title="Edit" data-nocopy />}
                 {tableFields.map((f) => (
-                  <th key={f.key} style={widthStyle(f)} className={`group relative ${isNumeric(f) ? "text-right" : ""} ${stageTint(registerKey, f.key).th}`}>
+                  <th key={f.key} style={widthStyle(f)} className={`group relative ${isNumeric(f) ? "text-right" : ""} ${colTint(def, registerKey, f.key).th}`}>
                     <button className="inline-flex max-w-full items-center gap-1 font-semibold text-muted hover:text-ink" onClick={() => toggleSort(f.key)}>
                       <span className={colWidths[f.key] ? "truncate" : ""}>{f.label}</span>
                       {effectiveSort?.field === f.key ? (
@@ -869,7 +891,7 @@ ${lines.join("\n")}`)) return;
                     </td>
                   )}
                   {tableFields.map((f) => (
-                    <td key={f.key} style={colWidths[f.key] ? widthStyle(f) : undefined} className={`${isNumeric(f) ? "tnum text-right" : ""} ${colWidths[f.key] ? "overflow-hidden text-ellipsis whitespace-nowrap" : ""} ${stageTint(registerKey, f.key).td}`} title={f.type === "textarea" || colWidths[f.key] ? String(r[f.key] ?? "") : undefined}>
+                    <td key={f.key} style={colWidths[f.key] ? widthStyle(f) : undefined} className={`${isNumeric(f) ? "tnum text-right" : ""} ${colWidths[f.key] ? "overflow-hidden text-ellipsis whitespace-nowrap" : ""} ${colTint(def, registerKey, f.key).td}`} title={f.type === "textarea" || colWidths[f.key] ? String(r[f.tableFrom ?? f.key] ?? r[f.key] ?? "") : undefined}>
                       <Cell field={f} row={r} />
                     </td>
                   ))}
@@ -1144,6 +1166,47 @@ function stageTint(registerKey: string, key: string): { th: string; td: string }
   return t ? { th: t.th, td: t.td } : { th: "", td: "" };
 }
 
+/**
+ * Columns that belong to one heading of the record form (the claim's notice, the engineer's assessment,
+ * the employer's determination …) share one colour in the table – header, band above it and cells – so a
+ * run of "EOT days / Compensable days / Cost" reads at a glance as whose figures they are. The same
+ * palette in every register. The Change Management Tracker keeps its stage colours.
+ */
+const SECTION_PALETTE: { th: string; td: string; band: string }[] = [
+  { th: "bg-none! bg-sky-100!", td: "bg-sky-50/60", band: "bg-sky-200/80 text-sky-900" },
+  { th: "bg-none! bg-amber-100!", td: "bg-amber-50/60", band: "bg-amber-200/80 text-amber-900" },
+  { th: "bg-none! bg-emerald-100!", td: "bg-emerald-50/60", band: "bg-emerald-200/80 text-emerald-900" },
+  { th: "bg-none! bg-violet-100!", td: "bg-violet-50/60", band: "bg-violet-200/80 text-violet-900" },
+  { th: "bg-none! bg-rose-100!", td: "bg-rose-50/60", band: "bg-rose-200/80 text-rose-900" },
+  { th: "bg-none! bg-teal-100!", td: "bg-teal-50/60", band: "bg-teal-200/80 text-teal-900" },
+  { th: "bg-none! bg-orange-100!", td: "bg-orange-50/60", band: "bg-orange-200/80 text-orange-900" },
+  { th: "bg-none! bg-indigo-100!", td: "bg-indigo-50/60", band: "bg-indigo-200/80 text-indigo-900" },
+  { th: "bg-none! bg-lime-100!", td: "bg-lime-50/60", band: "bg-lime-200/80 text-lime-900" },
+  { th: "bg-none! bg-fuchsia-100!", td: "bg-fuchsia-50/60", band: "bg-fuchsia-200/80 text-fuchsia-900" },
+  { th: "bg-none! bg-cyan-100!", td: "bg-cyan-50/60", band: "bg-cyan-200/80 text-cyan-900" },
+  { th: "bg-none! bg-stone-200!", td: "bg-stone-100/60", band: "bg-stone-300/80 text-stone-900" },
+];
+const NO_TINT = { th: "", td: "", band: "" };
+function colTint(def: { fields: FieldDef[] } | undefined, registerKey: string, key: string): { th: string; td: string; band: string } {
+  const stage = stageTint(registerKey, key);
+  if (stage.th) return { ...stage, band: stage.th };
+  const f = def?.fields.find((x) => x.key === key);
+  if (!f?.section || !def) return NO_TINT;
+  const sections: string[] = [];
+  for (const x of def.fields) if (x.section && !sections.includes(x.section)) sections.push(x.section);
+  return SECTION_PALETTE[sections.indexOf(f.section) % SECTION_PALETTE.length];
+}
+/** The runs of neighbouring columns under one heading, for the band row above the column headers. */
+function sectionBands(fields: FieldDef[]): { section: string | null; span: number; key: string }[] {
+  const out: { section: string | null; span: number; key: string }[] = [];
+  for (const f of fields) {
+    const last = out[out.length - 1];
+    if (last && last.section === (f.section ?? null)) last.span++;
+    else out.push({ section: f.section ?? null, span: 1, key: f.key });
+  }
+  return out;
+}
+
 /** The quick-catch lists above the Change Management Tracker: the open items at each stage. */
 const QUICK_LISTS: { key: string; title: string; hint: string; stages: string[]; tone: "amber" | "blue" | "green"; border: string }[] = [
   { key: "pvo", title: "Open PVOs", hint: "Potential Variation Orders not yet closed – the full row, in the columns chosen below.", stages: ["PVO"], tone: "amber", border: "border-l-amber-400" },
@@ -1163,7 +1226,7 @@ const TONE_CLASS: Record<string, string> = {
 };
 
 function Cell({ field: f, row: r }: { field: FieldDef; row: RecordRow }) {
-  const v = r[f.key];
+  const v = f.tableFrom && r[f.tableFrom] !== null && r[f.tableFrom] !== undefined && r[f.tableFrom] !== "" ? r[f.tableFrom] : r[f.key];
   if (v === null || v === undefined || v === "") {
     // a figure the dashboard expects rather than knows (a payment not yet made): shown in its column, marked
     const exp = r[`${f.key}__expected`];
