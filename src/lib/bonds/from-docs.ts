@@ -69,7 +69,7 @@ const TYPES: [RegExp, string][] = [
   [/plant (and|&) (equipment|machinery)|contractor'?s plant/i, "Plant & Equipment"],
   [/trade licen[cs]e|commercial registration/i, "Trade License"],
 ];
-const INSURERS = /(Gulf Insurance Group|\bGIG\b|MEDGULF|Buruj Cooperative Insurance|Buruj|Tawuniya|The Company for Cooperative Insurance|Walaa Cooperative|Walaa|Al ?Rajhi Takaful|Al ?Rajhi Bank|Malath|Salama|Allianz|AXA|Chubb|Wataniya|Arabian Shield|Saudi Re|Gulf General|United Cooperative Assurance|\bUCA\b|Saudi National Bank|\bSNB\b|Riyad Bank|\bSABB\b|Saudi Awwal Bank|Banque Saudi Fransi|Arab National Bank|Alinma Bank|Bank Al ?Jazira|Gulf International Bank|Emirates NBD|First Abu Dhabi Bank|Mashreq|HSBC|Standard Chartered|Citibank|Qatar National Bank|Bank Al ?Bilad|Saudi Investment Bank)/i;
+const INSURERS = /(Gulf Insurance Group|Emirates Insurance Company(?: \(PSC\))?|Emirates Insurance|Orient Insurance|Oman Insurance|Sukoon|Abu Dhabi National Insurance|\bADNIC\b|Al Sagr|Liva Insurance|\bGIG\b|MEDGULF|Buruj Cooperative Insurance|Buruj|Tawuniya|The Company for Cooperative Insurance|Walaa Cooperative|Walaa|Al ?Rajhi Takaful|Al ?Rajhi Bank|Malath|Salama|Allianz|AXA|Chubb|Wataniya|Arabian Shield|Saudi Re|Gulf General|United Cooperative Assurance|\bUCA\b|Saudi National Bank|\bSNB\b|Riyad Bank|\bSABB\b|Saudi Awwal Bank|Banque Saudi Fransi|Arab National Bank|Alinma Bank|Bank Al ?Jazira|Gulf International Bank|Emirates NBD|First Abu Dhabi Bank|Mashreq|HSBC|Standard Chartered|Citibank|Qatar National Bank|Bank Al ?Bilad|Saudi Investment Bank)/i;
 const INSURER_NAME: Record<string, string> = { gig: "Gulf Insurance Group", buruj: "Buruj Cooperative Insurance Company", "the company for cooperative insurance": "Tawuniya", snb: "Saudi National Bank", sabb: "Saudi Awwal Bank (SABB)", uca: "United Cooperative Assurance" };
 
 /** a type named in an exclusion ("Excluding … workmen's compensation and employer liability") is not the policy's type */
@@ -179,14 +179,18 @@ async function readOne(f: DocFile): Promise<DocRead | null> {
   }
   const scan = `${unsplit(text)}\n${plain}`;
   const head = text.slice(0, 6000);
-  const isTransmittal = ((/MAIL TYPE/i.test(head.slice(0, 1500)) && /\bTransmittal\b/i.test(head.slice(0, 1500))) || /TRANSMIT-\d{6}/i.test(f.name)) && !/POLICY\s*(NUMBER|NO)|CERTIFICATE OF INSURANCE|GUARANTEE/i.test(head.slice(0, 1500));
+  // any Aconex mail – a transmittal, a workflow transmittal, an "Insurance" mail, an acknowledgement, a letter – is the
+  // covering mail of the policy it sent, not a policy: it carries the mail's own dates, not the policy's validity
+  // (a mail printed with the policy pages after it – "Period of Insurance", "Limit of Indemnity" further on – stays a policy)
+  const aconexMail = /MAIL TYPE/i.test(head.slice(0, 1500)) && /MAIL NUMBER/i.test(head.slice(0, 1500)) && (/\bTransmittal\b/i.test(head.slice(0, 1500)) || !/PERIOD OF INSURANCE|LIMIT OF (?:INDEMNITY|LIABILITY)|SUM INSURED|GUARANTEE NO/i.test(text.slice(1500)));
+  const isTransmittal = (aconexMail || /TRANSMIT-\d{6}|-(?:ACK|INSC|WTRAN|GENCORR)-\d{6}/i.test(f.name)) && !/POLICY\s*(NUMBER|NO)|CERTIFICATE OF INSURANCE|GUARANTEE/i.test(head.slice(0, 1500));
   const aconex = [...new Set([...`${f.name}\n${text}`.matchAll(/\b([A-Z]{2,4}\d{5}-[A-Z]{3,8}-\d{6}|1TB\d{5}-\d{3}[A-Z]\d{2}-[A-Z]{2,4}-(?:INS|BND|BOND|INSC)-[A-Z]{2}-\d{4}(?:\[?C\d\]?)?)\b/g)].map((m) => m[1]))];
   const programmeCode = `${f.name}\n${text}`.match(/\b(1TB\d{5})\b/)?.[1] ?? "";
   const acc = `${f.name}\n${text}`.match(/\b(\d{3}[A-Z]\d{2})\b/)?.[1]?.toUpperCase() ?? "";
   const subject = text.match(/^(?:Re:|Subject:)\s*(.+)$/im)?.[1]?.trim() ?? text.match(/\n([^\n]{8,120}(?:INSURANCE|POLICY|BOND|GUARANTEE)[^\n]{0,60})\n/i)?.[1]?.trim() ?? "";
   const contractLine = text.match(/\bContract\s*\n\s*(\d{3}[A-Z]\d{2}[^\n]+)/)?.[1]?.trim() ?? "";
   const fromCompany = text.match(/\nFrom\s*\n\s*(?:Mrs?\.?\s+)?[^\n]+?\s+-\s+([^\n]+)/)?.[1]?.trim() ?? "";
-  if (isTransmittal) return { name: f.name, kind: "transmittal", text, programmeCode, acc, typeName: TYPES.find(([re]) => re.test(subject))?.[1] ?? "", policyNo: "", issuer: "", start: "", expiry: "", amount: null, premium: null, aconex, subject, contractLine, fromCompany, ocr, amendment: false, note: `Aconex transmittal${subject ? ` – ${subject}` : ""}` };
+  if (isTransmittal) return { name: f.name, kind: "transmittal", text, programmeCode, acc, typeName: TYPES.find(([re]) => re.test(subject))?.[1] ?? "", policyNo: "", issuer: "", start: "", expiry: "", amount: null, premium: null, aconex, subject, contractLine, fromCompany, ocr, amendment: false, note: `Aconex ${/\bTransmittal\b/i.test(head.slice(0, 1500)) ? "transmittal" : "mail (covering the policy)"}${subject ? ` – ${subject}` : ""}` };
 
   // the type: the schedule heading first, then anything in the document
   // the type: what the schedule labels it, its own heading, the first page, anything in the document, the file name
@@ -562,8 +566,15 @@ export async function addBondsFromDocuments(files: DocFile[], user: UserInfo, de
         const files = `(${pl.docs.map((d) => d.name).join("; ")})`;
         // the same document read again is noted once
         const seen = before.split("\n").some((l) => l.includes(files) && (!pl.record.expiry_date || String(pl.existing!.expiry_date ?? "") === String(pl.record.expiry_date)));
-        patch.comments = seen ? before : [before, `${pl.sameNumber ? "Updated from the policy's own document – " : "Replaced "}${String(pl.record.comments)}`].filter(Boolean).join("\n");
+        // what the documents did not give is noted only where the entry lacks it too
+        const lacking: [string, string][] = [["Policy / bond number", "policy_no"], ["Expiry date", "expiry_date"], ["Amount provided", "amount_provided"], ["Issued by (bank / insurer)", "issuer"]];
+        const stillMissing = pl.missing.filter((m) => { const k = lacking.find(([l]) => l === m)?.[1]; return !k || (!pl.existing![k] && !patch[k]); });
+        const note = [String(pl.record.comments).split("\n")[0], stillMissing.length ? `Not found in the documents – to be added by hand: ${stillMissing.join(", ")}.` : ""].filter(Boolean).join("\n");
+        patch.comments = seen ? before : [before, `${pl.sameNumber ? "Updated from the policy's own document – " : "Replaced "}${note}`].filter(Boolean).join("\n");
       }
+      // the same document again (nothing it carries differs from the entry) adds no second note
+      const same = (a: unknown, b: unknown) => String(a ?? "") === String(b ?? "") || (Number(a) && Number(a) === Number(b));
+      if (Object.keys(patch).every((k) => k === "comments" || same(patch[k], pl.existing![k]))) patch.comments = pl.existing.comments;
       const row = updateRecord(def, Number(pl.existing.id), patch, user, "import", { bypassRoles: true });
       attach(Number(row.id), pl.amendment ? "amendment" : "replacement document");
       result.entries.push(outcome("updated", row));
