@@ -22,7 +22,10 @@ import { allRegisters } from "../registers";
  * Runs once in the background, only while those two reports are the project's latest and open.
  */
 const FILES = ["AYC_Commercial_Report_No._49_Live.xlsx", "AYC_Commercial_Report_No._48_Final.xlsx"];
-const FLAG = "rebuilt_ayc_payment_logs_v1";
+// v2 (5 Oct 2026, afternoon): read again with the converter that keeps a settled contract at Schedule H's certified
+// (SAB, terminated: 170.6M, not its last IPA's 237.9M), gives a contract certified only in Schedule H its figure, and
+// reads Schedule H's short contractor codes as whole words ("SIC" is Soil Improvement Contracting, not "Music System")
+const FLAG = "rebuilt_ayc_payment_logs_v2";
 const SYSTEM = { id: 0, name: "system", email: "", role: "admin" } as UserInfo;
 
 /** A payment application filed under another project's contract (an import that resolved the PO across projects) goes to its own project's contract with that PO. */

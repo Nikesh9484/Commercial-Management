@@ -11,6 +11,7 @@ import {
   AlertTriangle,
   PiggyBank,
   ShieldCheck,
+  Umbrella,
   Receipt,
   TrendingUp,
   ArrowLeftRight,
@@ -74,7 +75,7 @@ export function Sidebar({
       ? pathname + "?" + search.toString() === href
       : href === "/"
         ? pathname === "/" || pathname === "/modules/executive-summary"
-        : pathname === href ||
+        : (pathname === href && !(href === "/modules/bonds-insurance" && search.get("type"))) ||
           (pathname.startsWith(href + "/") && href !== "/") ||
           (href === "/modules/cost-report" &&
             pathname === href &&
@@ -153,6 +154,12 @@ export function Sidebar({
                   "Minutes of Meeting",
                   FileText,
                 )}
+              </div>
+            )}
+            {m.slug === "bonds-insurance" && (
+              <div className="pl-4">
+                {link("/modules/bonds-insurance?type=bonds", "Bonds", ShieldCheck)}
+                {link("/modules/bonds-insurance?type=insurance", "Insurance", Umbrella)}
               </div>
             )}
             {m.slug === "invoices-payments" && (

@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronDown } from "lucide-react";
-import type { CashflowForecast, CashMonth } from "@/lib/cashflow/forecast";
+import type { CashflowForecast, CashMonth, CashContractor } from "@/lib/cashflow/forecast";
 import { monthLabel } from "@/lib/cashflow/months";
 import { formatMoney } from "@/lib/format";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -299,6 +299,10 @@ export function CashflowForecastView({ forecast: cf, periodId, periods }: { fore
         </div>
       </Section>
 
+      <Section title="Cash flow by contractor" note={`${(cf.contractors ?? []).length} contractors · SAR excl. VAT – click a contractor for its lines and months`}>
+        <ContractorTable cf={cf} />
+      </Section>
+
       <Section title="Yearly summary" note="SAR excl. VAT">
         <table className="table text-xs">
           <thead>
@@ -376,6 +380,105 @@ export function CashflowForecastView({ forecast: cf, periodId, periods }: { fore
           </table>
         </div>
       </Section>
+    </div>
+  );
+}
+
+/** Every contractor across its cost report lines: budget, committed, paid, still to pay and when – each opens to its months. */
+function ContractorTable({ cf }: { cf: CashflowForecast }) {
+  const [open, setOpen] = useState<string | null>(null);
+  const rows: CashContractor[] = cf.contractors ?? [];
+  const sum = (k: "budget" | "committed" | "actual" | "forecastRemaining" | "forecastFinal" | "variance" | "next12") => rows.reduce((t, c) => t + c[k], 0);
+  return (
+    <div className="overflow-auto">
+      <table className="table text-xs">
+        <thead>
+          <tr>
+            <th>Contractor</th>
+            <th className="text-right">Lines</th>
+            <th className="text-right">Approved budget</th>
+            <th className="text-right">Committed</th>
+            <th className="text-right">Paid (certified) to date</th>
+            <th className="text-right">Still to pay</th>
+            <th className="text-right">Next 12 months</th>
+            <th className="text-right">Forecast final</th>
+            <th className="text-right">Variance</th>
+            <th>Spending period</th>
+            <th>Peak month</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((c) => {
+            const isOpen = open === c.contractor;
+            const months = Object.keys(c.byMonth).filter((k) => Math.abs(c.byMonth[k]) >= 0.5).sort();
+            const ahead = months.filter((k) => k > cf.period.month);
+            return (
+              <Fragment key={c.contractor}>
+                <tr className="cursor-pointer hover:bg-slate-50" onClick={() => setOpen(isOpen ? null : c.contractor)}>
+                  <td className="font-medium">
+                    <ChevronDown size={12} className={`mr-1 inline transition ${isOpen ? "rotate-180" : ""}`} />
+                    {c.contractor}
+                  </td>
+                  <td className="text-right tnum">{c.lines}</td>
+                  <td className="text-right tnum">{money(c.budget)}</td>
+                  <td className="text-right tnum">{money(c.committed)}</td>
+                  <td className="text-right tnum">{money(c.actual)}</td>
+                  <td className="text-right tnum font-semibold">{money(c.forecastRemaining)}</td>
+                  <td className="text-right tnum">{money(c.next12)}</td>
+                  <td className="text-right tnum">{money(c.forecastFinal)}</td>
+                  <td className={`text-right tnum ${c.variance > 0.5 ? "text-red-700" : c.variance < -0.5 ? "text-emerald-700" : ""}`}>{money(c.variance)}</td>
+                  <td>{c.firstMonth ? `${monthLabel(c.firstMonth)} – ${c.lastMonth ? monthLabel(c.lastMonth) : ""}` : "–"}</td>
+                  <td>{c.peakMonth ? `${monthLabel(c.peakMonth)} (${formatMoney(c.peakAmount)})` : "–"}</td>
+                </tr>
+                {isOpen && (
+                  <tr>
+                    <td colSpan={11} className="bg-slate-50">
+                      <div className="space-y-2 p-2">
+                        <div className="text-[11px] text-muted">Lines: {c.codes.join(", ")}</div>
+                        {ahead.length > 0 && (
+                          <div>
+                            <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">Forecast payments after {monthLabel(cf.period.month)}</div>
+                            <div className="flex flex-wrap gap-1">
+                              {ahead.map((k) => (
+                                <span key={k} className="rounded border border-orange-200 bg-orange-50 px-2 py-0.5 text-[11px] tnum">
+                                  {monthLabel(k)}: {formatMoney(c.byMonth[k])}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        <div>
+                          <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">Certified by month (to {monthLabel(cf.period.month)})</div>
+                          <div className="flex flex-wrap gap-1">
+                            {months.filter((k) => k <= cf.period.month).map((k) => (
+                              <span key={k} className="rounded border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] tnum">
+                                {monthLabel(k)}: {formatMoney(c.byMonth[k])}
+                              </span>
+                            ))}
+                            {!months.some((k) => k <= cf.period.month) && <span className="text-[11px] text-muted">Nothing certified yet.</span>}
+                          </div>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            );
+          })}
+          <tr className="font-semibold">
+            <td>Total</td>
+            <td className="text-right tnum">{rows.reduce((t, c) => t + c.lines, 0)}</td>
+            <td className="text-right tnum">{money(sum("budget"))}</td>
+            <td className="text-right tnum">{money(sum("committed"))}</td>
+            <td className="text-right tnum">{money(sum("actual"))}</td>
+            <td className="text-right tnum">{money(sum("forecastRemaining"))}</td>
+            <td className="text-right tnum">{money(sum("next12"))}</td>
+            <td className="text-right tnum">{money(sum("forecastFinal"))}</td>
+            <td className="text-right tnum">{money(sum("variance"))}</td>
+            <td colSpan={2} />
+          </tr>
+        </tbody>
+      </table>
     </div>
   );
 }

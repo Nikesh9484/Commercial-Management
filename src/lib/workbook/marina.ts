@@ -203,6 +203,8 @@ interface Line {
   baseline: number;
   transfers: number;
   note: string;
+  /** Schedule B's anticipated final account for the line (column J), when the sheet has the column */
+  afa?: number | null;
 }
 
 export function convertMarinaReport(sheets: Sheet[]): ConversionResult {
@@ -245,6 +247,8 @@ export function convertMarinaReport(sheets: Sheet[]): ConversionResult {
     const hdr = findHeaderRow(B, "code", "package", "approved baseline budget") ?? 12;
     const seen = new Map<string, number>();
     const SKIP = new Set(["PS", "CN - EW", "CN - MW", "CC", "FF&E & OS&E", "98", "MS.98 + CM.98", "CN.98", "PS.98", asset]);
+    // the anticipated final account column, found by its heading (the template has moved columns before)
+    const afaCol = (B.rows.get(hdr) ?? []).findIndex((c) => /ANTICIPATED\s+FINAL\s+ACCOUNT/i.test(String(c ?? "")));
     let inEarlyWorks = false;
     for (const [r, v] of rows(B)) {
       if (r <= hdr) continue;
@@ -282,6 +286,7 @@ export function convertMarinaReport(sheets: Sheet[]): ConversionResult {
         baseline,
         transfers,
         note: hold ? "Budget hold – remaining budget not yet allocated to a contract" : ucode !== code ? `Excel code ${code} (shared with other lines)` : "",
+        afa: afaCol > 0 ? money(v, afaCol) : null,
       };
       lines.push(line);
       // the contract code in the line code, whatever the prefix: CN.031C10.00, PS.003D01, FFEOSE.003F06, CN.003C328
@@ -385,7 +390,7 @@ export function convertMarinaReport(sheets: Sheet[]): ConversionResult {
     fragBySheet.set(s.name, checkedTitleFrag(titleFrag, titleBySheet.get(s.name) ?? "") || findFrag(layout === "A" ? [4, 23] : [4, 20]));
     engFragBySheet.set(s.name, findFrag(layout === "A" ? [13] : [10]));
   }
-  interface Contract { sr: number; pr: string; po: string; acc: string; contractor: string; scope: string; status: string; completion: string | null; eot: number; original: number; faAdj: number; line: string; p: Params | null; note: string; certified?: number | null }
+  interface Contract { sr: number; pr: string; po: string; acc: string; contractor: string; scope: string; status: string; completion: string | null; eot: number; original: number; faAdj: number; line: string; p: Params | null; note: string; certified?: number | null; applied?: number | null }
   /**
    * The cost line of a contract whose code has no line of its own: Schedule B can carry it under another
    * contract's code ("CN.003C13-3 NSCC - Triple Bay Piling (AYC only) 2220032", "CN.003C34-2 ARMETAL -
@@ -433,6 +438,7 @@ export function convertMarinaReport(sheets: Sheet[]): ConversionResult {
         original: money(v, 12) ?? 0, faAdj: money(v, 15) ?? 0, line, p: sheetName ? paramsBySheet.get(sheetName)! : null,
         note: money(v, 18) !== null ? `Excel Schedule H: applied ${money(v, 18)?.toLocaleString("en")}, certified ${money(v, 19)?.toLocaleString("en")}, paid ${money(v, 20)?.toLocaleString("en")}` : "",
         certified: money(v, 19),
+        applied: money(v, 18),
       });
     }
   }
@@ -594,6 +600,13 @@ export function convertMarinaReport(sheets: Sheet[]): ConversionResult {
       if (before ?? after) (entries[i] as IpcEntry & { undated?: boolean }).undated = true;
       entries[i].appDate = before ?? after ?? null;
     }
+    // A contract settled below what its IPC sheet last certified (SAB, terminated: the cash recovered and the payments
+    // made on its behalf taken off – Aconex 003C03-ADJ-0001): certified to date cannot exceed the contract's whole
+    // anticipated final account, so when the sheet's last certificate does and Schedule H gives a certified figure
+    // within it, Schedule H's figure is the contract's certified to date – kept as one adjustment at the period end.
+    const lastCert = [...entries].reverse().find((e) => e.cumCert !== null)?.cumCert ?? null;
+    const afa = lines.find((l) => l.code === c.line)?.afa ?? null;
+    const settled = cert !== null && lastCert !== null && afa !== null && afa > 0 && lastCert > afa + 1 && cert <= afa + 1 && cert < lastCert - 1;
     const seenApp = new Map<string, number>();
     for (const e of entries) {
       let appNo = e.appNo;
@@ -604,6 +617,20 @@ export function convertMarinaReport(sheets: Sheet[]): ConversionResult {
       const undated = (e as IpcEntry & { undated?: boolean }).undated;
       ipcRows.push([c.po, e.sr, appNo, e.month, e.aconex, e.appDate ?? PERIOD_END, e.claimed, e.ipcNo, e.ipcRef, e.ipcDate, e.cumCert, e.invRef, e.invDate, e.paid, [undated ? "Application date missing in Excel – placed with the application beside it" : e.appDate ? "" : "Application date missing in Excel", e.note ?? ""].filter(Boolean).join(" | ")]);
     }
+    if (settled) {
+      const last = [...entries].reverse().find((e) => e.cumCert !== null)!;
+      const claimed = [...entries].reverse().find((e) => e.claimed !== null)?.claimed ?? cert;
+      ipcRows.push([c.po, Number(entries.at(-1)?.sr ?? 0) + 1, "Adjustment to Schedule H", "", "", PERIOD_END, claimed, "", "", PERIOD_END, cert, "", "", null, `Certified to date per Schedule H (${cert!.toLocaleString("en", { minimumFractionDigits: 2 })}): the IPC sheet's last certificate (${last.appNo}, ${lastCert!.toLocaleString("en", { minimumFractionDigits: 2 })}) is above the contract's anticipated final account (${afa!.toLocaleString("en", { minimumFractionDigits: 2 })}) – the contract was settled below it`]);
+      notes.push(`IPC sheet "${s.name.trim()}" (${c.contractor}): the last certificate ${last.appNo} (${lastCert!.toLocaleString("en", { minimumFractionDigits: 2 })}) is above the contract's anticipated final account (${afa!.toLocaleString("en", { minimumFractionDigits: 2 })}); certified to date follows Schedule H's ${cert!.toLocaleString("en", { minimumFractionDigits: 2 })}, kept as an adjustment at the period end.`);
+    }
+  }
+  // a contract the report certifies in Schedule H but carries no IPC sheet for (a fee paid in one go – the Ministry of
+  // Municipality's permit fee): Schedule H's certified to date is its one entry, so it is not read as nothing certified
+  const logged = new Set(ipcRows.map((r) => String(r[0])));
+  for (const c of contracts) {
+    if (logged.has(c.po) || !c.certified || Math.abs(c.certified) < 1) continue;
+    ipcRows.push([c.po, 1, "Certified to date per Schedule H", "", "", PERIOD_END, c.applied && Math.abs(c.applied) >= Math.abs(c.certified) ? c.applied : c.certified, "", "", PERIOD_END, c.certified, "", "", null, "Schedule H certifies this contract but the report carries no IPC sheet for it – its certified to date is Schedule H's"]);
+    notes.push(`Contract ${c.po} (${c.contractor}): no IPC sheet – certified to date ${c.certified.toLocaleString("en", { minimumFractionDigits: 2 })} taken from Schedule H.`);
   }
   out.push({
     name: "IPC Log",

@@ -55,6 +55,8 @@ export interface AconexLine {
   worst: number;
   /** which figures differ, for the note column */
   differs: AconexMeasureKey[];
+  /** why a figure differs, in words, where the registers tell (certified to date: which certificate each side is at) */
+  why?: Partial<Record<AconexMeasureKey, string>>;
 }
 
 export interface AconexReconciliation {
@@ -201,9 +203,68 @@ export function buildAconexReconciliation(data: ReportData): AconexReconciliatio
       }),
     );
   }
+  // FF&E bought through a procurement agent: Aconex books every purchase on the agent's contract (ADL – FFE & OSE
+  // Procurement Agent, FFEOSE.003F06), the report keeps the purchases on budget lines of their own without a contract
+  // (Loose FF&E Items, OS&E Items). Such a line – same section, no contract, no Aconex row – is compared with the
+  // section's procurement agent, when the section has exactly one.
+  const withContract = new Set((data.registers.contracts?.rows ?? []).map((c) => Number(c.cost_line_id)).filter(Boolean));
+  const agents = lines.filter((x) => x.status === "matched" && x.rowType !== "Budget hold" && /procurement\s+agent/i.test(rows.find((r) => String(r.code ?? "") === x.aconexCode)?.name as string ?? ""));
+  const boughtThrough = new Map<AconexLine, string[]>();
+  for (const l of data.costReport.lines) {
+    if (usedLine.has(l.id) || l.is_budget_hold || withContract.has(l.id) || isDirectPaymentLine(l.code, l.name)) continue;
+    const sec = contractKey(l.code)?.section;
+    const mine = agents.filter((x) => sec && contractKey(x.aconexCode)?.section === sec);
+    if (mine.length !== 1) continue;
+    const agent = mine[0];
+    const add = dashOf(l);
+    for (const k of Object.keys(agent.dashboard) as AconexMeasureKey[]) if (add[k] !== null) agent.dashboard[k] = r2((agent.dashboard[k] ?? 0) + (add[k] ?? 0));
+    const n = (Number(/\(\+(\d+) lines\)$/.exec(agent.code)?.[1] ?? 0) || 0) + 1;
+    agent.code = `${agent.code.replace(/ \(\+\d+ lines\)$/, "")} (+${n} lines)`;
+    const bought = [...(boughtThrough.get(agent) ?? []), `${l.code} ${l.name}`];
+    boughtThrough.set(agent, bought);
+    agent.name = `${agent.name.replace(/ – with the FF&E bought through it: .*$/, "")} – with the FF&E bought through it: ${bought.join("; ")}`;
+    agent.differs = [];
+    finish(agent);
+    usedLine.add(l.id);
+  }
   for (const l of data.costReport.lines) {
     if (usedLine.has(l.id)) continue;
     lines.push(finish({ status: "dashboard_only", code: l.code, aconexCode: "", name: l.name, contractor: l.contractor, category: l.category, rowType: l.is_budget_hold ? "Budget hold" : "Contract", aconex: blankMeasures(), dashboard: dashOf(l), diff: blankMeasures(), worst: 0, differs: [] }));
+  }
+  // Certified to date: the certificate on the contract's payment log that Aconex's incurred to date matches, against
+  // the log's latest – "Aconex is at IPA 16; the log has 4 later certificates" – or the adjustment the log carries
+  const apps = (data.registers.payment_applications?.rows ?? []) as RecordRow[];
+  const contractsOf = new Map<number, number[]>();
+  for (const c of (data.registers.contracts?.rows ?? []) as RecordRow[]) if (c.cost_line_id) contractsOf.set(Number(c.cost_line_id), [...(contractsOf.get(Number(c.cost_line_id)) ?? []), Number(c.id)]);
+  const fm = (x: number) => x.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const dateOf = (a: RecordRow) => String(a.application_date ?? a.ipc_date ?? "");
+  for (const line of lines) {
+    if (line.status !== "matched" || line.rowType === "Budget hold" || Math.abs(line.diff.incurred ?? 0) < TOLERANCE) continue;
+    const base = line.code.replace(/ \(\+\d+ lines\)$/, "");
+    const l = data.costReport.lines.find((x) => x.code === base);
+    const ids = l ? (contractsOf.get(l.id) ?? []) : [];
+    if (ids.length !== 1) continue;
+    // a PO shared across several cost lines is certified as one contract and split by share – no single certificate tells
+    const contract = ((data.registers.contracts?.rows ?? []) as RecordRow[]).find((c) => Number(c.id) === ids[0]);
+    if (/One PO across \d+ cost lines/.test(String(contract?.notes ?? ""))) continue;
+    const log = apps.filter((a) => Number(a.contract_id) === ids[0] && a.cumulative_certified !== null && a.cumulative_certified !== undefined).sort((a, b) => dateOf(a).localeCompare(dateOf(b)) || Number(a.id) - Number(b.id));
+    if (!log.length) continue;
+    const last = log[log.length - 1];
+    const ac = line.aconex.incurred ?? 0;
+    const name = (a: RecordRow) => `${String(a.application_no ?? a.ipc_no ?? "certificate")}${dateOf(a) ? ` of ${dateOf(a).slice(0, 10)}` : ""}`;
+    const at = log.findIndex((a) => Math.abs(n(a.cumulative_certified) - ac) < 1);
+    let why: string;
+    if (at >= 0 && at < log.length - 1) why = `Aconex is at ${name(log[at])} (${fm(ac)}); the payment log has ${log.length - 1 - at} later certificate(s), the latest ${name(last)} (${fm(n(last.cumulative_certified))}) – Aconex not yet updated`;
+    else if (/schedule h/i.test(String(last.application_no ?? ""))) why = `${String(last.comments ?? "Certified to date per Schedule H")}; Aconex incurred to date ${fm(ac)}`;
+    else if (ac > n(last.cumulative_certified)) why = `Aconex (${fm(ac)}) is above the payment log's latest certificate ${name(last)} (${fm(n(last.cumulative_certified))}) – a certificate Aconex holds that the report's IPC sheet does not, or payments Aconex books on this contract`;
+    else {
+      const below = log.map((a, i) => ({ a, i })).filter((x) => n(x.a.cumulative_certified) <= ac).pop();
+      why =
+        below && below.i < log.length - 1
+          ? `Aconex's ${fm(ac)} lies between ${name(below.a)} (${fm(n(below.a.cumulative_certified))}) and ${name(log[below.i + 1])} (${fm(n(log[below.i + 1].cumulative_certified))}) – Aconex is behind the payment log, whose latest is ${name(last)} (${fm(n(last.cumulative_certified))})`
+          : `the payment log's latest certificate is ${name(last)} (${fm(n(last.cumulative_certified))}); Aconex's ${fm(ac)} matches none of its certificates`;
+    }
+    line.why = { ...(line.why ?? {}), incurred: why };
   }
   const zero = () => ({ budget: 0, commitments: 0, dvo: 0, pvo: 0, hold: 0, ew: 0, eac: 0, eac_rsg: 0, incurred: 0 });
   // The comparison is only meaningful over the lines both systems hold: an Aconex row with no
@@ -263,6 +324,8 @@ export interface VarianceSource {
   diff: number;
   /** the Aconex rows behind the line, when several point at one cost report line */
   aconexRows: string[];
+  /** why it differs, where the registers tell */
+  why?: string;
 }
 
 /**
@@ -277,7 +340,7 @@ export function varianceSources(rec: AconexReconciliation, key: AconexMeasureKey
     if (l.status !== "matched" || !counts(l.rowType)) continue;
     let g = groups.get(l.code);
     if (!g) {
-      g = { code: l.code, name: l.name, contractor: l.contractor, rowType: l.rowType, aconex: 0, dashboard: l.dashboard[key] ?? 0, diff: 0, aconexRows: [] };
+      g = { code: l.code, name: l.name, contractor: l.contractor, rowType: l.rowType, aconex: 0, dashboard: l.dashboard[key] ?? 0, diff: 0, aconexRows: [], why: l.why?.[key] };
       groups.set(l.code, g);
     }
     g.aconex = r2(g.aconex + (l.aconex[key] ?? 0));

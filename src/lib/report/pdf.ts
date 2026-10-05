@@ -2651,6 +2651,29 @@ function cashflowForecastReport(ctx: Ctx) {
     { zebra: true, totalRow: { category: "Total", lines: String(cf.packages.reduce((t, p) => t + p.lines, 0)), budget: formatMoney(s.budget), committed: formatMoney(s.committed), actual: formatMoney(s.actual), forecastRemaining: formatMoney(s.forecastRemaining), forecastFinal: formatMoney(s.forecastFinal), variance: formatMoney(s.variance), window: "", peak: "" } },
   );
 
+  // 3b. by contractor
+  if (cf.contractors.length) {
+    subheading(ctx, "3b. Cash flow by contractor (SAR excl. VAT)", "Each contractor across all its cost report lines; still to pay is the forecast after the report month.");
+    const sumOf = (k: "budget" | "committed" | "actual" | "forecastRemaining" | "next12" | "forecastFinal" | "variance") => formatMoney(cf.contractors.reduce((t, c) => t + c[k], 0));
+    table(
+      ctx,
+      [
+        { key: "contractor", label: "Contractor", width: 2.2 },
+        { key: "lines", label: "Lines", width: 0.45, align: "right" },
+        { key: "budget", label: "Approved budget", width: 1.05, align: "right", format: money },
+        { key: "committed", label: "Committed", width: 1.05, align: "right", format: money },
+        { key: "actual", label: "Paid to date", width: 1.05, align: "right", format: money },
+        { key: "forecastRemaining", label: "Still to pay", width: 1.05, align: "right", format: money },
+        { key: "next12", label: "Next 12 months", width: 1.05, align: "right", format: money },
+        { key: "forecastFinal", label: "Forecast final", width: 1.05, align: "right", format: money },
+        { key: "variance", label: "Variance", width: 0.95, align: "right", format: money },
+        { key: "window", label: "Spending period", width: 1.2 },
+      ],
+      cf.contractors.map((c) => ({ ...c, window: c.firstMonth ? `${monthLabel(c.firstMonth)} – ${c.lastMonth ? monthLabel(c.lastMonth) : ""}` : "–" })) as unknown as Record<string, unknown>[],
+      { zebra: true, totalRow: { contractor: "Total", lines: String(cf.contractors.reduce((t, c) => t + c.lines, 0)), budget: sumOf("budget"), committed: sumOf("committed"), actual: sumOf("actual"), forecastRemaining: sumOf("forecastRemaining"), next12: sumOf("next12"), forecastFinal: sumOf("forecastFinal"), variance: sumOf("variance"), window: "" } },
+    );
+  }
+
   // 4. yearly
   subheading(ctx, "4. Yearly summary (SAR excl. VAT)");
   table(

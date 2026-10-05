@@ -1392,6 +1392,33 @@ export function cashflowForecastSheets(wb: ExcelJS.Workbook, d: ReportData) {
   for (let c = 3; c <= 10 + monthKeys.length; c++) if (c !== 9 && c !== 10) pt.getCell(c).numFmt = MONEY_FMT;
   totalRow(pt);
 
+  // by contractor: each contractor across its lines, totals as formulas
+  const wc = wb.addWorksheet("Cash Flow by Contractor");
+  [40, 8, 20, 20, 20, 20, 20, 20, 18, 26, 26].forEach((w, i) => (wc.getColumn(i + 1).width = w));
+  titleBlock(wc, `3b. Cash flow by contractor – ${cf.programme.name} – ${cf.period.label}`, "Each contractor across all its cost report lines: paid (certified) to the report month, then forecast · SAR excl. VAT", 11);
+  header(wc.addRow(["Contractor", "Lines", "Approved budget", "Committed", "Paid (certified) to date", "Still to pay", "Next 12 months", "Forecast final", "Variance", "Spending period", "Peak month", ...cf.months.map((m) => m.label)]));
+  const cFirst = wc.rowCount + 1;
+  for (const c of cf.contractors) {
+    const r = wc.addRow([c.contractor, c.lines, c.budget, c.committed, c.actual, c.forecastRemaining, c.next12, c.forecastFinal, c.variance, c.firstMonth ? `${monthLabel(c.firstMonth)} – ${c.lastMonth ? monthLabel(c.lastMonth) : ""}` : "–", c.peakMonth ? `${monthLabel(c.peakMonth)} (${formatMoney(c.peakAmount)})` : "–", ...monthKeys.map((k) => c.byMonth[k] ?? 0)]);
+    for (let col = 3; col <= 9; col++) r.getCell(col).numFmt = MONEY_FMT;
+    for (let col = 12; col <= 11 + monthKeys.length; col++) {
+      r.getCell(col).numFmt = MONEY_FMT;
+      wc.getColumn(col).width = 14;
+    }
+  }
+  const cLast = wc.rowCount;
+  if (cf.contractors.length) {
+    const colName = (n: number) => wc.getColumn(n).letter;
+    const sumCols = [2, 3, 4, 5, 6, 7, 8, 9, ...monthKeys.map((_, i) => 12 + i)];
+    const ct = wc.addRow(["Total"]);
+    for (const col of sumCols) {
+      ct.getCell(col).value = { formula: `SUM(${colName(col)}${cFirst}:${colName(col)}${cLast})` };
+      if (col !== 2) ct.getCell(col).numFmt = MONEY_FMT;
+    }
+    totalRow(ct);
+  }
+  wc.views = [{ state: "frozen", xSplit: 1, ySplit: cFirst - 1 }];
+
   const wy = wb.addWorksheet("Yearly Summary");
   [10, 24, 30, 24, 24].forEach((w, i) => (wy.getColumn(i + 1).width = w));
   titleBlock(wy, `4. Yearly summary – ${cf.programme.name} – ${cf.period.label}`, "Annual budget = planned S-curve for the year · Annual forecast = actual + forecast · SAR excl. VAT", 5);

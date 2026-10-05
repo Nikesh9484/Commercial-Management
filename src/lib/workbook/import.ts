@@ -409,7 +409,15 @@ async function importWorkbookRun(req: ImportRequest, user: UserInfo, progress: I
               opts.find((o) => o.label.toLowerCase().startsWith(want + " · ")) ??
               // the same name typed another way: "Plant and Equipment" for "Plant & Equipment", curly quotes, case
               opts.find((o) => sameLabel(o.label, label)) ??
-              (want.length >= 3 ? opts.find((o) => o.label.toLowerCase().includes(want)) : undefined) ??
+              // a name inside a longer one, as whole words only: "SIC" is not "Mu-sic System"
+              (want.length >= 3 ? opts.find((o) => new RegExp(`(^|[^a-z0-9])${want.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z0-9]|$)`, "i").test(o.label)) : undefined) ??
+              // a short code standing for a company's initials ("SIC" – Soil Improvement Contracting Company), when one company fits
+              (target === "contractors" && /^[A-Z&]{2,5}$/.test(label)
+                ? (() => {
+                    const fits = opts.filter((o) => o.label.replace(/\(.*?\)/g, " ").split(/\s[-–]\s/)[0].split(/[\s.,&/]+/).filter((w) => w && !/^(company|co|ltd|llc|l\.l\.c|the|for|and|of|est|wll|w\.l\.l)$/i.test(w)).map((w) => w[0].toUpperCase()).join("") === label.replace(/&/g, ""));
+                    return fits.length === 1 ? fits[0] : undefined;
+                  })()
+                : undefined) ??
               // the same company under another spelling or a short name ("Alutec", "HKS Architects Limited"): never a second entry
               (target === "contractors" ? (() => { const m = matchContractor(label, opts.map((o) => ({ id: o.id, name: o.label }))); return m ? opts.find((o) => o.id === m.id) : undefined; })() : undefined);
             if (hit) {

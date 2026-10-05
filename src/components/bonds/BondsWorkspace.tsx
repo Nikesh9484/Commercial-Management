@@ -24,8 +24,8 @@ const num = (v: unknown) => (v === null || v === undefined || v === "" ? 0 : Num
  * filtered, and the register itself. The same filter is carried into the PDF and Excel reports, so a
  * download always matches what is on screen.
  */
-export function BondsWorkspace({ rows, isAdmin, hasPeriod, canUpload = false, duplicates = [], canMerge = false }: { rows: RecordRow[]; isAdmin: boolean; hasPeriod: boolean; canUpload?: boolean; duplicates?: DuplicateGroup[]; canMerge?: boolean }) {
-  const [filter, setFilter] = useState<BondsFilter>(NO_BONDS_FILTER);
+export function BondsWorkspace({ rows, isAdmin, hasPeriod, canUpload = false, duplicates = [], canMerge = false, initialCategory = "all" }: { rows: RecordRow[]; isAdmin: boolean; hasPeriod: boolean; canUpload?: boolean; duplicates?: DuplicateGroup[]; canMerge?: boolean; initialCategory?: BondsFilter["category"] }) {
+  const [filter, setFilter] = useState<BondsFilter>({ ...NO_BONDS_FILTER, category: initialCategory });
 
   const visible = useMemo(() => filterBonds(rows, filter), [rows, filter]);
   const summary = useMemo(() => getBondsSummary(visible), [visible]);

@@ -99,8 +99,9 @@ export function TotalsTable({ rec, detail }: { rec: AconexReconciliation; detail
                                 return (
                                   <Fragment key={l.code}>
                                     <tr className={`border-t border-line ${lineOpen ? "bg-sky-50/60" : ""}`}>
-                                      <td className="max-w-[24rem] truncate px-2 py-1" title={`${l.code} – ${l.name}`}>
+                                      <td className={`max-w-[24rem] px-2 py-1 ${l.why ? "" : "truncate"}`} title={`${l.code} – ${l.name}`}>
                                         <span className="font-mono text-[11px]">{l.code}</span> <span className="text-muted">{l.name}</span>
+                                        {l.why && <div className="whitespace-normal text-[11px] text-amber-800">{l.why}</div>}
                                       </td>
                                       <td className="max-w-[12rem] truncate px-2 py-1 text-muted">{l.contractor}</td>
                                       <td className="max-w-[14rem] truncate px-2 py-1 font-mono text-[11px] text-muted" title={l.aconexRows.join(", ")}>{l.aconexRows.join(", ")}</td>

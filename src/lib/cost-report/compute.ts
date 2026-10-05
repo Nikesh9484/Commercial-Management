@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 import { getDb } from "../db";
 import { getCostFeeds } from "./feeds";
+import { isDirectPaymentLine } from "../recovery/aconex-codes";
 import { snapshotRows } from "../view-mode";
 import { openStoredRegisters } from "./stored";
 import type { FeedStatus } from "./feeds-types";
@@ -129,7 +130,9 @@ function computeLines(src: Database.Database, programmeId: number, periodId: num
     const M = g(feeds.claims);
     const N = round2(I + J + K + L + M);
     const O = round2(N - G);
-    const P = g(feeds.certified);
+    // a direct payment (made by the Employer on a contractor's behalf) is paid when it is recorded and has no IPC
+    // of its own: certified to date is the amount, as the monthly report's Schedule B column K shows it
+    const P = r.is_budget_hold || g(feeds.certified) !== 0 || !isDirectPaymentLine(r.code, r.name) ? g(feeds.certified) : I;
     const Q = round2(N - P);
     const R = 0;
     const S = 0;

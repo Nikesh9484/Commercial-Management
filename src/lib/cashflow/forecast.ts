@@ -2,6 +2,7 @@ import type { ReportData } from "../report/data";
 import type { CostLineRow } from "../cost-report/columns";
 import type { RecordRow } from "../registers/types";
 import { formatMoney } from "../format";
+import { isDirectPaymentLine } from "../recovery/aconex-codes";
 import { addMonths, monthKey, monthLabel } from "./months";
 
 /**
@@ -72,6 +73,26 @@ export interface CashLine {
   start: string;
   end: string;
 }
+/** One contractor across all its cost report lines: what it was budgeted, committed, paid and is still to be paid, month by month. */
+export interface CashContractor {
+  contractor: string;
+  lines: number;
+  codes: string[];
+  budget: number;
+  committed: number;
+  actual: number;
+  forecastRemaining: number;
+  forecastFinal: number;
+  variance: number;
+  /** cash in the twelve months after the report month */
+  next12: number;
+  firstMonth: string | null;
+  lastMonth: string | null;
+  peakMonth: string | null;
+  peakAmount: number;
+  /** month → certified (to the report month) or forecast (after it) */
+  byMonth: Record<string, number>;
+}
 export interface CashflowForecast {
   programme: { name: string; code: string };
   period: { label: string; reportNo: number; end: string; month: string };
@@ -96,6 +117,7 @@ export interface CashflowForecast {
   packages: CashPackage[];
   years: CashYear[];
   lines: CashLine[];
+  contractors: CashContractor[];
   observations: string[];
   assumptions: string[];
 }
@@ -167,6 +189,7 @@ export function buildCashflowForecast(data: ReportData): CashflowForecast {
     return p;
   };
   const lines: CashLine[] = [];
+  const byContractor = new Map<string, CashContractor>();
   let residualNote = 0;
   let overCertified = 0;
   // the lines of one contract (CN.031C02, CN.031C02-2 … share the contract code) are forecast together:
@@ -262,7 +285,82 @@ export function buildCashflowForecast(data: ReportData): CashflowForecast {
     if (Math.abs(residual) >= 0.5) p.byMonth[reportMonth] = r2((p.byMonth[reportMonth] ?? 0) + residual);
     for (const [k, v] of slices) if (v) p.byMonth[k] = r2((p.byMonth[k] ?? 0) + v);
     for (const line of grp.lines) lines.push({ code: line.code, name: line.name, contractor: line.contractor, category, payer, budget: num(line.G), committed: num(line.I), actual: num(line.P), forecastFinal: num(line.N), start, end });
+    // the contractor: the one named on the contract's lines; budget holds and unlet lines go together
+    // by contractor, line by line: each line's own contractor (named on the line, else on its contract, else in the
+    // line's name – the Yacht Club's report names the contractor in the line); certificates go to the line their
+    // contract sits on, the forecast is shared across the group's lines by what each still has to pay
+    const lineWho = (l: CostLineRow) =>
+      (l.is_budget_hold ? "Budget holds (not yet let)" : "") ||
+      (isDirectPaymentLine(l.code, l.name) ? "Direct payments (on behalf of contractors)" : "") ||
+      String(l.contractor ?? "").trim() ||
+      mine.filter((c) => Number(c.cost_line_id) === l.id).map((c) => String(c.contractor_id__label ?? "").trim()).find(Boolean) ||
+      String(l.name ?? "").replace(/\s*-\s*\d{7}\s*$/, "").trim() ||
+      "No contractor named";
+    const toPay = grp.lines.map((l) => Math.max(0, num(l.N) - num(l.P)));
+    const toPayAll = toPay.reduce((t, v) => t + v, 0);
+    const leadIdx = grp.lines.indexOf(lead);
+    const shareOf = (i: number) => (toPayAll > 0 ? toPay[i] / toPayAll : i === leadIdx ? 1 : 0);
+    // each month's forecast split across the lines; the last line with a share takes the rounding, so the parts add up
+    const lastIdx = grp.lines.map((_, i) => i).filter((i) => shareOf(i) > 0).pop() ?? leadIdx;
+    const parts = grp.lines.map(() => slices.map(() => 0));
+    slices.forEach(([, v], j) => {
+      let given = 0;
+      grp.lines.forEach((_, i) => {
+        if (i === lastIdx) return;
+        parts[i][j] = r2(v * shareOf(i));
+        given = r2(given + parts[i][j]);
+      });
+      parts[lastIdx][j] = r2(v - given);
+    });
+    grp.lines.forEach((l, i) => {
+      const who = lineWho(l);
+      const cc = byContractor.get(who) ?? { contractor: who, lines: 0, codes: [], budget: 0, committed: 0, actual: 0, forecastRemaining: 0, forecastFinal: 0, variance: 0, next12: 0, firstMonth: null, lastMonth: null, peakMonth: null, peakAmount: 0, byMonth: {} };
+      cc.lines += 1;
+      cc.codes.push(l.code);
+      cc.budget = r2(cc.budget + num(l.G));
+      cc.committed = r2(cc.committed + num(l.I));
+      cc.forecastFinal = r2(cc.forecastFinal + num(l.N));
+      // paid: the certificates of the contracts on this line, month by month, the rest of the line's certified in the report month
+      const myIds = new Set(mine.filter((c) => Number(c.cost_line_id) === l.id).map((c) => Number(c.id)));
+      let logged = 0;
+      for (const a of lineApps) {
+        if (!myIds.has(Number(a.contract_id))) continue;
+        const d = String(a.ipc_date ?? "");
+        const v = num(a.net_certified);
+        if (!/^\d{4}-\d{2}/.test(d) || !v) continue;
+        const k = monthKey(d) > reportMonth ? reportMonth : monthKey(d);
+        cc.byMonth[k] = r2((cc.byMonth[k] ?? 0) + v);
+        logged = r2(logged + v);
+      }
+      // the group's certified that no line's own contract explains (the residual) stays with the lead line
+      const lineActual = grp.lines.length === 1 ? actual : num(l.P) + (i === leadIdx ? r2(actual - grp.actual) : 0);
+      cc.actual = r2(cc.actual + lineActual);
+      const rest = r2(lineActual - logged);
+      if (Math.abs(rest) >= 0.5) cc.byMonth[reportMonth] = r2((cc.byMonth[reportMonth] ?? 0) + rest);
+      let given = 0;
+      slices.forEach(([k], j) => {
+        const part = parts[i][j];
+        if (part) cc.byMonth[k] = r2((cc.byMonth[k] ?? 0) + part);
+        given = r2(given + part);
+      });
+      cc.forecastRemaining = r2(cc.forecastRemaining + given);
+      byContractor.set(who, cc);
+    });
   }
+  const in12 = addMonths(reportMonth, 12);
+  for (const c of byContractor.values()) {
+    c.variance = r2(c.forecastFinal - c.budget);
+    const keys = Object.keys(c.byMonth).filter((k) => Math.abs(c.byMonth[k]) >= 0.5).sort();
+    c.firstMonth = keys[0] ?? null;
+    c.lastMonth = keys[keys.length - 1] ?? null;
+    c.next12 = r2(keys.filter((k) => k > reportMonth && k <= in12).reduce((t, k) => t + c.byMonth[k], 0));
+    for (const k of keys) if (c.byMonth[k] > c.peakAmount) {
+      c.peakAmount = c.byMonth[k];
+      c.peakMonth = k;
+    }
+  }
+  // the largest still to pay first, then the largest paid
+  const contractorRows = [...byContractor.values()].sort((a, b) => b.forecastRemaining - a.forecastRemaining || b.actual - a.actual || a.contractor.localeCompare(b.contractor));
   if (overCertified) assumptions.push(`Contracts certified beyond their anticipated final account (SAR ${formatMoney(overCertified)} in all) carry no further forecast; the final account will settle them.`);
   if (residualNote) assumptions.push(`Where the IPC log does not carry the full certified-to-date of a line, the difference (SAR ${formatMoney(residualNote)} in all) is placed in the report month.`);
 
@@ -347,6 +445,7 @@ export function buildCashflowForecast(data: ReportData): CashflowForecast {
     packages: packageRows,
     years: [...years.values()].sort((a, b) => a.year - b.year),
     lines,
+    contractors: contractorRows,
     observations,
     assumptions,
   };

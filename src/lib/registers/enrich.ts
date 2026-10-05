@@ -181,7 +181,25 @@ function enrichChange(row: RecordRow) {
 
   // Current stage = the furthest stage with anything recorded (Funding counts when any funding amount is entered).
   let current = "Not started";
-  for (const s of CHANGE_STAGES) if (stageHasData(row, s.prefix)) current = s.label;
+  let at = -1;
+  CHANGE_STAGES.forEach((s, i) => {
+    if (stageHasData(row, s.prefix)) {
+      current = s.label;
+      at = i;
+    }
+  });
+  // a stage approved (an EI issued) with the next stage set to Pending is waiting on that next stage: VO and EI
+  // approved, DVO pending → the change is an open DVO, not an open VO; PVO approved, VO pending → an open VO
+  if (at >= 0) {
+    const label = (prefix: string) => String(row[`${prefix}_status_id__label`] ?? "").trim().toLowerCase();
+    const p = CHANGE_STAGES[at].prefix;
+    // only when nothing up to here is still pending (an EI issued while its VO is pending stays an open VO / EI)
+    const earlierPending = CHANGE_STAGES.slice(0, at + 1).some((s) => label(s.prefix) === "pending");
+    if (!earlierPending && (p === "ei" || ["approved", "review complete"].includes(label(p)))) {
+      const next = CHANGE_STAGES.slice(at + 1).find((s) => label(s.prefix) === "pending");
+      if (next) current = next.label;
+    }
+  }
   if (["funding_btr", "funding_pvo", "funding_dvo", "funding_po", "funding_pr", "funding_contingency"].some((k) => row[k] !== null && row[k] !== undefined)) current = "Funding";
   row.current_stage = current;
 
