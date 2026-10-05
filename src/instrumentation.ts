@@ -18,9 +18,12 @@ export async function register() {
     const { importAycReportsAtStart } = await import("./lib/repairs/ayc-reports");
     // then every project without cost-recovery rows yet is filled from the latest accommodation and customs trackers
     const { fillRecoveryTrackersAtStart } = await import("./lib/repairs/recovery-trackers");
+    // and the Aconex Cost exports shipped with this version (data-seed/aconex), each file once
+    const { importAconexSeedsAtStart } = await import("./lib/repairs/aconex-seed");
     setTimeout(() => {
       void importAycReportsAtStart()
         .then(() => fillRecoveryTrackersAtStart())
+        .then(() => importAconexSeedsAtStart())
         .catch((e) => console.error("[recovery] start-up fill failed:", e));
     }, 20_000);
     // the uploaded files beside the database: anything the disk lost comes back, anything never sent goes up
