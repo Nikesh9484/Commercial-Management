@@ -15,6 +15,8 @@ export interface SheetValues {
   truncated: boolean;
   /** row number -> 1-based column numbers whose cell is struck through (only rows that have any) */
   strikes?: Map<number, number[]>;
+  /** row number -> the fill colours (ARGB, "FF9AE6DD") of its first twelve cells (only rows that have any) */
+  fills?: Map<number, string[]>;
 }
 
 export const MAX_ROWS_PER_SHEET = 20000;
@@ -72,11 +74,12 @@ export async function readWorkbookValues(filePath: string, opts: ReadOptions = {
     const rl = readline.createInterface({ input: fs.createReadStream(outFile, { encoding: "utf8" }), crlfDelay: Infinity });
     for await (const line of rl) {
       if (!line) continue;
-      const v = JSON.parse(line) as { sheet?: string; end?: boolean; rowCount?: number; truncated?: boolean } | [number, unknown[], number[]?];
+      const v = JSON.parse(line) as { sheet?: string; end?: boolean; rowCount?: number; truncated?: boolean } | [number, unknown[], number[]?, string[]?];
       if (Array.isArray(v)) {
         if (!cur) continue;
         cur.rows.set(v[0], v[1]);
         if (v[2]?.length) (cur.strikes ??= new Map()).set(v[0], v[2]);
+        if (v[3]?.length) (cur.fills ??= new Map()).set(v[0], v[3]);
       } else if (v.sheet !== undefined) {
         cur = { name: v.sheet, rows: new Map(), rowCount: 0, truncated: false, strikes: new Map() };
         sheets.push(cur);

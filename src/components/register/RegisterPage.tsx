@@ -208,7 +208,8 @@ export function RegisterPage({
       try {
         if (files.length > 1) toast(`Uploading ${files.length} files…`);
         const names = await uploadBondDocuments(bondId, files);
-        toast(`${names.length} document${names.length === 1 ? "" : "s"} kept with the entry – open ${names.length === 1 ? "it" : "them"} from the Documents column.`);
+        const read = names.read ?? [];
+        toast(read.length ? read.join(" ") : `${names.length} document${names.length === 1 ? "" : "s"} kept with the entry – open ${names.length === 1 ? "it" : "them"} from the Documents column.`, read.some((m) => /not changed|could not be read/.test(m)) ? "error" : undefined);
         const loaded = await fetchRegister(registerKey);
         setData(loaded);
         onRows?.(loaded.rows);
@@ -747,7 +748,7 @@ ${lines.join("\n")}`)) return;
               </div>
               {open && rows.length > 0 && (
                 <div className="quick-scroll max-h-[40vh] overflow-auto border-t border-line">
-                  <table className="data compact w-full">
+                  <table className="data compact w-full" data-colfilter="own">
                     <thead>
                       {sectionBands(tableFields).some((b) => b.section) && (
                         <tr>
@@ -812,7 +813,7 @@ ${lines.join("\n")}`)) return;
               <input ref={rowFolderRef} type="file" multiple className="hidden" onChange={pickedForRow} {...({ webkitdirectory: "", directory: "" } as Record<string, string>)} />
             </>
           )}
-          <table className="data w-full">
+          <table className="data w-full" data-colfilter="own">
             <thead>
               {sectionBands(tableFields).some((b) => b.section) && (
                 <tr>

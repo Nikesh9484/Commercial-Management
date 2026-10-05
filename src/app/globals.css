@@ -384,3 +384,38 @@ html[data-ink="colour"] .text-slate-700, html[data-ink="colour"] .text-slate-600
 .no-scrollbar::-webkit-scrollbar {
   display: none;
 }
+
+/* the column filters every table carries (components/layout/TableFilters) */
+tr[data-cf-hidden] {
+  display: none;
+}
+.cf-btn {
+  display: inline-flex;
+  vertical-align: middle;
+  margin-left: 4px;
+  padding: 2px;
+  border-radius: 4px;
+  color: var(--muted);
+  opacity: 0.35;
+  transition: opacity 0.15s;
+}
+th:hover > .cf-btn,
+.cf-btn:focus-visible {
+  opacity: 1;
+}
+.cf-btn:hover {
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--text);
+}
+.cf-btn.cf-on {
+  opacity: 1;
+  color: var(--accent, #2563eb);
+}
+.cf-btn.cf-on svg {
+  fill: currentColor;
+}
+@media print {
+  .cf-btn {
+    display: none;
+  }
+}

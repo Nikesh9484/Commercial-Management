@@ -80,6 +80,8 @@ interface Line {
   transfers: number;
   awarded: number;
   ew: number;
+  /** SCHD B column K – certified to date */
+  certified: number;
   note: string;
 }
 
@@ -109,6 +111,14 @@ interface Params {
 }
 
 /* ------------------------------------------------------------------ conversion */
+
+/** a green fill ("FF9AE6DD", "FF92D050", "FFC6EFCE"): green the strongest channel, clearly above red and not below blue */
+export function isGreenFill(argb: string): boolean {
+  const m = /^(?:[0-9A-F]{2})?([0-9A-F]{2})([0-9A-F]{2})([0-9A-F]{2})$/i.exec(argb.trim());
+  if (!m) return false;
+  const [r, g, b] = [m[1], m[2], m[3]].map((x) => parseInt(x, 16));
+  return g >= 140 && g > r + 30 && g + 12 >= b;
+}
 
 export function convertVbhReport(sheets: Sheet[]): ConversionResult {
   const notes: string[] = [];
@@ -263,6 +273,7 @@ export function convertVbhReport(sheets: Sheet[]): ConversionResult {
         transfers: money(v, 4) ?? 0,
         awarded,
         ew: money(v, 13) ?? 0,
+        certified: money(v, 19) ?? 0,
         note: hold ? "Budget hold – remaining budget not yet allocated to a contract" : [d?.po && /^\d{6,}$/.test(d.po) ? `PO ${d.po}` : "", ucode !== code ? `Excel code ${code} (shared with other lines)` : ""].filter(Boolean).join(" | "),
       };
       lines.push(line);
@@ -341,7 +352,15 @@ export function convertVbhReport(sheets: Sheet[]): ConversionResult {
   const contractByFrag = new Map<string, Contract>();
   for (const c of contracts) for (const f of c.frags) contractByFrag.set(f, c);
 
-  // ---- 4. IPC logs (the "Schedule H …" sheets, one per contract)
+  // ---- 4. IPC logs (the "Schedule H …" sheets)
+  // A sheet is one contract's IPC log, or several blocks each closed by a TOTAL row: one per service or
+  // call-off order under a PO, one per PO of the same consultant (ACES, DAH, Euro Consult), or one per asset a
+  // PO serves across projects with a whole-PO summary on top (Foster + Partners: VBH, VBBR, MLH, Luxury
+  // Village District). Each block goes to the contract it is for; a summary, or another project's asset, is
+  // not imported. Certified to date is built from each month's gross certified, the way the sheet's TOTAL
+  // row, SCHD B and Aconex count it – the sheet's own cumulative column is followed only where that month's
+  // claimed amount corroborates it (a gross copied from the row above). An advance payment is not certified
+  // work: Aconex and SCHD B leave it out, and it is recovered through the deductions on later certificates.
   const ipcSheets = sheets.filter((s) => /^schedule h\s*[-a-z0-9+]/i.test(s.name.trim()) && norm(s.name) !== "schedule h");
   const contractForSheet = (s: Sheet, hdr: number): Contract | undefined => {
     const heads: string[] = [];
@@ -363,15 +382,43 @@ export function convertVbhReport(sheets: Sheet[]): ConversionResult {
     scored.sort((a, b) => b.score - a.score || b.c.original - a.c.original);
     return scored[0]?.c;
   };
+  const r2v = (x: number) => Math.round(x * 100) / 100;
+  /** the project's own name in a block heading ("… ( PO 22210044 ) VBH - Hotel") */
+  const OWN_ASSET = /\bVBH\b|village\s+boutique\s+hotel/i;
+  const ADVANCE = /\badvance\b|\badv\.?\s*pay/i;
+  interface RawEntry {
+    order: number;
+    block: number;
+    sr: number;
+    appNo: string;
+    month: unknown;
+    aconex: string;
+    appDate: string | null;
+    localClaimed: number | null;
+    localCert: number | null;
+    ipcNo: string;
+    ipcRef: string;
+    ipcDate: string | null;
+    invRef: string;
+    invDate: string | null;
+    paidDate: string | null;
+    advance: number | null;
+  }
+  interface Block {
+    title: string;
+    entries: RawEntry[];
+    certified: number;
+    contract?: Contract;
+    skip: string;
+  }
   const ipcRows: unknown[][] = [];
+  const perContract = new Map<Contract, { entries: RawEntry[]; blocks: Set<number>; titles: Map<number, string>; sheets: Set<string> }>();
+  let order = 0;
+  let blockNo = 0;
   for (const s of ipcSheets) {
     const hdr = findHeaderRow(s, "sr nr", "payment applicat");
     if (!hdr) continue;
-    const c = contractForSheet(s, hdr);
-    if (!c) {
-      notes.push(`IPC sheet "${s.name.trim()}" skipped – could not tell which contract it belongs to.`);
-      continue;
-    }
+    const sheetContract = contractForSheet(s, hdr);
     const h = s.rows.get(hdr) ?? [];
     const A = txt(h, 12).toUpperCase().startsWith("IPC");
     const r12 = s.rows.get(hdr + 1) ?? [];
@@ -383,19 +430,7 @@ export function convertVbhReport(sheets: Sheet[]): ConversionResult {
     };
     const vatCell = cell(r12, A ? 29 : 26);
     const p: Params = { hdr, adv: A ? pct(cell(r12, 8)) : 0, ret: A ? pct(cell(r12, 9)) : 0, vat: isNum(vatCell) ? Math.round(vatCell * 100) : 15, ipcDays: days(cell(r13, A ? 15 : 12), 28), payDays: days(cell(r13, A ? 26 : 23), 30) };
-    if (!c.p) c.p = p;
     const col = { ipcNo: A ? 12 : 9, ipcRef: A ? 13 : 10, ipcDate: A ? 14 : 11, cumCert: A ? 17 : 14, grossCert: A ? 18 : 15, invRef: A ? 23 : 20, invDate: A ? 24 : 21, paid: A ? 25 : 22 };
-    // A sheet may hold several blocks (one per service / call-off order under the same PO), each
-    // ending in a TOTAL row. The blocks do not necessarily run one after another – their application
-    // dates can interleave – so the contract's cumulative claimed / certified at any date is the SUM
-    // of every block's own cumulative-to-date value, worked out chronologically across all blocks,
-    // rather than the current block's figure stacked on the previous block's final total (which goes
-    // negative whenever a later block in the sheet actually falls earlier in time).
-    let prevCum = 0;
-    let n = 0;
-    let block = 0;
-    let blockTitle = "";
-    const seenApp = new Map<string, number>();
     // "1", "IPC No 3", "IPA 12" – the serial in the first column, however it is written
     const serial = (v: Row): number | null => {
       const x = cell(v, 1);
@@ -403,60 +438,153 @@ export function convertVbhReport(sheets: Sheet[]): ConversionResult {
       const m = /(\d+)/.exec(txt(v, 1));
       return m ? Number(m[1]) : null;
     };
-    interface RawEntry {
-      order: number;
-      block: number;
-      sr: number;
-      appNo: string;
-      month: unknown;
-      aconex: string;
-      appDate: string | null;
-      localClaimed: number | null;
-      localCert: number | null;
-      ipcNo: string;
-      ipcRef: string;
-      ipcDate: string | null;
-      invRef: string;
-      invDate: string | null;
-      paidDate: string | null;
+    // the heading above the first block: the contractor / PO line, not the STAGE row
+    let top = "";
+    for (const [r, v] of rows(s)) {
+      if (r >= hdr) break;
+      const t = txt(v, 1);
+      if (r >= hdr - 4 && t && !/^stage\b/i.test(t)) top = t;
     }
-    const entries: RawEntry[] = [];
-    let order = 0;
+    const newBlock = (title: string): Block => ({ title, entries: [], certified: 0, skip: "" });
+    const blocks: Block[] = [newBlock(top)];
+    const run = new Map<Block, { cert: number; claimed: number }>();
     for (const [r, v] of rows(s)) {
       if (r <= hdr + 2) continue;
-      if (txt(v, 1).toUpperCase().startsWith("TOTAL")) {
-        prevCum = 0;
-        n = 0;
-        block++;
+      const t1 = txt(v, 1);
+      if (t1.toUpperCase().startsWith("TOTAL")) {
+        blocks.push(newBlock(""));
         continue;
       }
+      const b = blocks[blocks.length - 1];
       const sr = serial(v);
       if (sr === null || !isNum(cell(v, 6))) {
-        // a heading row between blocks names the next service / call-off order
-        if (block > 0 && txt(v, 1) && !txt(v, 2) && !isNum(cell(v, 6))) blockTitle = txt(v, 1).slice(0, 40);
+        // the heading of the next block: its contractor / PO / asset line (not the STAGE, SR or units rows)
+        if (t1 && !txt(v, 2) && !isNum(cell(v, 6)) && !/^(stage\b|sr\b|total)/i.test(t1) && !b.entries.length) b.title = t1;
         continue;
       }
-      n++;
-      let cumCert = money(v, col.cumCert);
-      const gross = money(v, col.grossCert);
-      if (cumCert !== null && gross !== null && n > 1 && Math.abs(cumCert - gross) < 0.5 && prevCum > 0 && cumCert < prevCum) cumCert = Math.round((prevCum + gross) * 100) / 100;
-      if (cumCert !== null) prevCum = cumCert;
-      const claimed = money(v, 6);
-      let appNo = txt(v, 2) || txt(v, 1) || `IPA ${sr}`;
-      if (block > 0 && blockTitle && !appNo.toLowerCase().includes(blockTitle.toLowerCase().slice(0, 8))) appNo = `${appNo} – ${blockTitle}`;
-      const k = appNo.toLowerCase();
+      const st = run.get(b) ?? { cert: 0, claimed: 0 };
+      run.set(b, st);
+      const appNo = txt(v, 2) || txt(v, 1) || `IPA ${sr}`;
+      const cumCert = money(v, col.cumCert);
+      const grossCert = money(v, col.grossCert);
+      const cumClaimed = money(v, 6);
+      const grossClaimed = money(v, 7);
+      const advance = ADVANCE.test(appNo);
+      let localCert: number | null = null;
+      // an advance row keeps the claimed total so far (the field is required); its amount is not certified work
+      let localClaimed: number | null = advance ? r2v(st.claimed) : null;
+      if (!advance) {
+        // certified: the month's gross on top of the running total, unless the sheet's cumulative step equals
+        // the month's claimed amount (a gross certified copied down from the row above)
+        if (grossCert !== null || cumCert !== null) {
+          if (grossCert !== null && (cumCert === null || Math.abs(cumCert - (st.cert + grossCert)) < 1)) st.cert += grossCert;
+          else if (cumCert !== null && grossClaimed !== null && Math.abs(cumCert - st.cert - grossClaimed) < 1) st.cert = cumCert;
+          else if (grossCert !== null) st.cert += grossCert;
+          localCert = r2v(st.cert);
+        }
+        if (grossClaimed !== null || cumClaimed !== null) {
+          if (grossClaimed !== null && (cumClaimed === null || Math.abs(cumClaimed - (st.claimed + grossClaimed)) < 1)) st.claimed += grossClaimed;
+          else if (cumClaimed !== null && cumClaimed >= st.claimed) st.claimed = cumClaimed;
+          else if (grossClaimed !== null) st.claimed += grossClaimed;
+          localClaimed = r2v(st.claimed);
+        }
+      }
+      const appDate = date(v, 5) ?? date(v, col.ipcDate) ?? date(v, 3);
+      b.entries.push({ order: order++, block: -1, sr, appNo, month: monthText(v, 3), aconex: txt(v, 4), appDate, localClaimed, localCert, ipcNo: txt(v, col.ipcNo), ipcRef: txt(v, col.ipcRef), ipcDate: date(v, col.ipcDate), invRef: txt(v, col.invRef), invDate: date(v, col.invDate), paidDate: date(v, col.paid), advance: advance ? (grossCert ?? grossClaimed) : null });
+      b.certified = r2v(st.cert);
+    }
+    // route each block
+    const live = blocks.filter((b) => b.entries.length);
+    const multi = live.length > 1;
+    const namesItsLine = (b: Block) => !!fragOf(b.title) || /\)\s*[A-Za-z]/.test(b.title);
+    for (const b of live) {
+      const fr = fragOf(b.title);
+      const po = /\b(\d{7,12})\b/.exec(b.title)?.[1];
+      const suffix = /\)\s*([^()]*?)\s*$/.exec(b.title)?.[1] ?? "";
+      if (multi && po && /[A-Za-z]/.test(suffix) && !OWN_ASSET.test(suffix)) {
+        b.skip = `for ${suffix.trim()}, another project the same PO serves`;
+        continue;
+      }
+      if (multi && Math.abs(b.certified) >= 1) {
+        // the line whose SCHD B certified to date is this block's (one consultant's several POs on one sheet)
+        const hits = lines.filter((l) => !l.hold && l.frag && Math.abs(l.certified - b.certified) < 1 && contractByFrag.get(l.frag));
+        const own = sheetContract ? hits.filter((l) => contractByFrag.get(l.frag)!.contractor === sheetContract.contractor) : [];
+        const pick = own.length === 1 ? own[0] : hits.length === 1 ? hits[0] : undefined;
+        if (pick) {
+          b.contract = contractByFrag.get(pick.frag);
+          continue;
+        }
+      }
+      if (fr && contractByFrag.get(fr)) {
+        b.contract = contractByFrag.get(fr);
+        continue;
+      }
+      if (fr) {
+        b.skip = `cost line ${fr} is not in this report`;
+        continue;
+      }
+      if (multi && b === live[0] && live.slice(1).some(namesItsLine) && !namesItsLine(b)) {
+        b.skip = "names no cost line or asset while the blocks below it each name theirs (a summary of them)";
+        continue;
+      }
+      if (po) {
+        const hit = contracts.find((c) => c.po === po) ?? contracts.find((c) => po.includes(c.po) || c.po.includes(po));
+        if (hit) {
+          b.contract = hit;
+          continue;
+        }
+      }
+      b.contract = sheetContract;
+      if (!b.contract) b.skip = "could not tell which contract it belongs to";
+    }
+    const used = live.filter((b) => b.contract);
+    if (!used.length) {
+      notes.push(`IPC sheet "${s.name.trim()}" skipped – could not tell which contract it belongs to.`);
+      continue;
+    }
+    for (const b of used) {
+      const c = b.contract!;
+      if (!c.p) c.p = p;
+      const slot = perContract.get(c) ?? { entries: [], blocks: new Set<number>(), titles: new Map<number, string>(), sheets: new Set<string>() };
+      perContract.set(c, slot);
+      const id = blockNo++;
+      slot.blocks.add(id);
+      slot.titles.set(id, b.title);
+      slot.sheets.add(s.name.trim());
+      for (const e of b.entries) slot.entries.push({ ...e, block: id });
+    }
+    const skipped = live.filter((b) => b.skip);
+    notes.push(
+      `IPC sheet "${s.name.trim()}" → ${[...new Set(used.map((b) => `contract ${b.contract!.po} (${b.contract!.contractor})`))].join(", ")}${multi ? ` from ${used.length} of its ${live.length} blocks` : ""}${skipped.length ? `; not imported: ${skipped.map((b) => `"${b.title || "untitled block"}" (certified ${b.certified.toLocaleString("en", { minimumFractionDigits: 2 })}) – ${b.skip}`).join("; ")}` : ""}.`,
+    );
+    const adv = used.flatMap((b) => b.entries.filter((e) => e.advance !== null));
+    if (adv.length) notes.push(`IPC sheet "${s.name.trim()}": advance payment ${adv.map((e) => `${e.appNo} ${(e.advance ?? 0).toLocaleString("en", { minimumFractionDigits: 2 })}`).join(", ")} kept in the log but not counted in certified to date (Aconex and SCHD B leave it out).`);
+  }
+  // Each contract's log: its blocks merged chronologically – at each application date the latest running
+  // total of every block that has started by then, added up (the blocks' applications interleave)
+  for (const [c, slot] of perContract) {
+    const entries = slot.entries;
+    const many = slot.blocks.size > 1;
+    // a block's own label goes on its applications when the contract has several (the asset or the PO)
+    const label = (id: number) => {
+      const t = slot.titles.get(id) ?? "";
+      const suffix = /\)\s*([^()]*?)\s*$/.exec(t)?.[1]?.trim();
+      if (suffix && /[A-Za-z]/.test(suffix)) return suffix.slice(0, 40);
+      const frag = fragOf(t);
+      if (frag) return frag;
+      return t.replace(/\s+/g, " ").slice(0, 40);
+    };
+    const seenApp = new Map<string, number>();
+    for (const e of entries) {
+      if (many) {
+        const l = label(e.block);
+        if (l && !e.appNo.toLowerCase().includes(l.toLowerCase().slice(0, 8))) e.appNo = `${e.appNo} – ${l}`;
+      }
+      const k = e.appNo.toLowerCase();
       const dup = (seenApp.get(k) ?? 0) + 1;
       seenApp.set(k, dup);
-      if (dup > 1) appNo = `${appNo} (${dup})`;
-      const appDate = date(v, 5) ?? date(v, col.ipcDate) ?? date(v, 3);
-      entries.push({ order: order++, block, sr, appNo, month: monthText(v, 3), aconex: txt(v, 4), appDate, localClaimed: claimed, localCert: cumCert, ipcNo: txt(v, col.ipcNo), ipcRef: txt(v, col.ipcRef), ipcDate: date(v, col.ipcDate), invRef: txt(v, col.invRef), invDate: date(v, col.invDate), paidDate: date(v, col.paid) });
+      if (dup > 1) e.appNo = `${e.appNo} (${dup})`;
     }
-    // Merge blocks chronologically: at each application date, add up the latest known cumulative
-    // figure of every block that has started by then. Every block's own submission normally lands
-    // on the same handful of real-world dates (the whole contract applies together each period), so
-    // all entries sharing a date are applied to the block totals as one group before the combined
-    // total is read back – otherwise whichever block happens to appear first in the sheet would show
-    // a partial total while its sibling blocks for that same date are still waiting to be counted.
     const chronological = [...entries].sort((a, b) => (a.appDate ?? PERIOD_END).localeCompare(b.appDate ?? PERIOD_END) || a.order - b.order);
     const blockClaimed = new Map<number, number>();
     const blockCert = new Map<number, number>();
@@ -468,15 +596,12 @@ export function convertVbhReport(sheets: Sheet[]): ConversionResult {
       while (j < chronological.length && (chronological[j].appDate ?? PERIOD_END) === (chronological[i].appDate ?? PERIOD_END)) j++;
       const group = chronological.slice(i, j);
       for (const e of group) {
-        // never let a block's tracked value regress – a block's own cumulative figure is monotonic
-        // in its natural (serial) order, but an occasional application date entered out of sequence
-        // (a real anomaly in the source data, not a parsing error) must not read back as a fall in
-        // "certified to date".
+        // a block's running total never falls back when an application date was entered out of sequence
         if (e.localClaimed !== null) blockClaimed.set(e.block, Math.max(blockClaimed.get(e.block) ?? 0, e.localClaimed));
         if (e.localCert !== null) blockCert.set(e.block, Math.max(blockCert.get(e.block) ?? 0, e.localCert));
       }
-      const sumClaimed = Math.round([...blockClaimed.values()].reduce((t, x) => t + x, 0) * 100) / 100;
-      const sumCert = Math.round([...blockCert.values()].reduce((t, x) => t + x, 0) * 100) / 100;
+      const sumClaimed = r2v([...blockClaimed.values()].reduce((t, x) => t + x, 0));
+      const sumCert = r2v([...blockCert.values()].reduce((t, x) => t + x, 0));
       for (const e of group) {
         cumClaimedOf.set(e.order, e.localClaimed === null ? null : sumClaimed);
         cumCertOf.set(e.order, e.localCert === null ? null : sumCert);
@@ -484,9 +609,9 @@ export function convertVbhReport(sheets: Sheet[]): ConversionResult {
       i = j;
     }
     for (const e of entries) {
-      ipcRows.push([c.po, e.sr, e.appNo, e.month, e.aconex, e.appDate ?? PERIOD_END, cumClaimedOf.get(e.order) ?? null, e.ipcNo, e.ipcRef, e.ipcDate, cumCertOf.get(e.order) ?? null, e.invRef, e.invDate, e.paidDate, e.appDate ? "" : "Application date missing in Excel"]);
+      const comment = [e.appDate ? "" : "Application date missing in Excel", e.advance !== null ? `Advance payment ${(e.advance ?? 0).toLocaleString("en", { minimumFractionDigits: 2 })} – not certified work: left out of certified to date as in Aconex and SCHD B, recovered through the advance recovery on later certificates` : ""].filter(Boolean).join(" | ");
+      ipcRows.push([c.po, e.sr, e.appNo, e.month, e.aconex, e.appDate ?? PERIOD_END, cumClaimedOf.get(e.order) ?? null, e.ipcNo, e.ipcRef, e.ipcDate, cumCertOf.get(e.order) ?? null, e.invRef, e.invDate, e.paidDate, comment]);
     }
-    notes.push(`IPC sheet "${s.name.trim()}" → contract ${c.po} (${c.contractor})${block > 1 ? `, ${block} blocks (service / call-off orders) merged chronologically` : ""}.`);
   }
 
   // ---- Stage 2 contract conversion tracker (Executive Summary): remeasured value against the stage 1 contract
@@ -543,10 +668,13 @@ export function convertVbhReport(sheets: Sheet[]): ConversionResult {
     for (const [r, v] of rows(C)) {
       if (r <= hdr + 3) continue;
       const desc = tidy(txt(v, 2));
-      const frag = fragOf(txt(v, 9) || txt(v, 10));
+      // a budget transfer the schedule records against a placeholder code ("006D#25" – Budget Transfer to
+      // 1TB04030.02.CN.98) is kept too: it is one of the project's cross-asset budget moves
+      const budgetMove = /^budget\s+transfer\b/i.test(desc);
+      const frag = fragOf(txt(v, 9) || txt(v, 10)) || (budgetMove ? (/\b(\d{3}[A-Z]#\d+)\b/.exec(`${txt(v, 9)} ${txt(v, 10)}`)?.[1] ?? "") : "");
       if (!desc || !frag) continue;
       const hasRef = txt(v, 18) || txt(v, 26) || txt(v, 35) || txt(v, 42) || money(v, 25) !== null || money(v, 34) !== null || money(v, 54) !== null;
-      if (!hasRef && !isNum(cell(v, 1))) continue;
+      if (!hasRef && !isNum(cell(v, 1)) && !budgetMove) continue;
       const seq = (perFrag.get(frag) ?? 0) + 1;
       perFrag.set(frag, seq);
       const rawItem = isNum(cell(v, 1)) ? String(Math.trunc(cell(v, 1) as number)) : `x${seq}`;
@@ -557,6 +685,8 @@ export function convertVbhReport(sheets: Sheet[]): ConversionResult {
       // a line struck through in the workbook is cancelled: the whole change when its description is, a stage when its reference is
       const struckCols = C.strikes?.get(r) ?? [];
       const struck = struckCols.includes(2);
+      // Schedule C shades the inter-asset transfers green (the budget moves between VBH and another asset)
+      const interAsset = (C.fills?.get(r) ?? []).some(isGreenFill);
       const struckStage = (refCol: number, status: string) => (struckCols.includes(refCol) && !DEAD_STAGE.includes(status) ? "Cancelled" : status);
       const rfcStatus = struckStage(18, stageStatus(txt(v, 21)));
       const pvoStatus = struckStage(26, stageStatus(txt(v, 29)));
@@ -598,7 +728,7 @@ export function convertVbhReport(sheets: Sheet[]): ConversionResult {
         txt(v, 39), date(v, 40), txt(v, 41),
         txt(v, 42), txt(v, 43), date(v, 51) ?? date(v, 48) ?? date(v, 45), dvoStatus, dvoAmt, dvoAmt === null ? null : dvoActive ? dvoAmt : 0,
         txt(v, 44), date(v, 45), money(v, 46), txt(v, 47), date(v, 48), money(v, 49), txt(v, 50), date(v, 51), dvoAmt,
-        null, null, null, null, null, null, note,
+        null, null, null, null, null, null, note, interAsset ? "Yes" : "No",
       ]);
     }
     notes.push(`Changes: ${changeRows.length}.`);
@@ -617,7 +747,7 @@ export function convertVbhReport(sheets: Sheet[]): ConversionResult {
       ["Contractor's submission – Aconex ref", "vo_contractor_aconex_ref"], ["Contractor's submission – date", "vo_contractor_date"], ["Contractor's submission – amount", "vo_contractor_amount"],
       ["Engineer's submission – Aconex ref", "vo_engineer_aconex_ref"], ["Engineer's submission – date", "vo_engineer_date"], ["Engineer's submission – amount", "vo_engineer_amount"],
       ["Employer's submission – Aconex ref", "vo_employer_aconex_ref"], ["Employer's submission – date", "vo_employer_date"], ["Employer's submission – amount", "vo_employer_amount"],
-      ["BTR", "funding_btr"], ["Funding PVO", "funding_pvo"], ["Funding DVO", "funding_dvo"], ["PO", "funding_po"], ["PR", "funding_pr"], ["Contingency / Additional budget", "funding_contingency"], ["Notes", "notes"],
+      ["BTR", "funding_btr"], ["Funding PVO", "funding_pvo"], ["Funding DVO", "funding_dvo"], ["PO", "funding_po"], ["PR", "funding_pr"], ["Contingency / Additional budget", "funding_contingency"], ["Notes", "notes"], ["Inter-asset transfer (green in Schedule C)", "inter_asset"],
     ]),
     rows: changeRows,
   });

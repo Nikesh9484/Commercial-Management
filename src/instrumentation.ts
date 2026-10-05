@@ -16,6 +16,13 @@ export async function register() {
     repairAconexTies();
     const { mergeDuplicateLookups } = await import("./lib/repairs/merge-duplicates");
     mergeDuplicateLookups();
+    const { repairVbhPaymentLogs, addVbhBudgetTransferChanges, markVbhInterAssetChanges } = await import("./lib/repairs/vbh-payments");
+    repairVbhPaymentLogs();
+    addVbhBudgetTransferChanges();
+    markVbhInterAssetChanges();
+    const { repairCrossProjectPayments, repairCrossProjectCostLines, rebuildAycPaymentLogsAtStart } = await import("./lib/repairs/ayc-payments");
+    repairCrossProjectPayments();
+    repairCrossProjectCostLines();
     backup.startBackupLoop();
     // the Yacht Club's reports shipped with this version: imported in the background once the server is up
     const { importAycReportsAtStart } = await import("./lib/repairs/ayc-reports");
@@ -25,8 +32,12 @@ export async function register() {
     const { importAconexSeedsAtStart } = await import("./lib/repairs/aconex-seed");
     setTimeout(() => {
       void importAycReportsAtStart()
+        // the Yacht Club's contracts and IPC logs read again with the corrected converter (once)
+        .then(() => rebuildAycPaymentLogsAtStart())
         .then(() => fillRecoveryTrackersAtStart())
         .then(() => importAconexSeedsAtStart())
+        // the bond and insurance documents dropped on a row before rows read their documents (once)
+        .then(() => import("./lib/repairs/bond-row-docs").then((m) => m.applyRowBondDocumentsAtStart()))
         .catch((e) => console.error("[recovery] start-up fill failed:", e));
     }, 20_000);
     // the uploaded files beside the database: anything the disk lost comes back, anything never sent goes up

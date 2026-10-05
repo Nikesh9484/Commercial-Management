@@ -33,6 +33,7 @@ const NAMES: Record<string, string> = {
   period_summary: "Period_Summary_Key_Movements",
   recovery_report: "Cost_Recovery_Accommodation_Customs",
   uncommitted_ew: "Uncommitted_Costs_and_Early_Warnings",
+  cross_asset: "Cross_Asset_Budget_Transfers",
   budget_eac: "Budget_EAC",
   cashflow_forecast: "Cash_Flow_Forecast",
   aconex_report: "Aconex_Cost_Check",

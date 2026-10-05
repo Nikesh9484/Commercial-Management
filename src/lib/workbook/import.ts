@@ -147,6 +147,8 @@ export interface ImportRequest {
   excelCheck?: Level1Check | null;
   /** Report-level values the workbook carries (reference, narrative, checklist ticks), written to the period. */
   control?: ReportControl | null;
+  /** A start-up rebuild: every application of a contract the log covers that the log does not carry is removed, whatever its date. */
+  replacePaymentLogs?: boolean;
 }
 
 export interface SheetResult {
@@ -317,7 +319,7 @@ async function importWorkbookRun(req: ImportRequest, user: UserInfo, progress: I
     touchedByRegister.set(def.key, touched);
     const hasPeriodField = def.fields.some((f) => f.key === "period_id");
     const hasCostLine = def.fields.some((f) => f.key === "cost_line_id" && f.type === "lookup");
-    const costLines = hasCostLine ? (db.prepare("SELECT id, package_id, contractor_id FROM cost_lines").all() as { id: number; package_id: number | null; contractor_id: number | null }[]) : [];
+    const costLines = hasCostLine ? (db.prepare("SELECT id, programme_id, package_id, contractor_id FROM cost_lines").all() as { id: number; programme_id: number | null; package_id: number | null; contractor_id: number | null }[]) : [];
     // dropdown options are read once per target register for the sheet, not once per cell
     const optionCache = new Map<string, { id: number; label: string }[]>();
     const scopedTarget = (target: string) => !!getRegisterDef(target)?.fields.some((f) => f.key === "programme_id");
@@ -446,7 +448,8 @@ async function importWorkbookRun(req: ImportRequest, user: UserInfo, progress: I
           // link to the cost report line automatically when the package (and contractor) point to exactly one line
           if (hasCostLine && !input.cost_line_id && (input.package_id || input.contractor_id)) {
             const candidates = costLines.filter(
-              (l) => (!input.package_id || l.package_id === input.package_id) && (!input.contractor_id || !l.contractor_id || l.contractor_id === input.contractor_id),
+              // only this project's lines: the Yacht Club's CN.006C22 is its own line, not VBH's line with the same package
+              (l) => (l.programme_id === null || Number(l.programme_id) === Number(input.programme_id ?? rowProgramme)) && (!input.package_id || l.package_id === input.package_id) && (!input.contractor_id || !l.contractor_id || l.contractor_id === input.contractor_id),
             );
             if (candidates.length === 1) input.cost_line_id = candidates[0].id;
           }
@@ -578,6 +581,28 @@ async function importWorkbookRun(req: ImportRequest, user: UserInfo, progress: I
       }
     }
   }
+  // A contract's IPC log as the workbook gives it replaces the one on file: an application the workbook no
+  // longer carries under that name (renamed, a block that belonged to another contract, an old copy) is
+  // removed – only up to the workbook's latest application date for that contract, so a certificate fed
+  // from its documents after the report was made stays.
+  {
+    const ids = touchedByRegister.get("payment_applications");
+    // only a log a monthly-report converter built (VBH, Marina, AYC) carries every application of its
+    // contracts; a hand-made sheet may list a few, and must not take the others away
+    const fromReport = fs.existsSync(`${uploadPath(req.fileId)}.converted.json`);
+    const fedPayments = fromReport && (monthly || !!req.allowedRegisters?.includes("payment_applications"));
+    if (fedPayments && ids && ids.size && !results.some((r) => r.register === "payment_applications" && r.errors.length)) {
+      const list = [...ids];
+      const marks = list.map(() => "?").join(",");
+      const latest = db.prepare(`SELECT contract_id, MAX(application_date) AS last FROM payment_applications WHERE id IN (${marks}) GROUP BY contract_id`).all(...list) as { contract_id: number; last: string | null }[];
+      for (const c of latest) {
+        if (!c.last) continue;
+        pruned += req.replacePaymentLogs
+          ? db.prepare(`DELETE FROM payment_applications WHERE programme_id = ? AND contract_id = ? AND id NOT IN (${marks})`).run(programmeId, c.contract_id, ...list).changes
+          : db.prepare(`DELETE FROM payment_applications WHERE programme_id = ? AND contract_id = ? AND id NOT IN (${marks}) AND (application_date IS NULL OR application_date <= ?)`).run(programmeId, c.contract_id, ...list, c.last).changes;
+      }
+    }
+  }
   if (older && monthly) {
     for (const [key, ids] of touchedByRegister) {
       const def = getRegisterDef(key);
@@ -620,7 +645,7 @@ async function importWorkbookRun(req: ImportRequest, user: UserInfo, progress: I
     recordId: periodId,
     action: "import",
     user,
-    summary: `Imported workbook for ${period.label}: ${results.map((r) => `${r.sheet} → ${r.register} (${r.created} added, ${r.updated} updated, ${r.errors.length} errors)`).join("; ")}${pruned ? (recoveryOnly ? `; ${pruned} row(s) no longer on the tracker removed` : `; ${pruned} row(s) not in the workbook removed from this older report`) : ""}${dedupedEws ? `; ${dedupedEws} duplicated early warning(s) removed` : ""}${merged.groups ? `; ${merged.removed} duplicate contractor record(s) merged into ${merged.groups} ${merged.groups === 1 ? "company" : "companies"} (${merged.moved} record(s) moved)` : ""}`,
+    summary: `Imported workbook for ${period.label}: ${results.map((r) => `${r.sheet} → ${r.register} (${r.created} added, ${r.updated} updated, ${r.errors.length} errors)`).join("; ")}${pruned ? (recoveryOnly ? `; ${pruned} row(s) no longer on the tracker removed` : `; ${pruned} superseded row(s) the workbook no longer carries removed`) : ""}${dedupedEws ? `; ${dedupedEws} duplicated early warning(s) removed` : ""}${merged.groups ? `; ${merged.removed} duplicate contractor record(s) merged into ${merged.groups} ${merged.groups === 1 ? "company" : "companies"} (${merged.moved} record(s) moved)` : ""}`,
   });
 
   // the library shows the monthly workbook the report came from; a stand-alone import does not replace that name

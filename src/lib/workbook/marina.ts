@@ -284,7 +284,8 @@ export function convertMarinaReport(sheets: Sheet[]): ConversionResult {
         note: hold ? "Budget hold – remaining budget not yet allocated to a contract" : ucode !== code ? `Excel code ${code} (shared with other lines)` : "",
       };
       lines.push(line);
-      const frag = code.replace(/^(PS|CN|MS|CM)\./, "").split(".")[0];
+      // the contract code in the line code, whatever the prefix: CN.031C10.00, PS.003D01, FFEOSE.003F06, CN.003C328
+      const frag = /\b(\d{3}[A-Z]\d{2,3})\b/.exec(code)?.[1] ?? code.replace(/^(PS|CN|MS|CM)\./, "").split(".")[0];
       if (!firstLineByFrag.has(frag)) firstLineByFrag.set(frag, ucode);
       if (!mainLineByPkg.has(line.pkg)) mainLineByPkg.set(line.pkg, ucode);
     }
@@ -320,6 +321,23 @@ export function convertMarinaReport(sheets: Sheet[]): ConversionResult {
   interface Params { layout: "A" | "B"; hdr: number; adv: number; ret: number; vat: number; ipcDays: number; payDays: number }
   const ipcSheets = sheets.filter((s) => /^schedule h\s*-|^schedule h [a-z]/i.test(s.name.trim()) && norm(s.name) !== "schedule h");
   const paramsBySheet = new Map<string, Params>();
+  const wordsOf = (t: string) => new Set(t.toLowerCase().split(/[^a-z]+/).filter((w) => w.length >= 4 && !["limited", "company", "saudi", "arabia", "contracting", "trading", "schedule", "services", "works"].includes(w)));
+  /**
+   * The code a sheet's title gives ("CN.003F13 - Infor Saudi Arabia Limited") – unless the line with that code is
+   * another contractor's and one other line is this contractor's (a title copied from the sheet before it):
+   * then that line's code.
+   */
+  const checkedTitleFrag = (frag: string, title: string): string => {
+    if (!frag) return frag;
+    const who = wordsOf(title.replace(/^[A-Z&]+\.\d{3}[A-Z]\d{2,3}\s*[-–]\s*/i, ""));
+    if (!who.size) return frag;
+    const shares = (l: Line) => [...wordsOf(`${l.name} ${l.contractor}`)].some((w) => who.has(w));
+    const own = lines.find((l) => l.code === lineForFrag(frag));
+    if (!own || shares(own)) return frag;
+    const others = lines.filter((l) => !l.hold && shares(l));
+    const hit = others.length === 1 ? (/\b(\d{3}[A-Z]\d{2,3})\b/.exec(others[0].code)?.[1] ?? "") : "";
+    return hit && lineForFrag(hit) === others[0].code ? hit : frag;
+  };
   const fragBySheet = new Map<string, string>();
   const engFragBySheet = new Map<string, string>();
   /** the sheet's own title rows: "PS.003D01 - Dewan Architects & Engineers 2200445", "ZFP (ZUHAIR FAYEZ … - PO 2230041)" */
@@ -364,10 +382,27 @@ export function convertMarinaReport(sheets: Sheet[]): ConversionResult {
       }
       return "";
     })();
-    fragBySheet.set(s.name, titleFrag || findFrag(layout === "A" ? [4, 23] : [4, 20]));
+    fragBySheet.set(s.name, checkedTitleFrag(titleFrag, titleBySheet.get(s.name) ?? "") || findFrag(layout === "A" ? [4, 23] : [4, 20]));
     engFragBySheet.set(s.name, findFrag(layout === "A" ? [13] : [10]));
   }
-  interface Contract { sr: number; pr: string; po: string; acc: string; contractor: string; scope: string; status: string; completion: string | null; eot: number; original: number; faAdj: number; line: string; p: Params | null; note: string }
+  interface Contract { sr: number; pr: string; po: string; acc: string; contractor: string; scope: string; status: string; completion: string | null; eot: number; original: number; faAdj: number; line: string; p: Params | null; note: string; certified?: number | null }
+  /**
+   * The cost line of a contract whose code has no line of its own: Schedule B can carry it under another
+   * contract's code ("CN.003C13-3 NSCC - Triple Bay Piling (AYC only) 2220032", "CN.003C34-2 ARMETAL -
+   * Reflective ceiling") – found by its PO number in the line name, else by the contractor's name.
+   */
+  const lineForContract = (acc: string, po: string, who: string): string => {
+    const own = lineForFrag(acc);
+    if (own) return own;
+    const free = lines.filter((l) => !l.hold);
+    const pos = po.split(/\s*&\s*/).filter((x) => /^\d{7}$/.test(x));
+    const byPo = free.filter((l) => pos.some((x) => l.name.includes(x) || l.orig.includes(x)));
+    if (byPo.length === 1) return byPo[0].code;
+    const names = wordsOf(who);
+    if (!names.size) return "";
+    const byName = free.filter((l) => [...wordsOf(`${l.name} ${l.contractor}`)].some((w) => names.has(w)));
+    return byName.length === 1 ? byName[0].code : "";
+  };
   const contracts: Contract[] = [];
   const H = findSheet(sheets, "Schedule H");
   // the project's own contract-code prefix (003 for 003D01, 003C13 …), to read a code typed with another project's prefix
@@ -390,13 +425,14 @@ export function convertMarinaReport(sheets: Sheet[]): ConversionResult {
       const acc = ownFrag(txt(v, 4).replace(/\s+/g, ""));
       const sheetName = [...fragBySheet.entries()].find(([, f]) => f === acc)?.[0];
       let scope = txt(v, 6).replace(/\s+/g, " ");
-      const line = lineForFrag(acc);
+      const line = lineForContract(acc, txt(v, 3), txt(v, 5));
       if (scope.length < 12) scope = lines.find((l) => l.code === line)?.name ?? (scope || "Contract");
       contracts.push({
         sr: cell(v, 1) as number, pr: txt(v, 2), po: txt(v, 3) || `TBC-${acc}`, acc, contractor: contractor(txt(v, 5)), scope,
         status: txt(v, 7).toUpperCase() === "CLOSED" ? "Closed" : "Active", completion: date(v, 8), eot: isNum(cell(v, 9)) ? (cell(v, 9) as number) : 0,
         original: money(v, 12) ?? 0, faAdj: money(v, 15) ?? 0, line, p: sheetName ? paramsBySheet.get(sheetName)! : null,
         note: money(v, 18) !== null ? `Excel Schedule H: applied ${money(v, 18)?.toLocaleString("en")}, certified ${money(v, 19)?.toLocaleString("en")}, paid ${money(v, 20)?.toLocaleString("en")}` : "",
+        certified: money(v, 19),
       });
     }
   }
@@ -433,9 +469,12 @@ export function convertMarinaReport(sheets: Sheet[]): ConversionResult {
   /** Finds the contract an IPC sheet belongs to: by ACC code in its Aconex refs, else by PO number or contractor in the sheet name. */
   const contractForSheet = (s: Sheet): Contract | undefined => {
     const title = s.name.replace(/^schedule h\s*-?\s*/i, "").trim();
+    // the code the sheet's own title gives ("PS.003D03 - HKS Architects Ltd - Design Architect Fees 2200375")
+    const titled = /\b\d{3}[A-Z]\d{2,3}\b/.test(titleBySheet.get(s.name) ?? "") ? contractByFrag.get(fragBySheet.get(s.name) ?? "") : undefined;
+    if (titled) return titled;
     const po = /\b(\d{7})\b/.exec(title)?.[1] ?? poBySheet.get(s.name);
     if (po) {
-      const hit = contracts.find((c) => c.po === po || c.pr === po || c.po.split(/\s*&\s*/).includes(po));
+      const hit = contracts.find((c) => c.po === po) ?? contracts.find((c) => c.pr === po) ?? contracts.find((c) => c.po.split(/\s*&\s*/).includes(po));
       if (hit) return hit;
     }
     const byFrag = contractByFrag.get(fragBySheet.get(s.name) ?? "");
@@ -466,25 +505,104 @@ export function convertMarinaReport(sheets: Sheet[]): ConversionResult {
     notes.push(`IPC sheet "${s.name.trim()}" → contract ${c.po} (${c.contractor}).`);
     const A = p.layout === "A";
     const col = { ipcNo: A ? 12 : 9, ipcRef: A ? 13 : 10, ipcDate: A ? 14 : 11, cumCert: A ? 17 : 14, grossCert: A ? 18 : 15, invRef: A ? 23 : 20, invDate: A ? 24 : 21, paid: A ? 25 : 22 };
+    // The sheet's blocks, each closed by a TOTAL row. The first is normally the whole contract; a sheet that
+    // splits one contract across several projects ("NSCC (BEACH + RSMLI + AYC + B&M)" with a block per plot)
+    // carries this project's part in the block whose certified total is the one Schedule H gives the contract.
+    // The certified figure is read the way that reproduces Schedule H's: the sheet's cumulative column, else its
+    // monthly gross certified added up, else that without the advance payment (not certified work in Aconex).
+    interface IpcEntry { sr: unknown; appNo: string; month: unknown; aconex: string; appDate: string | null; claimed: number | null; ipcNo: string; ipcRef: string; ipcDate: string | null; cumCert: number | null; gross: number | null; advance: boolean; invRef: string; invDate: string | null; paid: string | null; note?: string }
+    const blocks: { title: string; entries: IpcEntry[] }[] = [{ title: "", entries: [] }];
     let prevCum = 0;
     let n = 0;
-    const seenApp = new Map<string, number>();
     for (const [r, v] of rows(s)) {
       if (r <= p.hdr + 2) continue;
-      if (txt(v, 1).toUpperCase().startsWith("TOTAL")) break; // only the first block (whole contract)
-      if (!isNum(cell(v, 1)) || !isNum(cell(v, 6))) continue;
+      const b = blocks[blocks.length - 1];
+      if (txt(v, 1).toUpperCase().startsWith("TOTAL")) {
+        blocks.push({ title: "", entries: [] });
+        prevCum = 0;
+        n = 0;
+        continue;
+      }
+      const serial = isNum(cell(v, 1)) ? (cell(v, 1) as number) : /^\s*\d+\s*$/.test(txt(v, 1)) ? Number(txt(v, 1)) : null;
+      if (serial === null || !isNum(cell(v, 6))) {
+        if (txt(v, 1) && !txt(v, 2) && !b.entries.length && !/^(stage\b|sr\b)/i.test(txt(v, 1))) b.title = txt(v, 1);
+        continue;
+      }
       n++;
       let cumCert = money(v, col.cumCert);
       const gross = money(v, col.grossCert);
       if (cumCert !== null && gross !== null && n > 1 && Math.abs(cumCert - gross) < 0.5 && prevCum > 0 && cumCert < prevCum) cumCert = Math.round((prevCum + gross) * 100) / 100;
       if (cumCert !== null) prevCum = cumCert;
-      let appNo = txt(v, 2) || `IPA ${cell(v, 1)}`;
+      const appNo = txt(v, 2) || `IPA ${serial}`;
+      b.entries.push({ sr: serial, appNo, month: monthText(v, 3), aconex: txt(v, 4), appDate: date(v, 5) ?? date(v, col.ipcDate) ?? date(v, 3), claimed: money(v, 6), ipcNo: txt(v, col.ipcNo), ipcRef: txt(v, col.ipcRef), ipcDate: date(v, col.ipcDate), cumCert, gross, advance: /\badv(ance)?\b|\badv\.?\s*pay/i.test(appNo), invRef: txt(v, col.invRef), invDate: date(v, col.invDate), paid: date(v, col.paid) });
+    }
+    const live = blocks.filter((b) => b.entries.length);
+    if (!live.length) continue;
+    const cert = c.certified ?? null;
+    const near = (x: number | null) => cert !== null && x !== null && Math.abs(x - cert) < 1;
+    type Reading = "cumulative" | "gross" | "gross without advance";
+    /** the block's certified to date read one way: the running figure on each application, and the last */
+    const read = (b: { entries: IpcEntry[] }, how: Reading): { values: (number | null)[]; last: number | null } => {
+      if (how === "cumulative") {
+        const values = b.entries.map((e) => e.cumCert);
+        return { values, last: [...values].reverse().find((x) => x !== null) ?? null };
+      }
+      let run = 0;
+      let any = false;
+      const values = b.entries.map((e) => {
+        if (how === "gross without advance" && e.advance) return null;
+        if (e.gross === null && e.cumCert === null) return null;
+        if (e.gross !== null) run = Math.round((run + e.gross) * 100) / 100;
+        any = true;
+        return run;
+      });
+      return { values, last: any ? run : null };
+    };
+    let chosen = live[0];
+    let how: Reading = "cumulative";
+    if (cert !== null && !near(read(chosen, "cumulative").last)) {
+      const ways: Reading[] = ["cumulative", "gross", "gross without advance"];
+      const pick = (bs: typeof live) => {
+        for (const w of ways) {
+          const hits = bs.filter((b) => near(read(b, w).last));
+          if (hits.length === 1) return { b: hits[0], w };
+        }
+        return null;
+      };
+      const found = pick([live[0]]) ?? (live.length > 1 ? pick(live) : null);
+      if (found) {
+        chosen = found.b;
+        how = found.w;
+        if (chosen !== live[0]) notes.push(`IPC sheet "${s.name.trim()}": the block "${chosen.title || "untitled"}" is this project's – its certified total is Schedule H's ${cert.toLocaleString("en", { minimumFractionDigits: 2 })}; the sheet's other ${live.length - 1} block(s) are not imported.`);
+        if (how !== "cumulative") notes.push(`IPC sheet "${s.name.trim()}": certified to date read from the monthly gross certified${how === "gross without advance" ? " without the advance payment" : ""} – that adds up to Schedule H's ${cert.toLocaleString("en", { minimumFractionDigits: 2 })}, the sheet's cumulative column does not.`);
+      }
+    }
+    if (how !== "cumulative") {
+      const values = read(chosen, how).values;
+      chosen.entries.forEach((e, i) => {
+        e.cumCert = values[i];
+        if (how === "gross without advance" && e.advance) e.note = "Advance payment – not certified work: left out of certified to date as in Schedule H and Aconex, recovered on later certificates";
+      });
+    }
+    // an application without a date keeps its place in the log: it takes the date of the one before it (the first,
+    // the one after it), so an undated first certificate is not read as the latest
+    const entries = chosen.entries;
+    for (let i = 0; i < entries.length; i++) {
+      if (entries[i].appDate) continue;
+      const before = entries.slice(0, i).reverse().find((e) => e.appDate)?.appDate;
+      const after = entries.slice(i + 1).find((e) => e.appDate)?.appDate;
+      if (before ?? after) (entries[i] as IpcEntry & { undated?: boolean }).undated = true;
+      entries[i].appDate = before ?? after ?? null;
+    }
+    const seenApp = new Map<string, number>();
+    for (const e of entries) {
+      let appNo = e.appNo;
       const k = appNo.toLowerCase();
       const dup = (seenApp.get(k) ?? 0) + 1;
       seenApp.set(k, dup);
       if (dup > 1) appNo = `${appNo} (${dup})`;
-      const appDate = date(v, 5) ?? date(v, col.ipcDate) ?? date(v, 3);
-      ipcRows.push([c.po, cell(v, 1), appNo, monthText(v, 3), txt(v, 4), appDate ?? PERIOD_END, money(v, 6), txt(v, col.ipcNo), txt(v, col.ipcRef), date(v, col.ipcDate), cumCert, txt(v, col.invRef), date(v, col.invDate), date(v, col.paid), appDate ? "" : "Application date missing in Excel"]);
+      const undated = (e as IpcEntry & { undated?: boolean }).undated;
+      ipcRows.push([c.po, e.sr, appNo, e.month, e.aconex, e.appDate ?? PERIOD_END, e.claimed, e.ipcNo, e.ipcRef, e.ipcDate, e.cumCert, e.invRef, e.invDate, e.paid, [undated ? "Application date missing in Excel – placed with the application beside it" : e.appDate ? "" : "Application date missing in Excel", e.note ?? ""].filter(Boolean).join(" | ")]);
     }
   }
   out.push({

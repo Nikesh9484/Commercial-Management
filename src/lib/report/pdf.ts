@@ -20,6 +20,7 @@ import { buildPeriodSummary, sar, sarMove } from "./period-summary";
 import { getAccommodationSummary, getCustomsSummary } from "../recovery/summary";
 import { buildCashflowForecast, monthLabel, type CashMonth } from "../cashflow/forecast";
 import { buildBudgetEac, level02Table, LEVEL02_MONEY, EAC_COLUMNS, type Level02Row } from "./budget-eac";
+import { buildCrossAssetReport } from "./cross-asset";
 import { buildUncommittedTable } from "./uncommitted-ew";
 import { buildAconexReconciliation, ACONEX_MEASURES } from "../recovery/aconex";
 import { buildAconexChangeCheck } from "../recovery/aconex-changes";
@@ -77,6 +78,7 @@ export function resolveSections(keys: string[], opts: SectionOptions = {}): { ti
     else if (k === "period_summary") out.push({ title: "Period Summary – Key Period Movements", run: periodSummaryReport });
     else if (k === "recovery_report") out.push({ title: "Cost Recovery – Accommodation & Customs Duty", run: recoveryReport });
     else if (k === "uncommitted_ew") out.push({ title: "Uncommitted Costs and Early Warnings", run: uncommittedEwReport });
+    else if (k === "cross_asset") out.push({ title: "Cross-Asset Budget Transfers", run: crossAssetReport });
     else if (k === "cashflow_forecast") out.push({ title: "Cash Flow Forecast – Employer Executive Review", run: cashflowForecastReport });
     else if (k === "aconex_report") out.push({ title: "Aconex Cost Check – control accounts vs cost report", run: aconexReport });
     else if (k === "level1") out.push({ title: "Schedule A – Cost Report Level 1 (Executive)", run: costLevel1 });
@@ -1523,6 +1525,60 @@ function aconexChangeEventsReport(ctx: Ctx) {
 }
 
 /** The consolidated "Uncommitted Costs and Early Warnings" table for the report, one row per cost report line, in the programme-wide Level 5 layout, with the early warnings behind it. */
+function crossAssetReport(ctx: Ctx) {
+  const { doc, data } = ctx;
+  const width = PAGE.width - PAGE.margin * 2;
+  const r = buildCrossAssetReport(data);
+  const money = (v: unknown) => (v === null || v === undefined || Math.abs(Number(v)) < 0.005 ? "–" : formatMoney(v as number));
+  doc.fillColor(MUTED).font("Helvetica").fontSize(8.5).text(
+    `The change entries of ${data.programme.name} in ${data.period.label} that need budget to move between ${r.own.short} and another asset – read from the change register by the rules kept for ${r.own.short} on the dashboard: the tracker's own inter-asset marks (green in Schedule C, a Back Charge naming another asset), a transfer the entry names (its comments and funding), a cost another project's contract carries for ${r.own.short} (the change sits on that project's contract code), or works done for another asset. Entries placed by hand stay where they were placed. Each entry shows the rule and the words that place it. Value = the change at its furthest stage (DVO, VO, PVO, RFC or early warning).`,
+    { width },
+  );
+  const cols = [
+    { key: "itemNo", label: "Item", width: 1.1 },
+    { key: "description", label: "Change", width: 2.8 },
+    { key: "otherAsset", label: "Other asset", width: 1.3 },
+    { key: "status", label: "Status", width: 0.8 },
+    { key: "stage", label: "Stage", width: 0.5 },
+    { key: "amount", label: "Value (SAR)", width: 1, align: "right" as const, format: money },
+    { key: "transfer", label: "Transfer", width: 0.9 },
+    { key: "rule", label: "Rule", width: 1.1 },
+    { key: "evidence", label: "Why it is listed", width: 2.2 },
+  ];
+  const block = (title: string, note: string, items: typeof r.out, total: number) => {
+    subheading(ctx, `${title} – ${items.length} entr${items.length === 1 ? "y" : "ies"}, ${formatMoney(total)}`, note);
+    if (!items.length) {
+      doc.fillColor(MUTED).fontSize(8.5).text("None in this report.", { width });
+      return;
+    }
+    table(ctx, cols, items.map((x) => ({ ...x, evidence: `${x.evidence}${x.btrRef ? ` (${x.btrRef})` : ""}` })) as unknown as Record<string, unknown>[], { totalRow: { itemNo: "Total", amount: formatMoney(total) } });
+  };
+  block(`Budget out of ${r.own.short} – to other assets`, `${r.own.short}'s budget goes to another asset: costs another asset's contract carries for ${r.own.short}, and transfers the entries name.`, r.out, r.totals.out);
+  block(`Budget into ${r.own.short} – from other assets`, `Another asset's budget comes to ${r.own.short}: works done for that asset under ${r.own.short}'s contracts, and transfers the entries name.`, r.into, r.totals.into);
+  block("To confirm – funding source not settled", "Entries whose funding is questioned in the comments, or works for another asset with no transfer named.", r.confirm, r.totals.confirm);
+  if (r.byAsset.length) {
+    subheading(ctx, "By asset", "What goes out to and comes in from each asset (entries in the two lists above).");
+    table(ctx, [{ key: "asset", label: "Asset", width: 3 }, { key: "out", label: `Out of ${r.own.short}`, width: 1.5, align: "right", format: money }, { key: "into", label: `Into ${r.own.short}`, width: 1.5, align: "right", format: money }, { key: "items", label: "Entries", width: 0.8, align: "right" }], r.byAsset as unknown as Record<string, unknown>[], { totalRow: { asset: "Total", out: formatMoney(r.totals.out), into: formatMoney(r.totals.into), items: r.out.length + r.into.length } });
+   }
+  if (r.leftOut.length) {
+    const where: Record<string, string> = { out: "Budget out", into: "Budget in", confirm: "To confirm", none: "–" };
+    subheading(ctx, `Left out – ${r.leftOut.length} entr${r.leftOut.length === 1 ? "y" : "ies"}`, "Entries the rules found but did not list – rejected or cancelled, not marked inter-asset in the tracker, or left out by hand – with where the rules would place them.");
+    table(
+      ctx,
+      [
+        { key: "itemNo", label: "Item", width: 1.1 },
+        { key: "description", label: "Change", width: 2.8 },
+        { key: "otherAsset", label: "Other asset", width: 1.3 },
+        { key: "status", label: "Status", width: 0.8 },
+        { key: "amount", label: "Value (SAR)", width: 1, align: "right", format: money },
+        { key: "auto", label: "Rules would place it", width: 0.9, format: (v) => where[String(v)] ?? "–" },
+        { key: "reason", label: "Why it is left out", width: 3 },
+      ],
+      r.leftOut as unknown as Record<string, unknown>[],
+    );
+  }
+}
+
 function uncommittedEwReport(ctx: Ctx) {
   const { doc, data } = ctx;
   const width = PAGE.width - PAGE.margin * 2;

@@ -258,6 +258,7 @@ export function Sidebar({
                 "Uncommitted & Early Warnings",
                 Sparkles,
               )}
+              {link("/reports/cross-asset", "Cross-asset budget transfers", Sparkles)}
               {link(
                 "/reports/cashflow-forecast",
                 "Cash Flow Forecast",
@@ -335,6 +336,7 @@ export function Sidebar({
                 "Uncommitted & Early Warnings",
                 Sparkles,
               )}
+              {link("/reports/cross-asset", "Cross-asset budget transfers", Sparkles)}
               {link(
                 "/reports/cashflow-forecast",
                 "Cash Flow Forecast",

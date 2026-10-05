@@ -97,6 +97,7 @@ export const changes: RegisterDef = {
     { key: "fa_id", label: "Final account row", type: "number", readonly: true, hideInForm: true, hideInTable: true, help: "Set on the Final Account adjustment the dashboard keeps in step with a contract's Final Account Status row (its omissions and negotiation adjustment)." },
     { key: "project_stage_id", label: "Project stage", type: "lookup", lookup: { register: "project_stages" }, section: HEADER, filter: true },
     { key: "change_category_id", label: "Change category", type: "lookup", lookup: { register: "change_categories" }, section: HEADER, filter: true },
+    { key: "inter_asset", label: "Inter-asset transfer (green in Schedule C)", type: "boolean", defaultValue: false, section: HEADER, hideInTable: true, filter: true, help: "The change moves budget between this project and another asset – VBH's Schedule C shades these rows green. Read from the tracker on import; listed on the Cross-asset budget transfers report." },
     { key: "initiated_by_id", label: "Initiated by", type: "lookup", lookup: { register: "change_initiators" }, section: HEADER, filter: true },
     { key: "amaala_rep", label: "Amaala rep", type: "text", section: HEADER, hideInTable: true, help: "Name of the Amaala representative who initiated / sponsors the change." },
     {

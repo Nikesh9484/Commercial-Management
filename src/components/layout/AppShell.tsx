@@ -2,6 +2,7 @@
 import { GlobalDrop } from "@/components/layout/GlobalDrop";
 import { CopyTables } from "@/components/layout/CopyTables";
 import { ScrollRail } from "@/components/layout/ScrollRail";
+import { TableFilters } from "@/components/layout/TableFilters";
 
 import { useState } from "react";
 import { Sidebar } from "./Sidebar";
@@ -23,6 +24,7 @@ export function AppShell({ context, user, children }: { context: AppContext; use
             <ScopeProvider value={`${context.programme?.id ?? ""}:${context.asset?.id ?? ""}:${context.period?.id ?? ""}`}>{children}</ScopeProvider>
             <CopyTables />
             <ScrollRail />
+            <TableFilters />
             <GlobalDrop enabled={["admin", "editor", "contributor", "reporter"].includes(user.role) && !!context.programme} />
           </main>
         </div>

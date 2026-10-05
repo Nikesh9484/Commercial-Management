@@ -11,7 +11,7 @@ const [input, output] = process.argv.slice(2);
      preview  – keep only the first N non-empty rows of every sheet (a quick look at what the file is)
      sheets   – regular expressions (sources, case-insensitive); only sheets whose name matches are read
      maxCols  – cells past this column are dropped (helper columns at the far right of a big tracker)
-   The output is one JSON value per line: {"sheet":name} … [row, cells, struck?] … {"end":true,"rowCount":n,"truncated":b} */
+   The output is one JSON value per line: {"sheet":name} … [row, cells, struck?, fills?] … {"end":true,"rowCount":n,"truncated":b} */
 let opts = {};
 try {
   opts = JSON.parse(process.env.WORKBOOK_READER_OPTS || "{}") || {};
@@ -87,10 +87,17 @@ function plain(v) {
       if (!cells.some((v) => v !== null && v !== "")) continue;
       // cells struck through (a change cancelled in the tracker): their column numbers travel with the row
       const struck = [];
+      // the shading the tracker gives a row (a colour code such as "FF9AE6DD"): some trackers mark a kind of entry by
+      // colour – VBH's Schedule C shades its inter-asset transfers green
+      const fills = new Set();
       row.eachCell((c, i) => {
-        if ((!maxCols || i <= maxCols) && c.font && c.font.strike && c.value !== null && c.value !== undefined && c.value !== "") struck.push(i);
+        if (maxCols && i > maxCols) return;
+        if (c.font && c.font.strike && c.value !== null && c.value !== undefined && c.value !== "") struck.push(i);
+        const f = c.fill;
+        if (f && f.type === "pattern" && f.pattern && f.pattern !== "none" && f.fgColor && typeof f.fgColor.argb === "string" && i <= 12) fills.add(f.fgColor.argb.toUpperCase());
       });
-      if (!out.write(`${JSON.stringify(struck.length ? [row.number, cells, struck] : [row.number, cells])}\n`)) await new Promise((r) => out.once("drain", r));
+      const line = fills.size ? [row.number, cells, struck, [...fills]] : struck.length ? [row.number, cells, struck] : [row.number, cells];
+      if (!out.write(`${JSON.stringify(line)}\n`)) await new Promise((r) => out.once("drain", r));
       rowCount = row.number;
       kept++;
     }

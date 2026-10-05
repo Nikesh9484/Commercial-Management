@@ -333,9 +333,33 @@ export function mergeComputed(
 export function certifiedByLine(db: Database.Database, programmeId: number): Map<number, number> {
   const out = new Map<number, number>();
   const { contracts, rows } = computeContracts(db, programmeId);
+  // A PO the monthly report carries across several cost lines ("One PO across 3 cost lines: 006D05, 006D09,
+  // 006D06" – an architect serving each sub-asset) is certified as one contract: its certified to date is
+  // shared across those lines by their committed cost (budget plus approved DVOs), the way Aconex books it,
+  // rather than all on the line the contract is filed under.
+  let lines: { id: number; code: string; weight: number }[] | null = null;
+  const linesOf = () => {
+    if (lines) return lines;
+    const dvo = changeFeeds(db, programmeId).dvo;
+    lines = (db.prepare("SELECT id, code, approved_baseline_budget, opening_transfers FROM cost_lines WHERE programme_id = ? AND COALESCE(is_budget_hold, 0) = 0").all(programmeId) as { id: number; code: string; approved_baseline_budget: number | null; opening_transfers: number | null }[]).map((l) => ({ id: l.id, code: String(l.code ?? ""), weight: num(l.approved_baseline_budget) + num(l.opening_transfers) + (dvo.get(l.id) ?? 0) }));
+    return lines;
+  };
   for (const c of rows) {
     if (!c.cost_line_id) continue;
-    out.set(c.cost_line_id, r2((out.get(c.cost_line_id) ?? 0) + (contracts.get(c.id)?.latest_cum_certified ?? 0)));
+    const certified = contracts.get(c.id)?.latest_cum_certified ?? 0;
+    const frags = /One PO across \d+ cost lines: ([^;]+);/.exec(String((c as { notes?: unknown }).notes ?? ""))?.[1]?.split(/\s*,\s*/).filter(Boolean) ?? [];
+    const share = frags.length > 1 ? frags.map((f) => linesOf().find((l) => l.code.toUpperCase().includes(f.toUpperCase()))).filter((l): l is { id: number; code: string; weight: number } => !!l) : [];
+    const total = share.reduce((t, l) => t + Math.max(0, l.weight), 0);
+    if (share.length > 1 && total > 0 && share.some((l) => l.id === c.cost_line_id)) {
+      let left = r2(certified);
+      share.forEach((l, i) => {
+        const part = i === share.length - 1 ? left : r2((certified * Math.max(0, l.weight)) / total);
+        left = r2(left - part);
+        out.set(l.id, r2((out.get(l.id) ?? 0) + part));
+      });
+      continue;
+    }
+    out.set(c.cost_line_id, r2((out.get(c.cost_line_id) ?? 0) + certified));
   }
   return out;
 }

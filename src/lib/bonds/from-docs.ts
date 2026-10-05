@@ -324,7 +324,12 @@ interface Plan {
   sameNumber: boolean;
 }
 
-export async function addBondsFromDocuments(files: DocFile[], user: UserInfo, decisions: Decisions = {}): Promise<FromDocsResult> {
+/** a document dropped on one row of the register: it updates that row (already filed with it) */
+export interface BondTarget {
+  bondId: number;
+}
+
+export async function addBondsFromDocuments(files: DocFile[], user: UserInfo, decisions: Decisions = {}, target: BondTarget | null = null): Promise<FromDocsResult> {
   const db = getDb();
   const def = getRegisterDef("bonds")!;
   const app = getAppContext();
@@ -358,7 +363,8 @@ export async function addBondsFromDocuments(files: DocFile[], user: UserInfo, de
   const plans: Plan[] = [];
   for (const p of policies) {
     const code = p.programmeCode || transmittals.find((t) => t.programmeCode)?.programmeCode || "";
-    const programme = programmes.find((x) => x.code === code) ?? app.programme;
+    const targetRow = target ? ((db.prepare("SELECT * FROM bonds WHERE id = ?").get(target.bondId) as RecordRow | undefined) ?? null) : null;
+    const programme = (targetRow ? programmes.find((x) => x.id === Number(targetRow.programme_id)) : null) ?? programmes.find((x) => x.code === code) ?? app.programme;
     if (!programme) {
       result.warnings.push(`${p.name}: no project could be told from the document and none is selected in the top bar.`);
       continue;
@@ -404,7 +410,18 @@ export async function addBondsFromDocuments(files: DocFile[], user: UserInfo, de
       (p.policyNo.replace(/\s+/g, "").length >= 6 ? rows.find((r) => squashed(r.policy_no) === squashed(p.policyNo)) ?? null : null);
     // the same number; else the bond of this type on the same contract line; else the contractor's only
     // bond of this type – never one of several (a contractor with three contracts has three performance bonds)
+    // dropped on a row: that row is the entry – when the document is its policy (same number) or the same kind of
+    // cover for the same company; a document of another policy or contractor changes nothing
+    if (targetRow) {
+      const okNumber = !!byNumber && Number(byNumber.id) === Number(targetRow.id);
+      const okKind = sameCompany(targetRow) && (!typeId || sameType(targetRow));
+      if (!okNumber && !okKind) {
+        result.warnings.push(`${p.name}: reads as ${typeLabel || "a bond / insurance"}${p.policyNo ? ` No ${p.policyNo}` : ""}${contractorName ? ` for ${contractorName}` : ""} – not the entry it was added to (Ref ${targetRow.ref}, policy ${targetRow.policy_no ?? "–"}), so the entry was not changed. The document is kept with it; use "Add from documents" to file it where it belongs.`);
+        continue;
+      }
+    }
     const existing =
+      targetRow ??
       byNumber ??
       (contract?.cost_line_id ? (ofType.find((r) => Number(r.cost_line_id) === Number(contract.cost_line_id)) ?? null) : null) ??
       (!p.amendment && ofType.length === 1 && (!p.acc || !contract) ? ofType[0] : null);
@@ -420,7 +437,7 @@ export async function addBondsFromDocuments(files: DocFile[], user: UserInfo, de
     const push = (label: string, value: string | number | null | undefined, from = p.name) => {
       if (value !== null && value !== undefined && value !== "") read.push({ label, value: String(value), from });
     };
-    const sameNumber = !!byNumber && !p.amendment;
+    const sameNumber = (!!byNumber || !!targetRow) && !p.amendment;
     if (p.amendment) push("Document", `Amendment to bond ${p.policyNo || existing?.policy_no || ""} – the entry keeps its details, the validity${p.amount ? " and the amount" : ""} follow the amendment`);
     else if (sameNumber) push("Document", `Policy ${existing?.policy_no ?? p.policyNo} is already on the register (Ref ${existing?.ref ?? ""}) – its validity${p.amount ? " and amount" : ""} follow this document; anything the entry lacks is filled in`);
     push("Type", typeLabel);
@@ -509,7 +526,7 @@ export async function addBondsFromDocuments(files: DocFile[], user: UserInfo, de
     const outcome = (action: Outcome["action"], row: RecordRow): Outcome => ({ action, id: Number(row.id), label: `Ref ${row.ref}`, description: pl.label, programme: pl.programme.name, files: pl.docs.map((d) => d.name), read: pl.read, missing: pl.missing });
     const attach = (bondId: number, note: string) => {
       const bytes = pl.docs.map((d) => files.find((f) => f.name === d.name)).filter((f): f is DocFile => !!f);
-      if (bytes.length) attachBondDocuments(bondId, bytes, user, note);
+      if (bytes.length && !target) attachBondDocuments(bondId, bytes, user, note);
     };
     if (pl.existing) {
       if (decide(decisions, pl.key) === "keep") {
@@ -528,7 +545,10 @@ export async function addBondsFromDocuments(files: DocFile[], user: UserInfo, de
         const dg = (v: unknown) => String(v ?? "").replace(/\D/g, "");
         if (pl.record.policy_no && dg(pl.existing.policy_no).length >= 6 && dg(pl.record.policy_no).endsWith(dg(pl.existing.policy_no)) && String(pl.record.policy_no).length > String(pl.existing.policy_no ?? "").length) patch.policy_no = pl.record.policy_no;
         const refs = [...new Set(pl.docs.flatMap((d) => d.aconex))];
-        patch.comments = [String(pl.existing.comments ?? "").trim(), `Amendment added from documents on ${formatDate(todayIso())} (${pl.docs.map((d) => d.name).join("; ")})${refs.length ? ` – ${refs.join(" ")}` : ""}: ${pl.record.expiry_date ? `validity extended to ${formatDate(String(pl.record.expiry_date))}` : "no new expiry read"}${pl.record.amount_provided ? `, amount ${formatMoney(Number(pl.record.amount_provided))} SAR` : ""}.`].filter(Boolean).join("\n");
+        const said = `(${pl.docs.map((d) => d.name).join("; ")})${refs.length ? ` – ${refs.join(" ")}` : ""}: ${pl.record.expiry_date ? `validity extended to ${formatDate(String(pl.record.expiry_date))}` : "no new expiry read"}${pl.record.amount_provided ? `, amount ${formatMoney(Number(pl.record.amount_provided))} SAR` : ""}.`;
+        // the same amendment read again (dropped on its row a second time) is noted once
+        const before = String(pl.existing.comments ?? "").trim();
+        patch.comments = before.includes(said) ? before : [before, `Amendment added from documents on ${formatDate(todayIso())} ${said}`].filter(Boolean).join("\n");
       } else {
         // a renewal or extension of the bond already held: the start date stays the date the bond was
         // first put in place (filled only when the entry has none); the number, bank, amount and expiry follow the new document
@@ -538,7 +558,11 @@ export async function addBondsFromDocuments(files: DocFile[], user: UserInfo, de
         if (!pl.existing.start_date && pl.record.start_date) patch.start_date = pl.record.start_date;
         if (!pl.existing.cost_line_id && pl.record.cost_line_id) patch.cost_line_id = pl.record.cost_line_id;
         if (!pl.existing.package_id && pl.record.package_id) patch.package_id = pl.record.package_id;
-        patch.comments = [String(pl.existing.comments ?? "").trim(), `${pl.sameNumber ? "Updated from the policy's own document – " : "Replaced "}${String(pl.record.comments)}`].filter(Boolean).join("\n");
+        const before = String(pl.existing.comments ?? "").trim();
+        const files = `(${pl.docs.map((d) => d.name).join("; ")})`;
+        // the same document read again is noted once
+        const seen = before.split("\n").some((l) => l.includes(files) && (!pl.record.expiry_date || String(pl.existing!.expiry_date ?? "") === String(pl.record.expiry_date)));
+        patch.comments = seen ? before : [before, `${pl.sameNumber ? "Updated from the policy's own document – " : "Replaced "}${String(pl.record.comments)}`].filter(Boolean).join("\n");
       }
       const row = updateRecord(def, Number(pl.existing.id), patch, user, "import", { bypassRoles: true });
       attach(Number(row.id), pl.amendment ? "amendment" : "replacement document");

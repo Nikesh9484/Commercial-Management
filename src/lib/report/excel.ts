@@ -11,6 +11,7 @@ import { NO_BONDS_FILTER, type BondsFilter } from "../bonds/filter";
 import { buildTransfersReport } from "./transfers-report";
 import { buildFaReport } from "./fa-report";
 import { buildPeriodSummary, sarMove } from "./period-summary";
+import { buildCrossAssetReport } from "./cross-asset";
 import type { ReportData } from "./data";
 import type { SectionOptions } from "./pdf";
 import { REPORT_SCHEDULES } from "./schedules";
@@ -75,6 +76,7 @@ export async function renderSectionsExcel(data: ReportData, keys: string[], link
     else if (k === "period_summary") periodSummarySheet(wb, data);
     else if (k === "recovery_report") recoveryReportSheet(wb, data);
     else if (k === "uncommitted_ew") uncommittedEwSheet(wb, data);
+    else if (k === "cross_asset") crossAssetSheet(wb, data);
     else if (k === "cashflow_forecast") cashflowForecastSheets(wb, data);
     else if (k === "aconex_report") aconexSheet(wb, data);
     else if (k === "kpi_register") kpiRegisterSheet(wb, data);
@@ -1056,6 +1058,46 @@ export function aconexChangeEventsSheet(wb: ExcelJS.Workbook, d: ReportData) {
 }
 
 /** The consolidated "Uncommitted Costs and Early Warnings" table for the report in the programme-wide Level 5 layout, ready to paste, with the early warnings behind it on a second sheet. */
+export function crossAssetSheet(wb: ExcelJS.Workbook, d: ReportData) {
+  const r = buildCrossAssetReport(d);
+  const cols = ["Item No", "Change", "Other asset", "Overall status", "Stage", "Value (SAR)", "Transfer", "BTR ref", "Cost report line", "Contractor", "Rule", "Why it is listed", "Basis"];
+  const widths = [18, 60, 26, 14, 8, 18, 18, 18, 18, 34, 28, 50, 60];
+  const sheet = (name: string, title: string, note: string, items: typeof r.out, total: number) => {
+    const ws = wb.addWorksheet(name);
+    widths.forEach((w, i) => (ws.getColumn(i + 1).width = w));
+    titleBlock(ws, `${title} – ${d.programme.name} (${d.programme.code}) – ${d.period.label}`, `${sub(d)} · ${note}`, cols.length);
+    header(ws.addRow(cols));
+    for (const x of items) {
+      const row = ws.addRow([x.itemNo, x.description, x.otherAsset, x.status, x.stage, x.amount, x.transfer, x.btrRef, x.costLine, x.contractor, x.rule, x.evidence, x.basis]);
+      row.getCell(6).numFmt = MONEY_FMT;
+      row.alignment = { vertical: "top", wrapText: true };
+    }
+    if (items.length) {
+      const t = ws.addRow(["Total", "", "", "", "", null]);
+      t.getCell(6).value = { formula: `SUM(F${ws.rowCount - items.length}:F${ws.rowCount - 1})`, result: total };
+      t.getCell(6).numFmt = MONEY_FMT;
+      totalRow(t);
+    } else ws.addRow(["None in this report."]).font = { italic: true, color: { argb: XL.muted } };
+    ws.views = [{ state: "frozen", ySplit: 4 }];
+  };
+  sheet(`Out of ${r.own.short}`.slice(0, 31), `Budget out of ${r.own.short} – to other assets`, `costs another asset's contract carries for ${r.own.short}, and transfers the entries name`, r.out, r.totals.out);
+  sheet(`Into ${r.own.short}`.slice(0, 31), `Budget into ${r.own.short} – from other assets`, `works done for another asset under ${r.own.short}'s contracts, and transfers the entries name`, r.into, r.totals.into);
+  sheet("To confirm", "Cross-asset funding to confirm", "funding questioned in the comments, or works for another asset with no transfer named", r.confirm, r.totals.confirm);
+  if (r.leftOut.length) {
+    const ws = wb.addWorksheet("Left out");
+    const where: Record<string, string> = { out: "Budget out", into: "Budget in", confirm: "To confirm", none: "–" };
+    [18, 60, 26, 14, 18, 18, 80].forEach((w, i) => (ws.getColumn(i + 1).width = w));
+    titleBlock(ws, `Left out – ${d.programme.name} (${d.programme.code}) – ${d.period.label}`, `${sub(d)} · entries the rules found but did not list, with where the rules would place them`, 7);
+    header(ws.addRow(["Item No", "Change", "Other asset", "Overall status", "Value (SAR)", "Rules would place it", "Why it is left out"]));
+    for (const x of r.leftOut) {
+      const row = ws.addRow([x.itemNo, x.description, x.otherAsset, x.status, x.amount, where[x.auto] ?? "–", x.reason]);
+      row.getCell(5).numFmt = MONEY_FMT;
+      row.alignment = { vertical: "top", wrapText: true };
+    }
+    ws.views = [{ state: "frozen", ySplit: 4 }];
+  }
+}
+
 export function uncommittedEwSheet(wb: ExcelJS.Workbook, d: ReportData) {
   const t = buildUncommittedTable(d);
   const ws = wb.addWorksheet("Uncommitted & Early Warnings");
