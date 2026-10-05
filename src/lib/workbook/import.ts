@@ -6,7 +6,7 @@ import path from "node:path";
 import os from "node:os";
 import { getDb, getSetting, setSetting, wordsKey, syntheticEwNo } from "../db";
 import { getRegisterDef } from "../registers";
-import { createRecord, updateRecord, listRecords, lookupOptions, ValidationError } from "../registers/engine";
+import { createRecord, updateRecord, listRecords, lookupOptions, ValidationError, withScope } from "../registers/engine";
 import type { UserInfo, RecordRow } from "../registers/types";
 import { lockPeriod, getPeriod, latestPeriod, takeSnapshot, restoreFromSnapshot, hasStoredCopy, clearSnapshotRegisters, nearestStoredBefore } from "../snapshots";
 import { logAudit } from "../audit";
@@ -193,6 +193,12 @@ const yieldNow = () => new Promise<void>((resolve) => setImmediate(resolve));
 export type ImportProgress = (phase: string, done?: number, total?: number) => void;
 
 export async function importWorkbook(req: ImportRequest, user: UserInfo, progress: ImportProgress = () => {}): Promise<ImportResult> {
+  // an import that names its project runs in that project's scope, whatever the top bar shows
+  if (req.programmeId && getDb().prepare("SELECT 1 FROM programmes WHERE id = ?").get(Number(req.programmeId))) return withScope(Number(req.programmeId), () => importWorkbookRun(req, user, progress));
+  return importWorkbookRun(req, user, progress);
+}
+
+async function importWorkbookRun(req: ImportRequest, user: UserInfo, progress: ImportProgress): Promise<ImportResult> {
   if (user.role === "viewer" || user.role === "reporter") throw new ValidationError("Viewers cannot import.");
   const db = getDb();
   const debug = process.env.IMPORT_DEBUG ? (phase: string) => console.log(`[import] ${phase}: ${memoryNote()}`) : () => {};
@@ -205,7 +211,8 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo, progres
   // Importing an older month is done "in a sandbox": the latest report's live data is stored first,
   // the older month is imported and stored, and the live registers are put back afterwards.
   const recoveryOnly = !!req.allowedRegisters?.length && req.allowedRegisters.every((k) => (TRACKER_REGISTERS as readonly string[]).includes(k));
-  const chosen = recoveryOnly && req.programmeId ? (db.prepare("SELECT id FROM programmes WHERE id = ?").get(Number(req.programmeId)) as { id: number } | undefined) : undefined;
+  // the project named on the request (a stand-alone tracker's upload box, or a start-up import), else the top bar's
+  const chosen = req.programmeId ? (db.prepare("SELECT id FROM programmes WHERE id = ?").get(Number(req.programmeId)) as { id: number } | undefined) : undefined;
   const programmeId = chosen?.id ?? Number(getSetting(db, "current_programme_id") ?? (db.prepare("SELECT id FROM programmes ORDER BY id LIMIT 1").get() as { id: number } | undefined)?.id ?? 1);
   let periodId = req.period?.id ?? null;
   if (!periodId && recoveryOnly) {
@@ -220,7 +227,7 @@ export async function importWorkbook(req: ImportRequest, user: UserInfo, progres
     const existing = db.prepare("SELECT id FROM reporting_periods WHERE programme_id = ? AND report_no = ?").get(programmeId, req.period.report_no) as { id: number } | undefined;
     if (existing) periodId = existing.id;
     else {
-      const row = createRecord(getRegisterDef("reporting_periods")!, { report_no: req.period.report_no, period_end: end, label: `Monthly Report No ${req.period.report_no} – ${formatMonthYear(end)}` }, user, "import");
+      const row = createRecord(getRegisterDef("reporting_periods")!, { programme_id: programmeId, report_no: req.period.report_no, period_end: end, label: `Monthly Report No ${req.period.report_no} – ${formatMonthYear(end)}` }, user, "import");
       periodId = row.id;
     }
   }

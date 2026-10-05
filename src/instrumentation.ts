@@ -12,6 +12,9 @@ export async function register() {
     const { repairCustomsVendorLinks } = await import("./lib/repairs/customs-vendors");
     repairCustomsVendorLinks();
     backup.startBackupLoop();
+    // the Yacht Club's reports shipped with this version: imported in the background once the server is up
+    const { importAycReportsAtStart } = await import("./lib/repairs/ayc-reports");
+    setTimeout(() => importAycReportsAtStart(), 20_000);
     // the uploaded files beside the database: anything the disk lost comes back, anything never sent goes up
     const files = await import("./lib/file-store");
     void files.restoreMissingAtStart().then(() => files.uploadUnsentAtStart()).catch((e) => console.error("[files] start-up sync failed:", e));

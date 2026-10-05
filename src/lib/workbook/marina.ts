@@ -222,11 +222,12 @@ export function convertMarinaReport(sheets: Sheet[]): ConversionResult {
       if (m) reportNo = Number(m[1]);
     }
     if (label.startsWith("REPORTING PERIOD")) {
-      const m = /([A-Za-z]{3})[a-z]*\s+(\d{4})/.exec(txt(v, 2));
+      // "September 2026", "SEPTEMBER 2026", "Sep-26"
+      const m = /([A-Za-z]{3})[A-Za-z]*[\s-]+(\d{4}|\d{2})\b/.exec(txt(v, 2));
       if (m) {
         const mo = MONTHS.indexOf(m[1].toLowerCase());
         if (mo >= 0) {
-          const last = new Date(Date.UTC(Number(m[2]), mo + 1, 0));
+          const last = new Date(Date.UTC(m[2].length === 2 ? 2000 + Number(m[2]) : Number(m[2]), mo + 1, 0));
           periodEnd = last.toISOString().slice(0, 10);
         }
       }
@@ -261,6 +262,7 @@ export function convertMarinaReport(sheets: Sheet[]): ConversionResult {
       if (!code) continue;
       const hold = code.endsWith(".98") || up.startsWith("REMAINING BUDGET");
       if (!pk && !contr && !hold) continue; // group total rows such as "Al Saad-Marina Basin"
+      if (!name.trim() && !hold && !(money(v, 5) || money(v, 6) || money(v, 8))) continue; // a row left over from the template: no name, no figures
       const baseline = money(v, 5) ?? 0;
       const transfers = money(v, 6) ?? 0;
       const awarded = money(v, 8) ?? 0;
@@ -320,6 +322,9 @@ export function convertMarinaReport(sheets: Sheet[]): ConversionResult {
   const paramsBySheet = new Map<string, Params>();
   const fragBySheet = new Map<string, string>();
   const engFragBySheet = new Map<string, string>();
+  /** the sheet's own title rows: "PS.003D01 - Dewan Architects & Engineers 2200445", "ZFP (ZUHAIR FAYEZ … - PO 2230041)" */
+  const titleBySheet = new Map<string, string>();
+  const poBySheet = new Map<string, string>();
   for (const s of ipcSheets) {
     const hdr = findHeaderRow(s, "sr nr", "payment applicat") ?? 11;
     const h = s.rows.get(hdr) ?? [];
@@ -345,17 +350,44 @@ export function convertMarinaReport(sheets: Sheet[]): ConversionResult {
       }
       return "";
     };
-    fragBySheet.set(s.name, findFrag(layout === "A" ? [4, 23] : [4, 20]));
+    // the sheet's own title ("PS.003D01 - Dewan Architects & Engineers") names the contract outright
+    const titleFrag = (() => {
+      for (const [r, v] of rows(s)) {
+        if (r >= hdr) break;
+        const t = txt(v, 1).trim();
+        if (!t || /PROGRAMME|ASSET|REPORT|STAGE 1/i.test(t)) continue;
+        if (!titleBySheet.has(s.name) && t.length > 2) titleBySheet.set(s.name, t);
+        const po = /\b(2\d{6})\b/.exec(t);
+        if (po && !poBySheet.has(s.name)) poBySheet.set(s.name, po[1]);
+        const m = /\b(\d{3}[A-Z]\d{2})\b/.exec(t);
+        if (m) return m[1];
+      }
+      return "";
+    })();
+    fragBySheet.set(s.name, titleFrag || findFrag(layout === "A" ? [4, 23] : [4, 20]));
     engFragBySheet.set(s.name, findFrag(layout === "A" ? [13] : [10]));
   }
   interface Contract { sr: number; pr: string; po: string; acc: string; contractor: string; scope: string; status: string; completion: string | null; eot: number; original: number; faAdj: number; line: string; p: Params | null; note: string }
   const contracts: Contract[] = [];
   const H = findSheet(sheets, "Schedule H");
+  // the project's own contract-code prefix (003 for 003D01, 003C13 …), to read a code typed with another project's prefix
+  const prefixCounts = new Map<string, number>();
+  for (const l of lines) {
+    const m = /\b(\d{3})[A-Z]\d{2}\b/.exec(l.orig);
+    if (m) prefixCounts.set(m[1], (prefixCounts.get(m[1]) ?? 0) + 1);
+  }
+  const ownPrefix = [...prefixCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
+  const ownFrag = (raw: string) => {
+    const first = /\d{3}[A-Z]\d{2}/.exec(raw)?.[0] ?? raw;
+    if (lineForFrag(first) || !ownPrefix) return first;
+    const alt = first.replace(/^\d{3}/, ownPrefix);
+    return lineForFrag(alt) ? alt : first;
+  };
   if (H) {
     const hdr = findHeaderRow(H, "sr nr", "name", "original contract") ?? 11;
     for (const [r, v] of rows(H)) {
       if (r <= hdr || !isNum(cell(v, 1))) continue;
-      const acc = txt(v, 4).replace(/\s+/g, "");
+      const acc = ownFrag(txt(v, 4).replace(/\s+/g, ""));
       const sheetName = [...fragBySheet.entries()].find(([, f]) => f === acc)?.[0];
       let scope = txt(v, 6).replace(/\s+/g, " ");
       const line = lineForFrag(acc);
@@ -378,6 +410,18 @@ export function convertMarinaReport(sheets: Sheet[]): ConversionResult {
     nextSr++;
     contracts.push({ sr: nextSr, pr: "", po: `TBC-${frag}`, acc: frag, contractor: l.contractor, scope: l.name, status: "Active", completion: null, eot: 0, original: l.baseline + l.transfers, faAdj: 0, line: l.code, p: null, note: "Added from Schedule B (no Schedule H row)" });
   }
+  // contracts an IPC log names in its own title ("FFEOSE.003D07 - Birch Street") that neither Schedule H nor
+  // Schedule B (with a contractor) carries: added from the title and the cost report line
+  for (const s of ipcSheets) {
+    const frag = fragBySheet.get(s.name) ?? "";
+    const line = frag ? lineForFrag(frag) : "";
+    if (!frag || !line || contracts.some((c) => c.acc === frag)) continue;
+    const title = titleBySheet.get(s.name) ?? s.name;
+    const who = title.replace(/^[A-Z&]+\.\d{3}[A-Z]\d{2}\s*[-–]\s*/i, "").replace(/\s*\(?\bPO\s*\d{7}\)?/i, "").replace(/\s+\d{7}\s*$/, "").trim();
+    const l = lines.find((x) => x.code === line);
+    nextSr++;
+    contracts.push({ sr: nextSr, pr: "", po: poBySheet.get(s.name) ?? (/\b(2\d{6})\b/.exec(l?.name ?? "")?.[1] ?? `TBC-${frag}`), acc: frag, contractor: contractor(who) || who, scope: l?.name ?? who, status: "Active", completion: null, eot: 0, original: (l?.baseline ?? 0) + (l?.transfers ?? 0), faAdj: 0, line, p: paramsBySheet.get(s.name) ?? null, note: `Added from the IPC log "${s.name.trim()}" (no Schedule H row)` });
+  }
   const contractByFrag = new Map(contracts.map((c) => [c.acc, c]));
   out.push({
     name: "Contracts",
@@ -389,9 +433,9 @@ export function convertMarinaReport(sheets: Sheet[]): ConversionResult {
   /** Finds the contract an IPC sheet belongs to: by ACC code in its Aconex refs, else by PO number or contractor in the sheet name. */
   const contractForSheet = (s: Sheet): Contract | undefined => {
     const title = s.name.replace(/^schedule h\s*-?\s*/i, "").trim();
-    const po = /\b(\d{7})\b/.exec(title)?.[1];
+    const po = /\b(\d{7})\b/.exec(title)?.[1] ?? poBySheet.get(s.name);
     if (po) {
-      const hit = contracts.find((c) => c.po === po || c.pr === po);
+      const hit = contracts.find((c) => c.po === po || c.pr === po || c.po.split(/\s*&\s*/).includes(po));
       if (hit) return hit;
     }
     const byFrag = contractByFrag.get(fragBySheet.get(s.name) ?? "");
@@ -455,6 +499,76 @@ export function convertMarinaReport(sheets: Sheet[]): ConversionResult {
   const changeRows: unknown[][] = [];
   if (C) {
     const hdr = findHeaderRow(C, "item", "description of change") ?? 16;
+    // the stage columns by their headers: the blocks (EARLY WARNINGS, RFC, PVO, VO, EI, DVO, FUNDING, Comments)
+    // on the header row, their fields on the row below, the representatives' sub-fields on the row after –
+    // The Marina's sheet carries a "PR Status" column and an ACC / REEF block that the Yacht Club's does not
+    const cc = (() => {
+      const h0 = C.rows.get(hdr) ?? [];
+      const h1 = C.rows.get(hdr + 1) ?? [];
+      const h2 = C.rows.get(hdr + 2) ?? [];
+      const label = (row: Row, i: number) => txt(row, i).replace(/\s+/g, " ").trim().toUpperCase();
+      const last = Math.max(h0.length, h1.length, h2.length);
+      const starts = (names: string[]) => {
+        for (let i = 1; i < last; i++) for (const n of names) if (label(h0, i).startsWith(n)) return i;
+        return -1;
+      };
+      const order = [
+        ["ew", ["EARLY WARNING"]],
+        ["rfc", ["RFC"]],
+        ["pvo", ["PVO"]],
+        ["vo", ["VO"]],
+        ["ei", ["EI"]],
+        ["dvo", ["DVO"]],
+        ["acc", ["ACC AND REEF", "ACC"]],
+        ["fund", ["FUNDING"]],
+        ["comments", ["COMMENTS"]],
+      ] as const;
+      const start: Record<string, number> = {};
+      for (const [k, names] of order) start[k] = starts([...names]);
+      const end = (k: string) => {
+        const mine = start[k];
+        const nexts = Object.values(start).filter((x) => x > mine);
+        return nexts.length ? Math.min(...nexts) - 1 : last;
+      };
+      const within = (k: string, row: Row, ...names: string[]) => {
+        if (start[k] < 0) return -1;
+        for (let i = start[k]; i <= end(k); i++) for (const n of names) if (label(row, i).startsWith(n)) return i;
+        return -1;
+      };
+      const after = (from: number, row: Row, name: string, to: number) => {
+        for (let i = from; i <= to; i++) if (label(row, i).startsWith(name)) return i;
+        return -1;
+      };
+      const rep = (k: string, name: string) => {
+        const c = within(k, h1, name);
+        if (c < 0) return { ref: -1, date: -1, amount: -1 };
+        const to = end(k);
+        const ref = after(c, h2, "ACONEX", to);
+        const date = after(Math.max(c, ref), h2, "DATE", to);
+        const amount = after(Math.max(c, date), h2, "SUBMISSION AMOUNT", to);
+        return { ref, date, amount };
+      };
+      const con = rep("dvo", "CONTRACTOR");
+      const eng = rep("dvo", "ENGINEER");
+      const emp = rep("dvo", "EMPLOYER");
+      const found = start.rfc > 0 && start.pvo > 0 && start.dvo > 0;
+      const or = (v: number, d: number) => (found && v >= 0 ? v : d);
+      return {
+        found,
+        ewNr: or(within("ew", h1, "NR"), 15), ewDate: or(within("ew", h1, "DATE"), 16), ewCr: or(within("ew", h1, "COST REPORT AMOUNT"), 17),
+        rfcNr: or(within("rfc", h1, "NR"), 18), rfcRev: or(within("rfc", h1, "REVISION"), 19), rfcDate: or(within("rfc", h1, "DATE"), 20), rfcStatus: or(within("rfc", h1, "STATUS"), 21), rfcAconex: or(within("rfc", h1, "ACONEX"), 22), rfcTime: or(within("rfc", h1, "TIME IMPACT"), 23), rfcTracker: or(within("rfc", h1, "TRACKER AMOUNT"), 24), rfcCr: or(within("rfc", h1, "COST REPORT AMOUNT"), 25),
+        pvoNr: or(within("pvo", h1, "NR"), 26), pvoRev: or(within("pvo", h1, "REVISION"), 27), pvoDate: or(within("pvo", h1, "DATE"), 28), pvoStatus: or(within("pvo", h1, "STATUS"), 29), pvoPr: found ? within("pvo", h1, "PR STATUS") : 30, pvoAconex: or(within("pvo", h1, "ACONEX"), 31), pvoTime: or(within("pvo", h1, "TIME IMPACT"), 32), pvoTracker: or(within("pvo", h1, "TRACKER AMOUNT"), 33), pvoAmount: or(within("pvo", h1, "AMOUNT", "COST REPORT AMOUNT"), 34),
+        voNr: or(within("vo", h1, "NR"), 35), voDate: or(within("vo", h1, "DATE"), 36), voStatus: or(within("vo", h1, "STATUS"), 37), voAconex: or(within("vo", h1, "ACONEX"), 38),
+        eiNr: or(within("ei", h1, "NR"), 39), eiDate: or(within("ei", h1, "DATE"), 40), eiAconex: or(within("ei", h1, "ACONEX"), 41),
+        dvoNr: or(within("dvo", h1, "NR"), 42), dvoRev: or(within("dvo", h1, "REVISION"), 43), dvoTracker: or(within("dvo", h1, "TRACKER AMOUNT"), 52), dvoStatus: or(within("dvo", h1, "STATUS"), 54),
+        conRef: or(con.ref, 44), conDate: or(con.date, 45), conAmount: or(con.amount, 46),
+        engRef: or(eng.ref, 47), engDate: or(eng.date, 48), engAmount: or(eng.amount, 49),
+        empRef: or(emp.ref, 50), empDate: or(emp.date, 51), empAmount: or(emp.amount, 53),
+        fundBtr: found ? within("fund", h1, "BTR") : 55, fundPvo: found ? within("fund", h1, "PVO") : 56, fundDvo: found ? within("fund", h1, "DVO") : 57, fundPo: found ? within("fund", h1, "PO") : 58, fundPr: found ? within("fund", h1, "PR") : 59, fundCont: found ? within("fund", h1, "CONTINGENCY") : 60,
+        comments: or(start.comments, 62),
+      };
+    })();
+    if (!cc.found) notes.push("Schedule C: the stage columns were not found by their headers – The Marina's column positions are assumed.");
     const DEAD = ["CANCELLED", "REJECTED", "SUPERSEDED", "TRANSFERRED"];
     const stageStatus = (s: string) => {
       const u = s.toUpperCase().trim();
@@ -477,6 +591,7 @@ export function convertMarinaReport(sheets: Sheet[]): ConversionResult {
     const itemSeen = new Map<string, number>();
     for (const [r, v] of rows(C)) {
       if (r <= hdr + 2 || !isNum(cell(v, 1))) continue;
+      if (!txt(v, 2).trim()) continue; // a numbered row with nothing on it
       const item = String(Math.trunc(cell(v, 1) as number));
       const dup = (itemSeen.get(item) ?? 0) + 1;
       itemSeen.set(item, dup);
@@ -485,38 +600,38 @@ export function convertMarinaReport(sheets: Sheet[]): ConversionResult {
       const struckCols = C.strikes?.get(r) ?? [];
       const struck = struckCols.includes(2);
       const struckStage = (refCol: number, status: string) => (struckCols.includes(refCol) && !DEAD_STAGE.includes(status) ? "Cancelled" : status);
-      const dvoStatus = struckStage(42, stageStatus(txt(v, 54)));
-      const rfcStatus = struckStage(18, stageStatus(txt(v, 21)));
-      const pvoStatus = struckStage(26, stageStatus(txt(v, 29)));
-      const voStatus = struckStage(35, stageStatus(txt(v, 37)));
+      const dvoStatus = struckStage(cc.dvoNr, stageStatus(txt(v, cc.dvoStatus)));
+      const rfcStatus = struckStage(cc.rfcNr, stageStatus(txt(v, cc.rfcStatus)));
+      const pvoStatus = struckStage(cc.pvoNr, stageStatus(txt(v, cc.pvoStatus)));
+      const voStatus = struckStage(cc.voNr, stageStatus(txt(v, cc.voStatus)));
       const excelStatus = txt(v, 7);
       const u = excelStatus.toUpperCase();
       const excelOverall = u.includes("ACCEPT") || u.includes("APPROV") ? "Approved" : u.includes("REJECT") || u.includes("SUPERSED") || u.includes("CANCEL") ? "Rejected" : u.includes("FINAL ACCOUNT") ? (dvoStatus === "Approved" ? "Approved" : "Pending") : "Pending";
       // the stages decide: a DVO approved closes the change, a struck-through line or a dead last stage cancels it
       const overall = impliedOverallStatus({ rfc: rfcStatus, pvo: pvoStatus, vo: voStatus, dvo: dvoStatus }, excelOverall, { struck });
-      const pvoAmt = money(v, 34);
-      const rfcAmt = money(v, 25);
-      const dvoAmt = money(v, 53);
-      const stageDates = [date(v, 51), date(v, 48), date(v, 45), date(v, 40), date(v, 36), date(v, 28), date(v, 20)].filter((x): x is string => !!x);
+      const pvoAmt = money(v, cc.pvoAmount);
+      const rfcAmt = money(v, cc.rfcCr);
+      const dvoAmt = money(v, cc.empAmount);
+      const stageDates = [date(v, cc.empDate), date(v, cc.engDate), date(v, cc.conDate), date(v, cc.eiDate), date(v, cc.voDate), date(v, cc.pvoDate), date(v, cc.rfcDate)].filter((x): x is string => !!x);
       let closed: string | null = null;
-      if (overall === "Approved" && ["Approved", "Review Complete"].includes(dvoStatus)) closed = date(v, 51) ?? (stageDates.length ? stageDates.sort().at(-1)! : null);
+      if (overall === "Approved" && ["Approved", "Review Complete"].includes(dvoStatus)) closed = date(v, cc.empDate) ?? (stageDates.length ? stageDates.sort().at(-1)! : null);
       else if (DEAD_STAGE.includes(overall) || overall === "Rejected") closed = stageDates.length ? stageDates.sort().at(-1)! : null;
       const pendingBy = txt(v, 6);
       const pending = ({ CLOSED: "None", "N/A": "None", OTHER: "Commercial Team" } as Record<string, string>)[pendingBy.toUpperCase()] ?? "Commercial Team";
       const rep = ["CLOSED", "OTHER", "N/A"].includes(txt(v, 5).toUpperCase()) ? "" : txt(v, 5).replace(/\b\w/g, (c) => c.toUpperCase()).replace(/\B\w/g, (c) => c.toLowerCase());
       const stage = txt(v, 3).replace("Post Contract", "Post-Contract").replace("Pre Contract", "Pre-Contract");
-      const note = [excelStatus ? `Excel status: ${excelStatus}` : "", txt(v, 62) ? `Comments: ${txt(v, 62)}` : "", pendingBy ? `Action pending by (Excel): ${pendingBy}` : ""].filter(Boolean).join(" | ");
+      const note = [excelStatus ? `Excel status: ${excelStatus}` : "", txt(v, cc.comments) ? `Comments: ${txt(v, cc.comments)}` : "", pendingBy ? `Action pending by (Excel): ${pendingBy}` : ""].filter(Boolean).join(" | ");
       void DEAD;
       changeRows.push([
-        itemNo, txt(v, 2), overall, date(v, 20) ?? date(v, 16) ?? date(v, 28), asset, pkg(txt(v, 13)), contractor(txt(v, 14)), lineForPkg(txt(v, 13)), stage, txt(v, 4), txt(v, 8), rep, pending, closed,
-        txt(v, 15), date(v, 16), money(v, 17),
-        txt(v, 18), txt(v, 19), date(v, 20), rfcStatus, txt(v, 22), timeImpact(v, 23), rfcAmt, rfcAmt === null ? null : 0,
-        txt(v, 26), txt(v, 27), date(v, 28), pvoStatus, txt(v, 31), timeImpact(v, 32), pvoAmt, pvoAmt, prStatus(txt(v, 30)),
-        txt(v, 35), date(v, 36), voStatus, txt(v, 38), txt(v, 35) ? pvoAmt : null,
-        txt(v, 39), date(v, 40), txt(v, 41),
-        txt(v, 42), txt(v, 43), date(v, 51), dvoStatus, money(v, 46), dvoAmt,
-        txt(v, 44), date(v, 45), money(v, 46), txt(v, 47), date(v, 48), money(v, 49), txt(v, 50), date(v, 51), dvoAmt,
-        money(v, 55), money(v, 56), money(v, 57), money(v, 58), money(v, 59), money(v, 60), note,
+        itemNo, txt(v, 2), overall, date(v, cc.rfcDate) ?? date(v, cc.ewDate) ?? date(v, cc.pvoDate), asset, pkg(txt(v, 13)), contractor(txt(v, 14)), lineForPkg(txt(v, 13)), stage, txt(v, 4), txt(v, 8), rep, pending, closed,
+        txt(v, cc.ewNr), date(v, cc.ewDate), money(v, cc.ewCr),
+        txt(v, cc.rfcNr), txt(v, cc.rfcRev), date(v, cc.rfcDate), rfcStatus, txt(v, cc.rfcAconex), timeImpact(v, cc.rfcTime), rfcAmt, rfcAmt === null ? null : 0,
+        txt(v, cc.pvoNr), txt(v, cc.pvoRev), date(v, cc.pvoDate), pvoStatus, txt(v, cc.pvoAconex), timeImpact(v, cc.pvoTime), pvoAmt, pvoAmt, prStatus(txt(v, cc.pvoPr)),
+        txt(v, cc.voNr), date(v, cc.voDate), voStatus, txt(v, cc.voAconex), txt(v, cc.voNr) ? pvoAmt : null,
+        txt(v, cc.eiNr), date(v, cc.eiDate), txt(v, cc.eiAconex),
+        txt(v, cc.dvoNr), txt(v, cc.dvoRev), date(v, cc.empDate), dvoStatus, money(v, cc.conAmount), dvoAmt,
+        txt(v, cc.conRef), date(v, cc.conDate), money(v, cc.conAmount), txt(v, cc.engRef), date(v, cc.engDate), money(v, cc.engAmount), txt(v, cc.empRef), date(v, cc.empDate), dvoAmt,
+        money(v, cc.fundBtr), money(v, cc.fundPvo), money(v, cc.fundDvo), money(v, cc.fundPo), money(v, cc.fundPr), money(v, cc.fundCont), note,
       ]);
     }
     notes.push(`Changes: ${changeRows.length}.`);
@@ -665,6 +780,7 @@ export function convertMarinaReport(sheets: Sheet[]): ConversionResult {
   if (G) {
     const hdr = findHeaderRow(G, "ref", "type of bond") ?? 12;
     const seen = new Map<string, number>();
+    const noExpiry: string[] = [];
     for (const [r, v] of rows(G)) {
       if (r <= hdr || !isNum(cell(v, 2)) || !txt(v, 7)) continue;
       // the ref is the number printed on Schedule G; a number the report uses twice gets a letter (10, 10a)
@@ -678,10 +794,18 @@ export function convertMarinaReport(sheets: Sheet[]): ConversionResult {
       if (req === null && reqTxt) comments = `Contract requirement: ${reqTxt}. ${comments}`.trim();
       const line = lineForPkg(txt(v, 4));
       const released = !!line && closedLines.has(line);
+      const bondRef = `${base}${dup === 1 ? "" : String.fromCharCode(96 + dup)}`;
+      const expiry = date(v, 12);
+      if (!expiry) {
+        // no expiry: a bond returned or never required ("Fully recovered", "N/A") – not a live bond
+        noExpiry.push(`${bondRef} ${t} – ${contractor(txt(v, 3))}${reqTxt && req === null ? ` (${reqTxt})` : ""}`);
+        continue;
+      }
       if (released) releasedBonds++;
-      bondRows.push([`${base}${dup === 1 ? "" : String.fromCharCode(96 + dup)}`, contractor(txt(v, 3)), pkg(txt(v, 4)), line, t, txt(v, 8), money(v, 5), req !== null ? "Fixed SAR amount" : "% of contract value", req, money(v, 10), date(v, 12), yes(v, 14), yes(v, 15), released, comments]);
+      bondRows.push([bondRef, contractor(txt(v, 3)), pkg(txt(v, 4)), line, t, txt(v, 8), money(v, 5), req !== null ? "Fixed SAR amount" : "% of contract value", req, money(v, 10), expiry, yes(v, 14), yes(v, 15), released, comments]);
     }
     if (releasedBonds) notes.push(`Bonds & insurance: ${releasedBonds} marked as released because the contract is closed in FA Status / Schedule H.`);
+    if (noExpiry.length) notes.push(`Bonds & insurance: ${noExpiry.length} row(s) without an expiry date left out (returned or not required): ${noExpiry.join("; ")}.`);
   }
   out.push({
     name: "Bonds & Insurance",
@@ -722,6 +846,7 @@ export function convertMarinaReport(sheets: Sheet[]): ConversionResult {
   if (FA) {
     const hdr = findHeaderRow(FA, "acc code", "status") ?? 12;
     const seenAcc = new Set<string>();
+    const faNoLine: string[] = [];
     for (const [r, v] of rows(FA)) {
       if (r <= hdr || !isNum(cell(v, 1)) || !txt(v, 2)) continue;
       const acc = txt(v, 2).replace(/\s+/g, "");
@@ -731,9 +856,21 @@ export function convertMarinaReport(sheets: Sheet[]): ConversionResult {
       // only "Open" is open: "FAS Signed", "Closed" and the workbook's other wordings all close the contract
       const status = faStatusFromExcel(txt(v, 12));
       const typ = txt(v, 5);
-      faRows.push([acc, txt(v, 3).replace(/\s+/g, " "), contractor(txt(v, 4) || txt(v, 3)), ["Contractor", "Consultant", "Supplier", "Insurer"].includes(typ) ? typ : "", lineForFrag(frag), contractByFrag.get(frag)?.po ?? "", txt(v, 9) === "TBC" ? "" : txt(v, 9), date(v, 10), status, "", status === "Closed" ? null : null, txt(v, 13)]);
+      const faContractor = contractor(txt(v, 4) || txt(v, 3));
+      const po = String(contractByFrag.get(frag)?.po ?? "");
+      const byPo = po && !/^TBC/.test(po) ? lines.find((l) => !l.hold && l.name.includes(po))?.code ?? "" : "";
+      const byContractor = (() => {
+        const hits = lines.filter((l) => !l.hold && l.contractor && l.contractor === faContractor);
+        return hits.length === 1 ? hits[0].code : "";
+      })();
+      const faLine = lineForFrag(frag) || byPo || byContractor;
+      if (!faLine) {
+        faNoLine.push(`${acc} ${faContractor}`);
+        continue;
+      }
+      faRows.push([acc, txt(v, 3).replace(/\s+/g, " "), faContractor, ["Contractor", "Consultant", "Supplier", "Insurer"].includes(typ) ? typ : "", faLine, contractByFrag.get(frag)?.po ?? "", txt(v, 9) === "TBC" ? "" : txt(v, 9), date(v, 10), status, "", status === "Closed" ? null : null, txt(v, 13)]);
     }
-    notes.push(`Final accounts: ${faRows.length}.`);
+    notes.push(`Final accounts: ${faRows.length}.${faNoLine.length ? ` ${faNoLine.length} row(s) left out – no cost report line for the ACC code, the contract's PO or the contractor: ${faNoLine.join("; ")}.` : ""}`);
   }
   out.push({
     name: "Final Account Status",

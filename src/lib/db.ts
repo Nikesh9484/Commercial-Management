@@ -411,6 +411,25 @@ function seed(db: Database.Database) {
     }
     setSetting(db, "seeded_vbh", "1");
   }
+  // Third stand-alone project: Amaala Yacht Club (AYC), programme code 1TB01003, one asset. Its monthly
+  // workbook is in The Marina's layout (Schedule A–L, Data Input), so it follows The Marina's conventions.
+  if (getSetting(db, "seeded_ayc") !== "1") {
+    if (!db.prepare("SELECT 1 FROM programmes WHERE code = '1TB01003'").get()) {
+      const marina = db.prepare("SELECT client_id, location_id FROM programmes ORDER BY id LIMIT 1").get() as { client_id: number | null; location_id: number | null } | undefined;
+      const prog = db
+        .prepare(
+          `INSERT INTO programmes(code, name, client_id, location_id, hold_in_afa, workbook_feeds_all, created_at, created_by, updated_at, updated_by)
+           VALUES('1TB01003', 'Amaala Yacht Club (AYC)', ?, ?, 0, 1, ?, 'system', ?, 'system')`,
+        )
+        .run(marina?.client_id ?? null, marina?.location_id ?? null, stamp, stamp);
+      if (!db.prepare("SELECT 1 FROM assets WHERE code = '1TB01003.01'").get()) {
+        db.prepare(`INSERT INTO assets(programme_id, code, name, created_at, created_by, updated_at, updated_by) VALUES(?, '1TB01003.01', 'Amaala Yacht Club', ?, 'system', ?, 'system')`).run(prog.lastInsertRowid, stamp, stamp);
+      }
+      const main = db.prepare("SELECT id FROM assets WHERE code = '1TB01003.01'").get() as { id: number } | undefined;
+      if (main) setSetting(db, `current_asset_id:${prog.lastInsertRowid}`, String(main.id));
+    }
+    setSetting(db, "seeded_ayc", "1");
+  }
   // Level 1 convention per project: VBH's Excel counts the remaining budget hold as a commitment; The Marina's leaves it out.
   if (getSetting(db, "seeded_hold_rule") !== "1") {
     db.prepare("UPDATE programmes SET hold_in_afa = 1 WHERE code = '1TB01006'").run();

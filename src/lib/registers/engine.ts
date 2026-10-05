@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { CLOSED_STATUSES, impliedOverallStatus } from "./defs/changes";
 import { CONTRACT_CLOSED_STATUS, syncContractClosedChanges } from "../changes/auto-close";
 import { syncFinalAccounts, syncFinalAccountSettlements } from "../final-accounts/adjustment";
@@ -68,11 +69,32 @@ export function lookupOptions(db: Database.Database, registerKey: string, includ
   return rows.map((r) => ({ id: r.id, label: String(r.label ?? "").replace(/( · )+$/, "") }));
 }
 
+/**
+ * Work done for a project other than the one in the top bar (an import that names its project, a
+ * start-up job): inside `withScope` the scope is that project and its asset, not the top bar's, so every
+ * row written lands in – and every uniqueness check looks at – the right project.
+ */
+const scopeOverride = new AsyncLocalStorage<{ programme_id: number; asset_id: number | null }>();
+
+export function withScope<T>(programmeId: number, fn: () => T): T {
+  const db = getDb();
+  const remembered = getSetting(db, `current_asset_id:${programmeId}`);
+  const kept = remembered ? (db.prepare("SELECT id FROM assets WHERE id = ? AND programme_id = ?").get(Number(remembered), programmeId) as { id: number } | undefined) : undefined;
+  const first = db.prepare("SELECT id FROM assets WHERE programme_id = ? ORDER BY id LIMIT 1").get(programmeId) as { id: number } | undefined;
+  const asset: number | null = kept?.id ?? first?.id ?? null;
+  return scopeOverride.run({ programme_id: programmeId, asset_id: asset }, fn);
+}
+
 /** The filter applied to a scoped register: rows of the Programme / Asset selected in the top bar. */
 export function scopeFilter(def: RegisterDef): Record<string, number> {
   if (!def.scope) return {};
-  const db = getDb();
   const key = def.scope === "programme" ? "programme_id" : "asset_id";
+  const over = scopeOverride.getStore();
+  if (over) {
+    const v = over[key];
+    return v !== null && v !== undefined ? { [key]: v } : {};
+  }
+  const db = getDb();
   const value = getSetting(db, `current_${key}`);
   return value ? { [key]: Number(value) } : {};
 }
@@ -81,7 +103,8 @@ export function scopeFilter(def: RegisterDef): Record<string, number> {
 export function scopeDefaults(def: RegisterDef): Record<string, number> {
   const out = scopeFilter(def);
   if (def.scope === "programme" && def.fields.some((f) => f.key === "asset_id")) {
-    const asset = getSetting(getDb(), "current_asset_id");
+    const over = scopeOverride.getStore();
+    const asset = over ? over.asset_id : getSetting(getDb(), "current_asset_id");
     if (asset) out.asset_id = Number(asset);
   }
   return out;

@@ -118,12 +118,15 @@ export function matchContractor(name: string, contractors: KnownContractor[]): K
 
 /**
  * How the trackers name our project in their "Program" column: "Marina Village" / "Marinas" for The
- * Marina, "Marina - VBH" / "Village Boutique Hotel" for VBH. The other Marina-precinct projects
- * (RSMLI, AYC, MLH, MH3 …) are excluded from The Marina by name.
+ * Marina, "Marina - VBH" / "Village Boutique Hotel" for VBH, "AYC" / "Yacht Club" for the Amaala Yacht
+ * Club. The other Marina-precinct projects (RSMLI, MLH, MH3 …) are excluded from The Marina by name.
  */
 export function projectNamePattern(ctx: Pick<RecoveryContext, "programmeCode" | "programmeName">): RegExp {
   const vbh = /boutique|\bvbh\b/i.test(ctx.programmeName) || /006$/.test(ctx.programmeCode);
   if (vbh) return /\bvbh\b|\bvhb\b|boutique/i;
+  // Amaala Yacht Club: "AYC", "Yacht Club", "Program 1 - AYC"
+  const ayc = /yacht|\bayc\b/i.test(ctx.programmeName) || /003$/.test(ctx.programmeCode);
+  if (ayc) return /\bayc\b|yacht/i;
   return /^(?!.*(vbh|vhb|boutique|rsmli|ayc|mlh|mh3|hotel|lifestyle|precinct|yacht|infra))\s*marina/i;
 }
 
