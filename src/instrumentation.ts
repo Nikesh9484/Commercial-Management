@@ -9,8 +9,9 @@ export async function register() {
     repairPaymentCumulatives();
     const { repairFinalAccountBreakdown } = await import("./lib/repairs/final-account-breakdown");
     repairFinalAccountBreakdown();
-    const { repairCustomsVendorLinks } = await import("./lib/repairs/customs-vendors");
+    const { repairCustomsVendorLinks, repairBareCustomsRows } = await import("./lib/repairs/customs-vendors");
     repairCustomsVendorLinks();
+    repairBareCustomsRows();
     const { repairAconexTies } = await import("./lib/repairs/aconex-ties");
     repairAconexTies();
     backup.startBackupLoop();

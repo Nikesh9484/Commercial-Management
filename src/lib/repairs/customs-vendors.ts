@@ -1,6 +1,6 @@
 import { getDb, getSetting, setSetting } from "../db";
 import { getRegisterDef } from "../registers";
-import { updateRecord } from "../registers/engine";
+import { updateRecord, deleteRecord } from "../registers/engine";
 import type { RecordRow, RegisterDef } from "../registers/types";
 import { matchContractor, type KnownContractor } from "../workbook/recovery";
 import { codeFrag } from "../workbook/claims-tracker";
@@ -61,4 +61,31 @@ export function repairCustomsVendorLinks(): void {
   } catch (e) {
     console.error("[repair] customs vendor links failed:", e);
   }
+}
+
+/**
+ * One-off (5 Oct 2026): customs rows that were nothing but a contract code – the tracker lists the Yacht
+ * Club's direct-payment codes (003C203 …) with no vendor, figures or notes – are removed; the converter no
+ * longer makes them.
+ */
+export function repairBareCustomsRows(): void {
+  const db = getDb();
+  if (getSetting(db, "repaired_bare_customs") === "1") return;
+  setSetting(db, "repaired_bare_customs", "1");
+  const def = getRegisterDef("customs_recovery");
+  if (!def) return;
+  const keys = ["legal_entity", "action_lead", "contract_value", "remaining_to_pay", "customs_payer", "other_contract_note", "vat_deferred", "vat_definitive", "customs_fasah", "customs_naif", "customs_rsg_paid", "customs_contractor_paid", "to_recover", "actual_customs_cost", "unrecoverable", "recoverable_via_contractor", "ps_exceeds", "notice_ref", "pvo_ref", "pvo_date", "pvo_value", "ewn_ref", "ewn_value", "comments"];
+  const rows = db.prepare("SELECT * FROM customs_recovery").all() as RecordRow[];
+  let gone = 0;
+  for (const r of rows) {
+    const codeOnly = !r.vendor || String(r.vendor) === String(r.contract_code ?? "");
+    if (!codeOnly || !keys.every((k) => r[k] === null || r[k] === undefined || r[k] === "" || r[k] === 0)) continue;
+    try {
+      deleteRecord(def, Number(r.id), SYSTEM);
+      gone++;
+    } catch (e) {
+      console.warn("[customs] bare row not removed:", e instanceof Error ? e.message : e);
+    }
+  }
+  if (gone) console.log(`[customs] ${gone} code-only customs row(s) removed.`);
 }

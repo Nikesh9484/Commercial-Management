@@ -557,6 +557,18 @@ export function convertCustomsTracker(sheets: SheetValues[], ctx: RecoveryContex
       byKey.set(String(rec.tracker_key), rec);
     }
   }
+  // a contract code the commercial lead listed on the tracker with nothing against it – no vendor, no
+  // figures, no payer, reference or note – is not a recovery row: the Yacht Club's direct-payment codes
+  // (003C203 …) sit on the tracker that way. Left out rather than shown as an empty row named by its code.
+  const BARE_KEYS = ["legal_entity", "action_lead", "contract_value", "remaining_to_pay", "customs_payer", "other_contract_note", "vat_deferred", "vat_definitive", "customs_fasah", "customs_naif", "customs_rsg_paid", "customs_contractor_paid", "to_recover", "actual_customs_cost", "unrecoverable", "recoverable_via_contractor", "ps_exceeds", "notice_ref", "pvo_ref", "pvo_date", "pvo_value", "ewn_ref", "ewn_value", "comments"];
+  let bare = 0;
+  for (const [key, r] of [...byKey.entries()]) {
+    const codeOnly = !r.vendor || String(r.vendor) === String(r.contract_code ?? "");
+    if (codeOnly && BARE_KEYS.every((k) => r[k] === null || r[k] === undefined || r[k] === "" || r[k] === 0)) {
+      byKey.delete(key);
+      bare++;
+    }
+  }
   const out: unknown[][] = [...byKey.values()].map((r) => [
     r.tracker_key,
     r.vendor,
@@ -668,6 +680,7 @@ export function convertCustomsTracker(sheets: SheetValues[], ctx: RecoveryContex
   if (ambiguous.length) notes.push(`${ambiguous.length} vendor(s) could not be tied to one contractor for certain and are listed under the vendor's own name until the tracker names the contract: ${ambiguous.join("; ")}.`);
   const noFigures = out.filter((r) => r[18] === null && r[20] === null).length;
   if (noFigures) notes.push(`${noFigures} contract(s) carry no customs figures yet on the tracker (the vendor's figures could not be tied to them): only the contract details are recorded.`);
+  if (bare) notes.push(`${bare} contract code(s) listed on the tracker with nothing against them (no vendor, figures or notes) were left out.`);
   return {
     sheets: [
       {
