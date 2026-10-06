@@ -1335,7 +1335,8 @@ function sectionBands(fields: FieldDef[]): { section: string | null; span: numbe
 }
 
 /** The quick-catch lists above the Change Management Tracker: the open items at each stage. */
-const QUICK_LISTS: { key: string; title: string; hint: string; stages: string[]; tone: "amber" | "blue" | "green"; border: string }[] = [
+const QUICK_LISTS: { key: string; title: string; hint: string; stages: string[]; tone: "amber" | "blue" | "green" | "red"; border: string }[] = [
+  { key: "rfc", title: "Open RFCs / RFAs", hint: "Requests for Change and Requests for Approval raised with no PVO yet – the change starts here.", stages: ["Early Warning", "RFC"], tone: "red", border: "border-l-rose-400" },
   { key: "pvo", title: "Open PVOs", hint: "Potential Variation Orders not yet closed – the full row, in the columns chosen below.", stages: ["PVO"], tone: "amber", border: "border-l-amber-400" },
   { key: "vo", title: "Open VOs / EIs", hint: "Variation Orders and Engineer's Instructions not yet closed.", stages: ["VO", "EI"], tone: "blue", border: "border-l-violet-400" },
   { key: "dvo", title: "Open DVOs", hint: "Determined Variation Orders still to be approved, including those at funding.", stages: ["DVO", "Funding"], tone: "green", border: "border-l-emerald-400" },

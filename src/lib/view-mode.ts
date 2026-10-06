@@ -76,6 +76,9 @@ export function backfillDerived(def: RegisterDef, rows: RecordRow[]) {
   enrichRows(def, fresh);
   rows.forEach((r, i) => {
     for (const [k, v] of Object.entries(fresh[i])) if (!(k in r)) r[k] = v;
+    // a change's current stage is read from its stored stage statuses (no figure is involved), so an issued report
+    // places its open items by today's rule – VO and EI approved with the DVO pending is an open DVO
+    if (def.key === "changes" && "current_stage" in fresh[i]) r.current_stage = fresh[i].current_stage;
   });
 }
 
