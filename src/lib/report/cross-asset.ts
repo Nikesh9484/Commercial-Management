@@ -249,14 +249,23 @@ export function buildCrossAssetReport(data: ReportData, config: CrossAssetConfig
     const lineNo = /(\d{3})[A-Z]#?\d{1,3}\b/.exec(lineLabel)?.[1] ?? "";
     let hit = detect(c, raw, text, desc, notes, lineNo, lineLabel);
     const marked = isMarked(c) || byCategory(c, desc, notes, lineNo);
+    // a green row that names no other asset (and sits on this project's own contract code) is not a transfer between
+    // assets – the tracker shades other things green too (seed funding, design changes): left out, not listed
+    let unnamedMark = false;
     if (marked && R.marked !== "off") {
       if (hit) hit = { ...hit, rule: `${hit.rule} · ${isMarked(c) ? "green in Schedule C" : String(c.change_category_id__label ?? "marked")}` };
       else {
         const who = named(`${desc} | ${notes}`);
-        hit = { dir: R.marked, assets: who.length ? who : ["Not named"], rule: isMarked(c) ? "Green in Schedule C" : "Back charge category", basis: `${isMarked(c) ? "marked green (inter-asset) in Schedule C" : `change category "${String(c.change_category_id__label ?? "")}" naming another asset`}${who.length ? ` – ${who.join(" / ")} named in the entry` : " – the other asset is not named in the entry"}; the direction is not stated – confirm`, evidence: isMarked(c) ? "green in Schedule C" : String(c.change_category_id__label ?? "") };
+        if (!who.length && !(lineNo && lineNo !== ownNo && byNo.has(lineNo))) unnamedMark = true;
+        else hit = { dir: R.marked, assets: who.length ? who : ["Not named"], rule: isMarked(c) ? "Green in Schedule C" : "Back charge category", basis: `${isMarked(c) ? "marked green (inter-asset) in Schedule C" : `change category "${String(c.change_category_id__label ?? "")}" naming another asset`}${who.length ? ` – ${who.join(" / ")} named in the entry` : " – the other asset is not named in the entry"}; the direction is not stated – confirm`, evidence: isMarked(c) ? "green in Schedule C" : String(c.change_category_id__label ?? "") };
       }
     }
     const ov = overrides[itemNo];
+    if (unnamedMark && !ov) {
+      const { amount } = valueOf(c);
+      leftOut.push({ id: Number(c.id), itemNo, description: desc, otherAsset: "", status: String(c.overall_status_id__label ?? ""), amount, reason: "Green in Schedule C but no other asset is named in the entry – not a transfer between assets (place it by hand if it is)", auto: "none" });
+      continue;
+    }
     if (!hit && !ov) continue;
     const { amount, stage } = valueOf(c);
     const status = String(c.overall_status_id__label ?? "");
