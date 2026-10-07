@@ -142,22 +142,26 @@ function table(doc: Doc, head: string[], rows: string[][], cols: number[], opts:
       x += widths[i];
     });
   };
+  // text() moves doc.y to the end of the last cell written: each row is placed at its own top and the
+  // next starts exactly at its bottom, whatever the last cell wrapped to
   const hh = heightOf(head, true);
   if (doc.y + hh + 30 > doc.page.height - 50) doc.addPage();
-  drawRow(head, doc.y, hh, opts.headFill ?? NAVY, true, opts.headColor ?? "#FFFFFF");
-  doc.y += hh;
+  let y = doc.y;
+  drawRow(head, y, hh, opts.headFill ?? NAVY, true, opts.headColor ?? "#FFFFFF");
+  y += hh;
   rows.forEach((r, i) => {
     const bold = opts.boldRows?.includes(i) ?? false;
     const h = heightOf(r, bold);
-    if (doc.y + h > doc.page.height - 50) {
+    if (y + h > doc.page.height - 50) {
       doc.addPage();
-      drawRow(head, doc.y, hh, opts.headFill ?? NAVY, true, opts.headColor ?? "#FFFFFF");
-      doc.y += hh;
+      y = doc.y;
+      drawRow(head, y, hh, opts.headFill ?? NAVY, true, opts.headColor ?? "#FFFFFF");
+      y += hh;
     }
-    drawRow(r, doc.y, h, opts.shade?.[i] ?? null, bold);
-    doc.y += h;
+    drawRow(r, y, h, opts.shade?.[i] ?? null, bold);
+    y += h;
   });
-  doc.y += 10;
+  doc.y = y + 10;
 }
 /** label / value rows with a shaded label column, as the approved packs set them */
 function kv(doc: Doc, rows: [string, string][], labelW = 0.2) {
@@ -166,12 +170,13 @@ function kv(doc: Doc, rows: [string, string][], labelW = 0.2) {
     doc.font("Helvetica").fontSize(8.5);
     const h = Math.max(doc.heightOfString(clean(v) || " ", { width: TW - lw - 8, lineGap: 1 }), 10) + 7;
     if (doc.y + h > H - 50) doc.addPage();
-    doc.rect(M, doc.y, lw, h).fill(BEIGE);
-    doc.rect(M, doc.y, lw, h).lineWidth(0.4).stroke(LINE);
-    doc.rect(M + lw, doc.y, TW - lw, h).lineWidth(0.4).stroke(LINE);
-    doc.fillColor(INK).font("Helvetica-Bold").fontSize(8.5).text(k, M + 4, doc.y + 3.5, { width: lw - 8 });
-    doc.font("Helvetica").text(clean(v), M + lw + 4, doc.y + 3.5, { width: TW - lw - 8, lineGap: 1 });
-    doc.y += h;
+    const y = doc.y;
+    doc.rect(M, y, lw, h).fill(BEIGE);
+    doc.rect(M, y, lw, h).lineWidth(0.4).stroke(LINE);
+    doc.rect(M + lw, y, TW - lw, h).lineWidth(0.4).stroke(LINE);
+    doc.fillColor(INK).font("Helvetica-Bold").fontSize(8.5).text(k, M + 4, y + 3.5, { width: lw - 8 });
+    doc.font("Helvetica").text(clean(v), M + lw + 4, y + 3.5, { width: TW - lw - 8, lineGap: 1 });
+    doc.y = y + h;
   }
   doc.y += 10;
 }
@@ -713,6 +718,49 @@ export async function renderBudgetParticularsNova(v: PackValues): Promise<Buffer
 }
 
 /* ------------------------------------------------------------------ */
+/* Contract summary – the change log as a contract position             */
+
+/**
+ * The contract summary page of the PVO and DVO packs: every change on the contract with where it stands and its
+ * Aconex approval, the agreed VOs (DVO approved), the un-agreed ones (PVO or VO approved, DVO still to come) and
+ * this change, adding up to the potential revised contract value. Read from the change register, in a size that
+ * reads on paper (9 pt).
+ */
+export async function renderContractSummary(v: PackValues, rows: ChangeLogRow[], kind: "PVO" | "DVO"): Promise<Buffer> {
+  const { doc, done } = newDoc("Contract summary", true);
+  const PTW = H - M * 2;
+  const sar0 = (n: number | null) => (n === null || Math.abs(n) < 0.005 ? "" : sar(n));
+  const original = num(v.original_contract) || num(v.contract_price);
+  const thisValue = num(v.total_value) || num(v.dvo_value) || num(v.add) - num(v.omit);
+  const no = kind === "PVO" ? pvoNoOf(v) : (String(v.dvo_no ?? "").replace(/\D/g, "") || pvoNoOf(v));
+  const contractor = clean(v.contractor);
+  const line1 = `Contract Summary – ${contractor || "Contract"}`;
+  const line2 = [clean(v.project_name), clean(v.works_package || v.contract_title), v.contract_no ? `Contract Code ${clean(v.contract_no)}` : ""].filter(Boolean).join(" – ");
+  doc.rect(M, 40, PTW, 22).fill(NAVY);
+  doc.fillColor("#FFFFFF").font("Helvetica-Bold").fontSize(11).text(line1, M + 8, 46, { width: PTW - 16, lineBreak: false });
+  doc.fillColor(MUTED).font("Helvetica").fontSize(8.5).text(`${line2}${line2 ? " – " : ""}change log – SAR excl. VAT`, M, 68, { width: PTW });
+  doc.y = 90;
+  const live = rows.filter((r) => !r.thisOne && !/^(cancelled|rejected|superseded)$/i.test(r.status ?? ""));
+  let agreed = 0;
+  let unagreed = 0;
+  const body: string[][] = [["Contract", "Contract Price", "", "", sar(original), "", "", ""]];
+  for (const r of live) {
+    const isAgreed = r.status === "DVO approved";
+    const value = isAgreed ? (r.dvoValue ?? r.pvoValue) : (r.pvoValue ?? r.dvoValue);
+    if (isAgreed) agreed += value ?? 0;
+    else unagreed += value ?? 0;
+    body.push([r.pvo || r.itemNo || "", r.description, r.status ?? "", r.approvalRef ?? "", "", isAgreed ? sar0(value) : "", isAgreed ? "" : sar0(value), ""]);
+  }
+  body.push([`${kind} ${no}`, clean(v.title), `This ${kind} – for approval`, "", "", "", "", sar(thisValue)]);
+  body.push(["", "Totals", "", "", sar(original), sar(agreed), sar(unagreed), sar(thisValue)]);
+  body.push(["", `Potential Revised Contract Value (after this ${kind})`, "", "", sar(original + agreed + unagreed + thisValue), "", "", ""]);
+  const shade: Record<number, string> = { [body.length - 1]: PALE, [body.length - 2]: PALE, [body.length - 3]: BEIGE };
+  table(doc, ["Reference", "Description", "Current status", "Approval reference", "Contract value (SAR)", "Agreed VO (SAR)", "Unagreed VO (SAR)", `This ${kind} (SAR)`], body, [0.08, 0.3, 0.1, 0.14, 0.1, 0.095, 0.095, 0.09], { size: 9, align: ["left", "left", "left", "left", "right", "right", "right", "right"], boldRows: [body.length - 1, body.length - 2], shade, width: PTW });
+  doc.fillColor(MUTED).font("Helvetica").fontSize(8).text(`Agreed VO: determined variation orders approved. Unagreed VO: PVOs and VOs approved whose determination is still to come. Approval references are the Aconex workflow approvals held on the change register. ${live.length} earlier change(s) on the contract.`, M, doc.y, { width: PTW });
+  finish(doc, `${kind} ${no} – Contract summary`);
+  return done;
+}
+
 /* Annexure 6 – change log                                             */
 
 export async function renderChangeLogNova(v: PackValues, rows: ChangeLogRow[]): Promise<Buffer> {
@@ -735,9 +783,11 @@ export async function renderChangeLogNova(v: PackValues, rows: ChangeLogRow[]): 
   doc.y = y + 10;
   const original = num(v.original_contract) || num(v.contract_price);
   const thisValue = num(v.total_value) || num(v.add) - num(v.omit);
-  const body = rows.filter((r) => !r.thisOne).map((r, i) => [String(i + 1), r.description, r.rfc || "-", r.pvo || "-", r.vo || "-", r.dvo || "-", "", r.dvoValue === null && r.pvoValue !== null ? sar(r.pvoValue) : r.dvoValue === null ? "Cancelled" : "", r.dvoValue === null ? "" : sar(r.dvoValue), ""]);
-  const totalPvo = rows.filter((r) => !r.thisOne && r.dvoValue === null).reduce((t, r) => t + (r.pvoValue ?? 0), 0);
-  const totalDvo = rows.filter((r) => !r.thisOne).reduce((t, r) => t + (r.dvoValue ?? 0), 0);
+  // a cancelled, rejected or superseded change stays in the log with no value
+  const dead = (r: ChangeLogRow) => /^(cancelled|rejected|superseded)$/i.test(r.status ?? "");
+  const body = rows.filter((r) => !r.thisOne).map((r, i) => [String(i + 1), r.description, r.rfc || "-", r.pvo || "-", r.vo || "-", r.dvo || "-", "", dead(r) ? "Cancelled" : r.dvoValue === null && r.pvoValue !== null ? sar(r.pvoValue) : r.dvoValue === null ? "Cancelled" : "", dead(r) || r.dvoValue === null ? "" : sar(r.dvoValue), ""]);
+  const totalPvo = rows.filter((r) => !r.thisOne && !dead(r) && r.dvoValue === null).reduce((t, r) => t + (r.pvoValue ?? 0), 0);
+  const totalDvo = rows.filter((r) => !r.thisOne && !dead(r)).reduce((t, r) => t + (r.dvoValue ?? 0), 0);
   const all = [["", "Original Contract", "", "", "", "", sar(original), "", "", ""], ...body, ["", `This PVO (PVO-${pvoNoOf(v)} – ${clean(v.title)})`, "", "", "", "", "", "", "", sar(thisValue)], ["", "Total", "", "", "", "", sar(original), sar(totalPvo), sar(totalDvo), sar(thisValue)]];
   table(doc, ["Sr", "Description", "RFC", "PVO", "VO", "DVO", "Contract Value", "PVO", "DVO", "This PVO"], all, [0.04, 0.3, 0.07, 0.07, 0.07, 0.07, 0.1, 0.1, 0.09, 0.09], { size: 7, align: ["center", "left", "center", "center", "center", "center", "right", "right", "right", "right"], boldRows: [0, all.length - 2, all.length - 1], shade: { [all.length - 2]: YELLOW, [all.length - 1]: CYAN }, headFill: CYAN, headColor: INK, width: PTW });
   finish(doc, "Classification: Internal", "Classification: Internal");

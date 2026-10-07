@@ -31,6 +31,7 @@ export function packDocuments(t: PackType): PackDocument[] {
       { id: "basis", label: "Contractual basis", formats: ["pdf", "docx"] },
       { id: "assessment", label: "Employer's assessment of cost and time", formats: ["pdf", "docx"] },
       { id: "budget", label: "Budget particulars", formats: ["pdf", "xlsx"] },
+      { id: "contract_summary", label: "Contract summary", formats: ["pdf", "xlsx"] },
       { id: "change_log", label: "Change log", formats: ["pdf", "xlsx"] },
     ];
   if (t.key === "vo")
@@ -40,7 +41,7 @@ export function packDocuments(t: PackType): PackDocument[] {
       { id: "vo_form", label: "Variation Order (Emergency Protocol)", formats: ["pdf", "docx"] },
     ];
   if (t.key === "dvo")
-    return [form, { id: "budget", label: "Budget particulars", formats: ["pdf", "xlsx"] }, { id: "change_log", label: "Change log", formats: ["pdf", "xlsx"] }];
+    return [form, { id: "budget", label: "Budget particulars", formats: ["pdf", "xlsx"] }, { id: "contract_summary", label: "Contract summary", formats: ["pdf", "xlsx"] }, { id: "change_log", label: "Change log", formats: ["pdf", "xlsx"] }];
   return [form];
 }
 
@@ -93,9 +94,11 @@ async function docxOf(blocks: Block[], title: string): Promise<Buffer> {
 /* ------------------------------------------------------------------ */
 /* Excel                                                               */
 
+/** a cell: text, a number, empty, or a live formula with the figure it gives */
+type Cell = string | number | null | { formula: string; result: number };
 interface Sheet {
   name: string;
-  rows: (string | number | null)[][];
+  rows: Cell[][];
   widths?: number[];
   bold?: number[];
   money?: number[];
@@ -117,7 +120,7 @@ async function xlsxOf(sheets: Sheet[]): Promise<Buffer> {
       row.forEach((v, i) => {
         const c = ws.getCell(r, i + 1);
         c.value = v;
-        if (typeof v === "number" && s.money?.includes(i)) c.numFmt = "#,##0.00;(#,##0.00)";
+        if ((typeof v === "number" || (v && typeof v === "object")) && s.money?.includes(i)) c.numFmt = "#,##0.00;(#,##0.00)";
         c.alignment = { vertical: "top", wrapText: true };
       });
       if (s.bold?.includes(r - start)) ws.getRow(r).font = { bold: true };
@@ -261,6 +264,9 @@ export async function budgetXlsx(v: PackValues, short: string): Promise<Buffer> 
   return xlsxOf([{ name: "Budget particulars", title: "BUDGET PARTICULARS", rows, widths: [60, 22], bold: [3, 7, 9], money: [1] }]);
 }
 
+/** a cancelled, rejected or superseded change stays in the log with no value */
+const dead = (r: ChangeLogRow) => /^(cancelled|rejected|superseded)$/i.test(r.status ?? "");
+
 export async function changeLogXlsx(v: PackValues, log: ChangeLogRow[]): Promise<Buffer> {
   const original = num(v.original_contract) || num(v.contract_price);
   const thisValue = num(v.total_value) || num(v.dvo_value) || num(v.add) - num(v.omit);
@@ -273,13 +279,47 @@ export async function changeLogXlsx(v: PackValues, log: ChangeLogRow[]): Promise
     [],
     ["Sr", "Description", "RFC", "PVO", "VO", "DVO", "Contract Value", "PVO", "DVO", "This PVO / DVO"],
     ["", "Original Contract", "", "", "", "", original || null, null, null, null],
-    ...log.filter((r) => !r.thisOne).map((r, i) => [i + 1, r.description, r.rfc || "-", r.pvo || "-", r.vo || "-", r.dvo || "-", null, r.dvoValue === null && r.pvoValue !== null ? r.pvoValue : r.dvoValue === null ? "Cancelled" : null, r.dvoValue, null]),
+    ...log.filter((r) => !r.thisOne).map((r, i) => [i + 1, r.description, r.rfc || "-", r.pvo || "-", r.vo || "-", r.dvo || "-", null, dead(r) ? "Cancelled" : r.dvoValue === null && r.pvoValue !== null ? r.pvoValue : r.dvoValue === null ? "Cancelled" : null, dead(r) ? null : r.dvoValue, null]),
     ["", `This PVO / DVO (${v.title ?? ""})`, "", "", "", "", null, null, null, thisValue || null],
   ];
-  const totalPvo = log.filter((r) => !r.thisOne && r.dvoValue === null).reduce((t, r) => t + (r.pvoValue ?? 0), 0);
-  const totalDvo = log.filter((r) => !r.thisOne).reduce((t, r) => t + (r.dvoValue ?? 0), 0);
+  const totalPvo = log.filter((r) => !r.thisOne && !dead(r) && r.dvoValue === null).reduce((t, r) => t + (r.pvoValue ?? 0), 0);
+  const totalDvo = log.filter((r) => !r.thisOne && !dead(r)).reduce((t, r) => t + (r.dvoValue ?? 0), 0);
   rows.push(["", "Total", "", "", "", "", original || null, totalPvo, totalDvo, thisValue || null]);
   return xlsxOf([{ name: "Change Log", title: "CHANGE LOG", rows, widths: [5, 60, 10, 10, 10, 10, 18, 16, 16, 16], bold: [6, rows.length - 1], money: [6, 7, 8, 9] }]);
+}
+
+/** The contract summary as a workbook: every change with its status, approval reference and value, the totals and the potential revised contract value. */
+export async function contractSummaryXlsx(v: PackValues, log: ChangeLogRow[], kind: "PVO" | "DVO"): Promise<Buffer> {
+  const original = num(v.original_contract) || num(v.contract_price);
+  const thisValue = num(v.total_value) || num(v.dvo_value) || num(v.add) - num(v.omit);
+  const live = log.filter((r) => !r.thisOne && !/^(cancelled|rejected|superseded)$/i.test(r.status ?? ""));
+  let agreed = 0;
+  let unagreed = 0;
+  const no = kind === "PVO" ? pvoNoOf(v) : String(v.dvo_no ?? "").replace(/\D/g, "") || pvoNoOf(v);
+  const rows: Cell[][] = [
+    ["Contractor", String(v.contractor ?? "")],
+    ["Contract No.", String(v.contract_no ?? v.contract_ref ?? "")],
+    ["Scope of Works", String(v.works_package ?? v.contract_title ?? "")],
+    [],
+    ["Reference", "Description", "Current status", "Approval reference", "Contract value (SAR)", "Agreed VO (SAR)", "Unagreed VO (SAR)", `This ${kind} (SAR)`],
+    ["Contract", "Contract Price", "", "", original || null, null, null, null],
+  ];
+  for (const r of live) {
+    const isAgreed = r.status === "DVO approved";
+    const value = isAgreed ? (r.dvoValue ?? r.pvoValue) : (r.pvoValue ?? r.dvoValue);
+    if (isAgreed) agreed += value ?? 0;
+    else unagreed += value ?? 0;
+    rows.push([r.pvo || r.itemNo || "", r.description, r.status ?? "", r.approvalRef ?? "", null, isAgreed ? value : null, isAgreed ? null : value, null]);
+  }
+  rows.push([`${kind} ${no}`, String(v.title ?? ""), `This ${kind} – for approval`, "", null, null, null, thisValue || null]);
+  // the sheet starts with its title on row 1 and a blank row: the table's first data row (Contract Price) is row 9
+  const first = 9;
+  const last = first + rows.length - 7;
+  const sum = (col: string, result: number) => ({ formula: `SUM(${col}${first}:${col}${last})`, result });
+  rows.push(["Totals", "", "", "", sum("E", original), sum("F", agreed), sum("G", unagreed), sum("H", thisValue)]);
+  const totals = last + 1;
+  rows.push([`Potential Revised Contract Value (after this ${kind})`, "", "", "", { formula: `E${totals}+F${totals}+G${totals}+H${totals}`, result: original + agreed + unagreed + thisValue }, null, null, null]);
+  return xlsxOf([{ name: "Contract Summary", title: `CONTRACT SUMMARY – ${String(v.contractor ?? "")}`, rows, widths: [22, 60, 18, 26, 18, 16, 16, 16], bold: [4, rows.length - 2, rows.length - 1], money: [4, 5, 6, 7] }]);
 }
 
 /** The form's values as a plain workbook – one row per field, in the sections of the form – when no RSG workbook was uploaded to write into. */

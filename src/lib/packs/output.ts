@@ -4,11 +4,11 @@ import type { UserInfo } from "../registers/types";
 import { buildDocx, buildEarDocx, fillTemplate } from "./word";
 import { fillExcelTemplate, isExcelTemplate } from "./excel";
 import { buildCompiledPack, noticePdf, renderFormPdf, safeFileName, type FormMeta, type PackPart, type PartItem } from "./pdf";
-import { appendix01Xlsx, assessmentDocx, basisDocx, budgetXlsx, changeLogXlsx, formXlsx, letterDocx, mimeOf, packDocuments, summaryDocx, voFormDocx, type DocFormat } from "./documents";
+import { appendix01Xlsx, assessmentDocx, basisDocx, budgetXlsx, changeLogXlsx, contractSummaryXlsx, formXlsx, letterDocx, mimeOf, packDocuments, summaryDocx, voFormDocx, type DocFormat } from "./documents";
 import { renderBudgetParticulars, renderEarReport, renderPvoDvoComparison, renderRfaForm } from "./forms";
-import { renderAppendix01, renderAssessment, renderBudgetParticularsNova, renderChangeLogNova, renderContractualBasis, renderEmployerLetter, renderExecutiveSummary, renderVoForm, renderVoFormEmergency } from "./annexures";
+import { renderAppendix01, renderAssessment, renderBudgetParticularsNova, renderChangeLogNova, renderContractSummary, renderContractualBasis, renderEmployerLetter, renderExecutiveSummary, renderVoForm, renderVoFormEmergency } from "./annexures";
 import { withNarrative } from "./narrative";
-import { changeLogRows, type ChangeLogRow } from "./data";
+import { changeLogRows, descWords, sameDesc, type ChangeLogRow } from "./data";
 import { overlayDvo, overlayPvo, overlayRfa, overlayVoForm } from "./overlay";
 import { packParts, pageSpec, positioned, classifyDoc, type DocKind } from "./extract";
 import { caseValues, getTemplate, listDocs, readDocBytes, readTemplateBytes, type PackCase } from "./store";
@@ -29,7 +29,7 @@ export function outputFileBase(c: PackCase): string {
 }
 
 /** The change log behind the pack: the earlier approved pack's log with this change as its last line; the register's log when there is none. */
-function logRows(c: PackCase): ChangeLogRow[] {
+export function logRows(c: PackCase): ChangeLogRow[] {
   const values = caseValues(c);
   try {
     const rows = JSON.parse(values.change_log_rows || "[]") as ChangeLogRow[];
@@ -39,25 +39,90 @@ function logRows(c: PackCase): ChangeLogRow[] {
       const isDvo = c.pack_type === "dvo";
       const own = rows.map((r) => ({ ...r, thisOne: false }));
       // a DVO settles a PVO already in the log: that line becomes this one
-      const idx = isDvo ? own.findIndex((r) => no && r.pvo.replace(/\D/g, "").replace(/^0+/, "") === no.replace(/^0+/, "")) : -1;
+      let idx = isDvo ? own.findIndex((r) => no && r.pvo.replace(/\D/g, "").replace(/^0+/, "") === no.replace(/^0+/, "")) : -1;
+      if (isDvo && idx < 0) idx = own.findIndex((r) => sameText(r.description, c.title));
       if (idx >= 0) own[idx] = { ...own[idx], dvo: String(values.dvo_no ?? own[idx].dvo), dvoValue: total ?? own[idx].dvoValue, thisOne: true };
       else own.push({ description: c.title, rfc: String(values.rfc_ref ?? "").replace(/^Emergency VO.*$/i, ""), pvo: no ? `PVO-${no}` : "", vo: no ? `VO-${no}` : "", dvo: isDvo ? String(values.dvo_no ?? "") : "", pvoValue: isDvo ? Number(String(values.pvo_value ?? "").replace(/[^0-9.\-]/g, "")) || total : total, dvoValue: isDvo ? total : null, thisOne: true });
-      return own;
+      return withRegister(own, registerRows(c));
     }
   } catch {
     /* the register's log below */
   }
-  if (!c.source_id) return [];
+  return registerRows(c);
+}
+
+/**
+ * The change register's log for the pack's contract: the register item or contract the pack was made from, else the
+ * cost line whose code is in the pack's contract number (1TB01-006C72-7050 → CN.006C72), else the contractor named.
+ */
+export function registerRows(c: PackCase): ChangeLogRow[] {
   const db = getDb();
-  if (c.source_table === "changes") {
+  if (c.source_id && c.source_table === "changes") {
     const ch = db.prepare("SELECT cost_line_id, contractor_id FROM changes WHERE id = ?").get(c.source_id) as { cost_line_id: number | null; contractor_id: number | null } | undefined;
-    return ch ? changeLogRows(c.programme_id, ch.cost_line_id, ch.contractor_id, c.source_id) : [];
+    if (ch) return changeLogRows(c.programme_id, ch.cost_line_id, ch.contractor_id, c.source_id);
   }
-  if (c.source_table === "contracts") {
+  if (c.source_id && c.source_table === "contracts") {
     const ct = db.prepare("SELECT cost_line_id, contractor_id FROM contracts WHERE id = ?").get(c.source_id) as { cost_line_id: number | null; contractor_id: number | null } | undefined;
-    return ct ? changeLogRows(c.programme_id, ct.cost_line_id, ct.contractor_id, null) : [];
+    if (ct) return changeLogRows(c.programme_id, ct.cost_line_id, ct.contractor_id, null);
+  }
+  const values = caseValues(c);
+  const contractNo = String(values.contract_no ?? values.contract_ref ?? "");
+  const frag = contractNo.match(/\b\d{2}[A-Z]\d{2}\b|(?<=-)[0-9A-Z]{5,7}(?=-)/i)?.[0] ?? "";
+  if (frag) {
+    // the pack's own project first; a pack filed under another project still finds its contract when the code is unique
+    const all = db.prepare("SELECT id, programme_id, contractor_id FROM cost_lines WHERE upper(code) LIKE ?").all(`%${frag.toUpperCase()}%`) as { id: number; programme_id: number; contractor_id: number | null }[];
+    const lines = all.filter((l) => Number(l.programme_id) === Number(c.programme_id));
+    const pick = lines.length === 1 ? lines[0] : !lines.length && all.length === 1 ? all[0] : null;
+    if (pick) return changeLogRows(Number(pick.programme_id), pick.id, pick.contractor_id, null);
+  }
+  const contractor = words(String(values.contractor ?? "")).replace(/(company|coltd|ltd|llc|co|limited)+$/g, "");
+  if (contractor.length >= 4) {
+    const all = db.prepare("SELECT id, name FROM contractors").all() as { id: number; name: string }[];
+    const hit = all.filter((k) => words(k.name).replace(/(company|coltd|ltd|llc|co|limited)+$/g, "") === contractor);
+    if (hit.length === 1) return changeLogRows(c.programme_id, null, hit[0].id, null);
   }
   return [];
+}
+
+const refNo = (ref: string) => ref.replace(/\D/g, "").replace(/^0+/, "");
+const words = descWords;
+const sameText = sameDesc;
+
+/**
+ * The log read from the uploaded reference pack, with where each change stands and its Aconex approval reference
+ * from the change register: matched on the PVO number (else the DVO number, else the description).
+ * The register's own changes the uploaded log does not carry (newer ones) are added after it.
+ */
+function withRegister(own: ChangeLogRow[], reg: ChangeLogRow[]): ChangeLogRow[] {
+  if (!reg.length) return own;
+  const used = new Set<number>();
+  const find = (r: ChangeLogRow) => {
+    const pvo = refNo(r.pvo);
+    const dvo = refNo(r.dvo);
+    // this change: the register item the pack was made from, else the one with its description (never by number alone –
+    // the uploaded log's numbering can differ from the register's)
+    const i = r.thisOne
+      ? reg.findIndex((x, j) => !used.has(j) && (x.thisOne || sameText(x.description, r.description)))
+      : (() => {
+          const byText = reg.findIndex((x, j) => !used.has(j) && sameText(x.description, r.description));
+          return byText >= 0 ? byText : reg.findIndex((x, j) => !used.has(j) && ((pvo && refNo(x.pvo) === pvo) || (dvo && refNo(x.dvo) === dvo)));
+        })();
+    if (i >= 0) used.add(i);
+    return i >= 0 ? reg[i] : null;
+  };
+  const out = own.map((r) => {
+    const m = find(r);
+    if (!m) return r;
+    return { ...r, itemNo: m.itemNo, status: m.status, approvalRef: m.approvalRef, pvoValue: r.pvoValue ?? m.pvoValue, dvoValue: r.dvoValue ?? m.dvoValue, rfc: r.rfc || m.rfc, vo: r.vo || m.vo, dvo: r.dvo || m.dvo };
+  });
+  const thisIdx = out.findIndex((r) => r.thisOne);
+  // a register line under a PVO number the uploaded log already carries is part of that PVO (one PVO split over two
+  // register lines), not a further change
+  const ownPvos = new Set(own.map((r) => refNo(r.pvo)).filter(Boolean));
+  const extra = reg.filter((x, j) => !used.has(j) && !x.thisOne && !(refNo(x.pvo) && ownPvos.has(refNo(x.pvo)))).map((x) => ({ ...x, thisOne: false }));
+  if (!extra.length) return out;
+  // the register's newer changes go before this one so the log keeps this change last
+  return thisIdx >= 0 ? [...out.slice(0, thisIdx), ...extra, ...out.slice(thisIdx)] : [...out, ...extra];
 }
 
 /**
@@ -289,7 +354,7 @@ async function assemble(c: PackCase, t: PackType, values: PackValues, meta: Form
       { no: 3, label: "CONTRACTUAL BASIS FOR VARIATION ENTITLEMENT", hint: "The clauses relied on and how each applies", style: "annexure", items: [await sg("Contractual basis", () => renderContractualBasis(v))] },
       { no: 4, label: "PARTICULARS OF 'ESTIMATED COST & TIME IMPACT'", hint: "The Employer's assessment, the cost proposal and the drawings – uploaded, or the pages inside the RFC / RFA", style: "annexure", items: [...sorted.cost, await sg("Employer's assessment of cost and time", () => renderAssessment(v)), ...(await quiet("cost proposal and drawings", () => costAndDrawings(docs, ["rfc"], "RFC / RFA"), []))] },
       { no: 5, label: "BUDGET PARTICULARS / ACC COST WORKSHEET", hint: "Where the budget comes from and where it goes", style: "annexure", items: [await sg("Budget particulars", () => renderBudgetParticularsNova(v))] },
-      { no: 6, label: "CHANGE LOG", hint: "Every change on the contract with its RFC, PVO, VO and DVO", style: "annexure", items: [await sg("Change log", () => renderChangeLogNova(v, logRows(c)))] },
+      { no: 6, label: "CHANGE LOG", hint: "The contract summary – every change with its status, approval and value – and the change log", style: "annexure", items: [await sg("Contract summary", () => renderContractSummary(v, logRows(c), "PVO")), await sg("Change log", () => renderChangeLogNova(v, logRows(c)))] },
     ];
     return { front: [{ name: "PVO form (RSG-CM-FRM-0013)", bytes: form }], parts: ann, index: { title: "PROPOSED VARIATION ORDER (PVO)" } };
   }
@@ -298,7 +363,7 @@ async function assemble(c: PackCase, t: PackType, values: PackValues, meta: Form
       { no: 1, label: "APPROVED PVO & VO – COVER PAGE + WF APPROVALS ONLY", hint: "The approved PVO with its workflow approvals, and the revise-and-resubmit updates", style: "annexure", items: [...itemsOf(docs, "pvo"), ...itemsOf(docs, "resubmit")] },
       { no: 2, label: "COST IMPACT – EMPLOYER'S ASSESSMENT AND DETERMINATION", hint: "The cost proposal and the drawings behind the determined value – uploaded, or the pages inside the approved PVO pack", style: "annexure", items: await quiet("cost proposal and drawings", () => costAndDrawings(docs, ["pvo"], "approved PVO pack"), []) },
       { no: 3, label: "BUDGET PARTICULARS", hint: "Where the budget comes from and where it goes", style: "annexure", items: [await sg("Budget particulars", () => renderBudgetParticulars(t, values, meta))] },
-      { no: 4, label: "CHANGE LOG", hint: "Every change on the contract with its RFC, PVO, VO and DVO", style: "annexure", items: [await sg("Change log", () => renderChangeLogNova(values, logRows(c)))] },
+      { no: 4, label: "CHANGE LOG", hint: "The contract summary – every change with its status, approval and value – and the change log", style: "annexure", items: [await sg("Contract summary", () => renderContractSummary(values, logRows(c), "DVO")), await sg("Change log", () => renderChangeLogNova(values, logRows(c)))] },
     ];
     const comparison = await quiet("PVO to DVO comparison", () => renderPvoDvoComparison(t, values, meta), null as Buffer | null);
     return { front: [...(comparison ? [{ name: "PVO to DVO comparison – values, references and contract position", bytes: comparison }] : []), { name: "DVO form (RSG-CM-FRM-0014) and review & recommendation (RSG-CM-FRM-0027)", bytes: form }], parts: [...ann, ...number(others, 5)], index: { title: "DETERMINED VARIATION ORDER (DVO)" } };
@@ -425,6 +490,8 @@ export async function renderPackDocument(c: PackCase, docId: string, format: Doc
         return fin(await renderAssessment(v));
       case "budget":
         return fin(t.key === "dvo" ? await renderBudgetParticulars(t, values, meta) : await renderBudgetParticularsNova(v));
+      case "contract_summary":
+        return fin(await renderContractSummary(v, logRows(c), t.key === "dvo" ? "DVO" : "PVO"));
       case "change_log":
         return fin(await renderChangeLogNova(v, logRows(c)));
     }
@@ -449,6 +516,8 @@ export async function renderPackDocument(c: PackCase, docId: string, format: Doc
         return fin(await appendix01Xlsx(v));
       case "budget":
         return fin(await budgetXlsx(v, t.short));
+      case "contract_summary":
+        return fin(await contractSummaryXlsx(v, logRows(c), t.key === "dvo" ? "DVO" : "PVO"));
       case "change_log":
         return fin(await changeLogXlsx(v, logRows(c)));
     }

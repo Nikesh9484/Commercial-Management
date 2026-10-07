@@ -120,9 +120,48 @@ export interface ChangeLogRow {
   pvoValue: number | null;
   dvoValue: number | null;
   thisOne: boolean;
+  /** the register's item number, for a change with no PVO number yet */
+  itemNo?: string;
+  /** where the change stands: "DVO approved", "PVO approved", "VO approved", "Pending", "Cancelled" */
+  status?: string;
+  /** the Aconex workflow approval of its furthest approved stage (the DVO's, else the VO's, else the PVO's) */
+  approvalRef?: string;
 }
 
 /** The change log of a contract as the RSG packs carry it: every change on the same cost report line with its RFC, PVO, VO and DVO refs and values. */
+/** the words of a description, without the "1.00" numbering the uploaded logs carry, for matching one wording to another */
+export function descWords(t: string): string {
+  return t.replace(/^\s*\d+(\.\d+)?\s*/, "").replace(/\s+\d+\.00\s+/g, " ").replace(/[^a-z0-9]/gi, "").toLowerCase();
+}
+export function sameDesc(a: string, b: string): boolean {
+  const x = descWords(a);
+  const y = descWords(b);
+  if (!x || !y) return false;
+  return x === y || (Math.min(x.length, y.length) >= 20 && (x.includes(y) || y.includes(x)));
+}
+
+/**
+ * One line per change: a monthly report import that numbers a row it had earlier read without a number (CH-006C72-x10)
+ * leaves the register with the same change twice, the earlier one superseded. The log keeps the one last updated
+ * (the numbered one on a tie) – and always the change the pack is made from.
+ */
+function foldTwins(rows: Row[], thisId: number | null): Row[] {
+  const out: Row[] = [];
+  for (const r of rows) {
+    const d = descWords(String(r.description ?? ""));
+    const i = d ? out.findIndex((o) => descWords(String(o.description ?? "")) === d) : -1;
+    if (i < 0) {
+      out.push(r);
+      continue;
+    }
+    const o = out[i];
+    const isX = (x: Row) => /-x\d+[a-z]?$/i.test(String(x.item_no ?? ""));
+    const keepNew = Number(r.id) === thisId || (Number(o.id) !== thisId && (String(r.updated_at ?? "") > String(o.updated_at ?? "") || (String(r.updated_at ?? "") === String(o.updated_at ?? "") && isX(o) && !isX(r))));
+    if (keepNew) out[i] = r;
+  }
+  return out;
+}
+
 export function changeLogRows(programmeId: number, costLineId: number | null, contractorId: number | null, thisId: number | null): ChangeLogRow[] {
   const db = getDb();
   const rows = (costLineId
@@ -130,16 +169,33 @@ export function changeLogRows(programmeId: number, costLineId: number | null, co
     : contractorId
       ? db.prepare("SELECT * FROM changes WHERE programme_id = ? AND contractor_id = ? ORDER BY date_raised, item_no").all(programmeId, contractorId)
       : []) as Row[];
-  return rows.map((r) => ({
-    description: s(r.description),
-    rfc: s(r.rfc_ref),
-    pvo: s(r.pvo_ref),
-    vo: s(r.vo_ref),
-    dvo: s(r.dvo_ref) || s(r.dvo_avi_ref),
-    pvoValue: n(r.pvo_tracker_amount) ?? n(r.dvo_planned_value),
-    dvoValue: n(r.dvo_actual_value) ?? n(r.dvo_tracker_amount),
-    thisOne: Number(r.id) === thisId,
-  }));
+  const statusName = new Map((db.prepare("SELECT id, name FROM approval_statuses").all() as { id: number; name: string }[]).map((x) => [x.id, x.name]));
+  const st = (id: unknown) => (id ? String(statusName.get(Number(id)) ?? "") : "").toLowerCase();
+  const ok = (v: string) => v === "approved" || v === "review complete";
+  const dead = (v: string) => ["rejected", "cancelled", "superseded"].includes(v);
+  return foldTwins(rows, thisId).map((r) => {
+    const dvoSt = st(r.dvo_status_id);
+    const voSt = st(r.vo_status_id);
+    const pvoSt = st(r.pvo_status_id);
+    const overall = st(r.overall_status_id);
+    const dvoValue = n(r.dvo_actual_value) ?? n(r.dvo_tracker_amount);
+    // a DVO is agreed when its stage says so; with no stage recorded, an approved change carrying a DVO value counts
+    const dvoApproved = ok(dvoSt) || (!dvoSt && overall === "approved" && dvoValue !== null);
+    const status = dead(overall) ? overall.charAt(0).toUpperCase() + overall.slice(1) : dvoApproved ? "DVO approved" : ok(voSt) ? "VO approved" : ok(pvoSt) ? "PVO approved" : "Pending";
+    return {
+      description: s(r.description),
+      rfc: s(r.rfc_ref),
+      pvo: s(r.pvo_ref),
+      vo: s(r.vo_ref),
+      dvo: s(r.dvo_ref) || s(r.dvo_avi_ref),
+      pvoValue: n(r.pvo_tracker_amount) ?? n(r.dvo_planned_value),
+      dvoValue,
+      thisOne: Number(r.id) === thisId,
+      itemNo: s(r.item_no),
+      status,
+      approvalRef: (dvoApproved ? s(r.dvo_aconex_ref) : "") || (ok(voSt) ? s(r.vo_aconex_ref) : "") || (ok(pvoSt) ? s(r.pvo_aconex_ref) : "") || s(r.dvo_aconex_ref) || s(r.vo_aconex_ref) || s(r.pvo_aconex_ref),
+    };
+  });
 }
 
 export function changeLogText(rows: ChangeLogRow[]): string {

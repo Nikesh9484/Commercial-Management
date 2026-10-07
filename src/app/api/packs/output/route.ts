@@ -7,7 +7,7 @@ import { getCase, rebuildValues } from "@/lib/packs/store";
 
 /**
  * GET /api/packs/output?case=ID&format=docx|xlsx|pdf|pack – the Word form, the Excel form, the PDF form or the compiled pack of one document.
- * With &doc=<id> (letter, vo_form, appendix01, summary, basis, assessment, budget, change_log) one document of the pack on its own, in that file type.
+ * With &doc=<id> (letter, vo_form, appendix01, summary, basis, assessment, budget, contract_summary, change_log) one document of the pack on its own, in that file type.
  */
 async function heavyGET(req: Request, ctx: unknown) {
   return withUser(async (user) => {
